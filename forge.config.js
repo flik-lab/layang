@@ -23,7 +23,7 @@ export default {
   packagerConfig: {
     name: "Layang",
     executableName: "Layang",
-    appBundleId: "labs.layang.desktop",
+    appBundleId: "fliklab.layang.desktop",
     appCategoryType: "public.app-category.developer-tools",
     icon: path.join(rootDir, "electron", "assets", "icon"),
     asar: true,
