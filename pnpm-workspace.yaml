@@ -1,0 +1,11 @@
+packages:
+  - .
+
+ignoredBuiltDependencies:
+  - '@biomejs/biome'
+  - protobufjs
+  - sharp
+  - unrs-resolver
+
+onlyBuiltDependencies:
+  - electron-winstaller

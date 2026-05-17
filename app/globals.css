@@ -1,0 +1,597 @@
+@import "tailwindcss";
+@config "../tailwind.config.ts";
+
+:root {
+  color-scheme: light dark;
+}
+
+* {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb, #3b4254) var(--scrollbar-track, transparent);
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-rendering: optimizeLegibility;
+  user-select: none;
+}
+
+input,
+textarea,
+select,
+[contenteditable="true"],
+.form-selectable,
+.form-selectable *,
+.response-selectable,
+.response-selectable *,
+.code-viewer,
+.code-viewer *,
+.json-block,
+.json-block *,
+.example-preview,
+.example-preview *,
+.api-doc-preview,
+.api-doc-preview * {
+  user-select: text;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  -webkit-app-region: no-drag;
+}
+
+a,
+[role="button"],
+[role="tab"],
+.floating-menu-surface {
+  -webkit-app-region: no-drag;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+/* Explicit control typography keeps the local compatibility primitives stable
+   across Tailwind/Biome formatting changes without using !important. */
+.shadcn-button,
+.shadcn-select,
+.shadcn-input,
+.shadcn-menu-item,
+.shadcn-list-button,
+.shadcn-tab {
+  font-size: 12px;
+}
+
+.shadcn-button,
+.shadcn-tab {
+  line-height: 1;
+}
+
+.shadcn-select,
+.shadcn-input,
+.shadcn-menu-item,
+.shadcn-list-button {
+  line-height: 1.35;
+}
+
+.shadcn-textarea {
+  font-size: 11.5px;
+  line-height: 1.72;
+}
+
+.shadcn-chip {
+  font-size: 11px;
+  line-height: 1;
+}
+
+.code-editor {
+  --code-editor-active-line: rgba(148, 163, 184, 0.1);
+}
+
+.code-editor__body {
+  border-radius: 0;
+}
+
+.code-editor__gutter {
+  border-radius: 0;
+}
+
+.code-editor__code-pane {
+  background: transparent;
+}
+
+.code-editor__active-line {
+  pointer-events: none;
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 0;
+  background: var(--code-editor-active-line);
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.12);
+}
+
+.code-editor__textarea {
+  caret-color: rgb(96, 165, 250);
+}
+
+[data-theme="light"] .code-editor {
+  --code-editor-active-line: rgba(37, 99, 235, 0.06);
+}
+
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track, transparent);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb, #3b4254);
+  border: 2px solid var(--scrollbar-track, transparent);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover, #566074);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --scrollbar-track: #0f1117;
+  --scrollbar-thumb: #333b4f;
+  --scrollbar-thumb-hover: #4d5872;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --scrollbar-track: #f4f6fb;
+  --scrollbar-thumb: #c4ccdc;
+  --scrollbar-thumb-hover: #9da8bc;
+}
+
+/* Workbench-specific shadcn refinements. Keep these class-based so the UI stays
+   stable while the legacy MUI-like compatibility layer is gradually removed. */
+.workbench-stacked-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 38px;
+  padding: 6px 8px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+  contain: layout paint style;
+}
+
+.workbench-stacked-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 76px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-bottom-color: transparent;
+  border-radius: 8px 8px 0 0;
+  background: var(--surface-muted);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.workbench-stacked-tab:hover {
+  background: var(--hover);
+  color: var(--foreground);
+}
+
+.workbench-stacked-tab[data-active="true"] {
+  background: var(--card);
+  border-color: var(--tab-active-border);
+  border-bottom-color: var(--card);
+  color: var(--tab-active-text);
+  box-shadow: 0 2px 0 var(--primary) inset;
+}
+
+.workbench-stacked-tab__label {
+  display: block;
+  min-width: 0;
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.request-tab-strip {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  min-width: max-content;
+  height: 100%;
+  padding-top: 4px;
+  -webkit-app-region: drag;
+}
+
+.request-tab-strip--empty {
+  min-width: 0;
+  width: 100%;
+}
+
+.request-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  min-width: 156px;
+  max-width: 200px;
+  width: 172px;
+  padding: 0 7px 0 9px;
+  border: 1px solid var(--tab-border);
+  border-bottom-color: var(--tab-border);
+  border-radius: 9px 9px 0 0;
+  background: var(--tab-bg);
+  color: var(--tab-text);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  overflow: hidden;
+  cursor: default;
+  -webkit-app-region: no-drag;
+}
+
+.request-tab:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.request-tab:hover {
+  background: var(--tab-hover-bg);
+  border-color: var(--border-strong);
+  color: var(--foreground);
+}
+
+.request-tab[data-active="true"] {
+  background: var(--tab-active-bg);
+  border-color: var(--tab-active-border);
+  border-bottom-color: var(--tab-active-bg);
+  color: var(--tab-active-text);
+  box-shadow: 0 2px 0 var(--primary) inset;
+}
+
+.request-tab__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  background: var(--text-muted);
+  opacity: 0.85;
+}
+
+.request-tab__dot[data-status="running"] {
+  background: #26d39a;
+  box-shadow: 0 0 0 3px rgba(38, 211, 154, 0.12);
+}
+
+.request-tab__dot[data-status="error"] {
+  background: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
+}
+
+.request-tab__title {
+  display: block;
+  min-width: 72px;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.request-tab__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.72;
+  padding: 0;
+  cursor: pointer;
+}
+
+.request-tab__action:hover {
+  background: var(--hover);
+  opacity: 1;
+}
+
+.request-tab__action--stop {
+  color: #ef4444;
+}
+
+.titlebar-tab-action {
+  height: 28px;
+  min-width: 40px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-tab-action--danger {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.45);
+}
+
+.json-block {
+  display: block;
+  width: 100%;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--muted);
+  color: var(--foreground);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.json-block code {
+  display: block;
+  min-width: 0;
+  white-space: inherit;
+  padding: 10px;
+  font: inherit;
+  color: inherit;
+}
+
+.json-block--compact {
+  max-height: 220px;
+}
+
+.json-highlight {
+  border-radius: 4px;
+  background: var(--selected);
+  font-weight: 700;
+}
+
+.json-block--compact code {
+  padding: 8px;
+}
+
+/* Example previews keep JSON indentation readable in both the sidebar and panel. */
+.example-preview {
+  display: block;
+  width: 100%;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--muted);
+  color: var(--foreground);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.example-preview code {
+  display: block;
+  min-width: max-content;
+  padding: 7px 8px;
+  font: inherit;
+  color: inherit;
+}
+
+.example-preview--sidebar {
+  max-height: 128px;
+}
+
+.example-preview--panel {
+  max-height: 148px;
+  margin-top: 8px;
+}
+
+/* API documentation and source previews use raw elements to avoid layout drift in code-heavy content. */
+.api-doc-preview {
+  max-height: 72vh;
+  overflow: auto;
+  padding-right: 4px;
+  color: var(--foreground);
+  font-size: 12.5px;
+  line-height: 1.58;
+}
+
+.api-doc-preview__heading {
+  margin: 0 0 8px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--foreground);
+  line-height: 1.24;
+}
+
+.api-doc-preview__heading--1 {
+  margin-top: 0;
+  font-size: 22px;
+  letter-spacing: -0.025em;
+}
+
+.api-doc-preview__heading--2 {
+  margin-top: 18px;
+  font-size: 15.5px;
+}
+
+.api-doc-preview__heading--3 {
+  margin-top: 12px;
+  font-size: 13.5px;
+}
+
+.api-doc-preview__paragraph {
+  margin: 0 0 10px;
+  color: var(--muted-foreground);
+  line-height: 1.68;
+}
+
+.api-doc-preview__list {
+  margin: 0 0 14px;
+  padding: 10px 12px 10px 24px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--foreground);
+  line-height: 1.7;
+}
+
+.api-doc-preview__list li {
+  margin: 2px 0;
+  padding-left: 2px;
+}
+
+.api-doc-preview__hr {
+  margin: 20px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.inline-code {
+  display: inline-block;
+  max-width: 100%;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--muted);
+  color: var(--foreground);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.94em;
+  line-height: 1.45;
+  vertical-align: baseline;
+  overflow-wrap: anywhere;
+}
+
+.source-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.source-preview__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.source-preview__pill {
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--foreground);
+  padding: 3px 8px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+.code-viewer,
+.json-block {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--muted);
+  color: var(--foreground);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.72;
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+  tab-size: 2;
+}
+
+.code-viewer {
+  max-height: 440px;
+}
+
+.code-viewer--proto {
+  max-height: min(64vh, 620px);
+}
+
+.code-viewer code,
+.json-block code {
+  display: block;
+  min-width: max-content;
+  padding: 12px 14px;
+  font: inherit;
+  line-height: inherit;
+  white-space: inherit;
+  color: inherit;
+}
+
+.json-block--compact {
+  max-height: 220px;
+}
+
+.json-block--compact code {
+  padding: 9px 10px;
+}
+
+/* Floating menus are rendered in a portal, so keep their surface/hover explicit. */
+[data-theme="dark"] .floating-menu-surface,
+.floating-menu-surface[data-theme="dark"] {
+  background: #151922;
+  border-color: #252b3a;
+  color: #e8ecf7;
+}
+
+[data-theme="light"] .floating-menu-surface,
+.floating-menu-surface[data-theme="light"] {
+  background: #ffffff;
+  border-color: #d9dfec;
+  color: #111827;
+}
+
+.response-toolbar {
+  contain: layout paint style;
+}
+
+.response-toolbar button,
+.workbench-stacked-tab {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}

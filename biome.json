@@ -1,0 +1,86 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "includes": [
+      "**",
+      "!**/.next",
+      "!**/dist",
+      "!**/out",
+      "!**/node_modules",
+      "!**/tsconfig.tsbuildinfo",
+      "!playground.html"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "formatWithErrors": false,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 120
+  },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "correctness": {
+        "noUnusedVariables": "warn",
+        "useExhaustiveDependencies": "off"
+      },
+      "suspicious": {
+        "noExplicitAny": "off"
+      },
+      "style": {
+        "useImportType": "warn",
+        "useNodejsImportProtocol": "warn"
+      },
+      "complexity": {
+        "noImportantStyles": "off"
+      },
+      "a11y": {
+        "noNoninteractiveTabindex": "off",
+        "useSemanticElements": "off",
+        "noAutofocus": "off",
+        "noLabelWithoutControl": "off",
+        "noStaticElementInteractions": "off"
+      },
+      "performance": {
+        "noImgElement": "off",
+        "noAccumulatingSpread": "off"
+      }
+    }
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "always",
+      "trailingCommas": "all"
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["package.json"],
+      "json": {
+        "formatter": {
+          "expand": "auto"
+        }
+      }
+    }
+  ],
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  }
+}
