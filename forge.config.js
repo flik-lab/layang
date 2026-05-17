@@ -50,7 +50,7 @@ export default {
       platforms: ["win32"],
       config: {
         name: "Layang",
-        authors: "Layang contributors",
+        authors: "Flik & Layang contributors",
         description: "Local-first gRPC and mock server workbench.",
         setupIcon: path.join(rootDir, "electron", "assets", "icon-layang.ico"),
       },
@@ -72,7 +72,7 @@ export default {
       platforms: ["linux"],
       config: {
         options: {
-          maintainer: "Layang contributors <hello@layang.local>",
+          maintainer: "Flik & Layang contributors <fliklabdev@gmail.com>",
           homepage: "https://github.com/flik-lab/layang",
           icon: path.join(rootDir, "electron", "assets", "icon.png"),
           categories: ["Development"],
