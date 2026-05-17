@@ -6,7 +6,7 @@ on:
       - main
     paths:
       - "github-pages/**"
-      - ".github/workflows/pages.yml"
+      - ".github/workflows/pages.yaml"
 
   workflow_dispatch:
 
