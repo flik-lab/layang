@@ -52,7 +52,7 @@ export default {
         name: "Layang",
         authors: "Layang contributors",
         description: "Local-first gRPC and mock server workbench.",
-        setupIcon: path.join(rootDir, "electron", "assets", "icon.ico"),
+        setupIcon: path.join(rootDir, "electron", "assets", "icon-layang.ico"),
       },
     },
     {

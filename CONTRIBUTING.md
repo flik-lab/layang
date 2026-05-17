@@ -7,31 +7,33 @@ Thanks for considering a contribution to Layang.
 Requirements:
 
 - Node.js 20 or newer
-- npm 10 or newer
+- pnpm 10 or newer
 
 Install dependencies:
 
 ```bash
-npm install
+pnpm install
 ```
 
 Run the web app:
 
 ```bash
-npm run dev
+pnpm run dev
 ```
 
 Run the Electron desktop app:
 
 ```bash
-npm run desktop
+pnpm run desktop
 ```
 
 Run checks before opening a pull request:
 
 ```bash
-npm run typecheck
-npm run build
+pnpm run typecheck
+pnpm run lint
+pnpm run format
+pnpm run build
 ```
 
 ## Project conventions
@@ -67,8 +69,10 @@ docs: add APISIX CORS setup notes
 Before opening a PR:
 
 - [ ] The change has a clear description.
-- [ ] `npm run typecheck` passes locally.
-- [ ] `npm run build` passes locally.
+- [ ] `pnpm run typecheck` passes locally.
+- [ ] `pnpm run lint` passes locally.
+- [ ] `pnpm run format` passes locally.
+- [ ] `pnpm run build` passes locally.
 - [ ] Docs were updated when behavior changed.
 - [ ] No secrets, private endpoints, or customer data were committed.
 

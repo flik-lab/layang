@@ -1,6 +1,6 @@
 {
   "name": "layang",
-  "version": "1.0.0-dev",
+  "version": "1.0.0-rc.1",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -93,19 +93,14 @@
     "api-testing",
     "api-documentation",
     "electron",
-    "nextjs",
     "apisix",
-    "envoy",
     "developer-portal",
     "landing-page",
     "grpc-tools",
     "proto-registry",
     "multi-tabs",
     "grpc-streaming",
-    "console-logging",
-    "shadcn-ui",
-    "tailwindcss",
-    "radix-ui"
+    "console-logging"
   ],
   "engines": {
     "node": ">=20.11.0",

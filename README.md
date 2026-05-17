@@ -1,5 +1,9 @@
 # Layang
 
+[![Website](https://img.shields.io/badge/website-open-blue)](https://flik-lab.github.io/layang/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+
+
 Layang is a workspace-based API workbench for testing, mocking, benchmarking, documenting, and automating APIs.
 
 The first release focuses on protobuf and gRPC, with support for `.proto` browsing, gRPC/gRPC-Web calls, mock scenarios, streaming controls, benchmark reports, generated docs, and CLI automation.
@@ -67,8 +71,6 @@ Create Linux packages:
 pnpm run desktop:deb
 pnpm run desktop:rpm
 ```
-
-PowerShell may block `pnpm.ps1` on some Windows machines. Use `pnpm` in that case.
 
 ## CLI
 
