@@ -133,6 +133,31 @@ code {
 .btn.ghost {
   background: transparent;
 }
+.btn.star-btn {
+  gap: 8px;
+  border-color: rgba(251, 191, 36, 0.32);
+  background: rgba(251, 191, 36, 0.08);
+  color: #fff4c7;
+}
+.btn.star-btn:hover {
+  border-color: rgba(251, 191, 36, 0.62);
+  background: rgba(251, 191, 36, 0.14);
+  box-shadow: 0 16px 38px rgba(251, 191, 36, 0.14);
+}
+.btn.star-btn span {
+  color: var(--yellow);
+  font-size: 15px;
+  line-height: 1;
+}
+.btn.star-btn strong {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-left: 1px solid rgba(251, 191, 36, 0.22);
+  color: var(--text);
+  font-size: 13px;
+}
 .btn.large {
   min-height: 50px;
   padding: 0 22px;

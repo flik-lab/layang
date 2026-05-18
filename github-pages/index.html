@@ -30,6 +30,7 @@
         <nav class="nav-links" aria-label="Main navigation">
           <a href="#app">App</a>
           <a href="#features">Features</a>
+          <a href="#websocket">WebSocket beta</a>
           <a href="#mocking">Mocking</a>
           <a href="#documentation">Documentation</a>
           <a href="#cli">CLI</a>
@@ -41,7 +42,11 @@
             aria-label="GitHub repository"
             >GitHub</a
           >
-          <a class="btn primary" href="https://github.com/flik-lab/layang/releases">Download</a>
+          <a
+            class="btn primary"
+            href="https://github.com/flik-lab/layang/releases"
+            >Download</a
+          >
         </div>
       </div>
     </header>
@@ -49,20 +54,35 @@
     <main>
       <section class="hero hero-centered">
         <div class="container hero-stack">
-          <a class="announcement" href="https://github.com/flik-lab/layang/releases">
+          <a
+            class="announcement"
+            href="https://github.com/flik-lab/layang/releases"
+          >
             <span class="announcement-dot"></span>
-            Layang v1.0.0 RC 1 is available for early testing
+            Layang v1.0.0 RC 2 is available with WebSocket beta
             <span aria-hidden="true">-&gt;</span>
           </a>
           <h1>Test, mock, benchmark, and document APIs from one workspace.</h1>
           <p class="hero-lead">
             Layang is a workspace-based API workbench. The first release focuses
             on protobuf and gRPC, with `.proto` browsing, gRPC/gRPC-Web calls,
-            mock scenarios, benchmarks, generated docs, and CLI automation.
+            mock scenarios, benchmarks, generated docs, CLI automation, and a
+            beta WebSocket workflow for early testing.
           </p>
           <div class="hero-actions centered-actions">
-            <a class="btn primary large" href="https://github.com/flik-lab/layang/releases">Download release</a>
-            <a class="btn large" href="#mocking">See streaming mocks</a>
+            <a
+              class="btn primary large"
+              href="https://github.com/flik-lab/layang/releases"
+              >Download release</a
+            >
+            <a
+              class="btn large star-btn"
+              href="https://github.com/flik-lab/layang"
+              aria-label="Star Layang on GitHub"
+            >
+              <span aria-hidden="true">★</span>
+              Star on GitHub
+            </a>
           </div>
           <div class="install-strip" aria-label="CLI command preview">
             <span class="terminal-dot red"></span
@@ -129,6 +149,14 @@ transport: native-grpc</pre
             >
           </article>
           <article class="bento-card">
+            <h3>WebSocket beta</h3>
+            <p>
+              Create WebSocket requests, connect to ws/wss endpoints, send
+              messages, inspect events, mock responses, benchmark latency, and
+              publish beta docs.
+            </p>
+          </article>
+          <article class="bento-card">
             <h3>Proto registry</h3>
             <p>
               Browse imported `.proto` files, services, methods, request
@@ -156,6 +184,52 @@ transport: native-grpc</pre
               native gRPC requests from the CLI.
             </p>
           </article>
+        </div>
+      </section>
+
+      <section id="websocket" class="section alt">
+        <div class="container split-heading">
+          <div>
+            <div class="eyebrow"><span class="dot"></span> WebSocket beta</div>
+            <h2>Early WebSocket workflows now live beside gRPC.</h2>
+          </div>
+          <p>
+            RC 2 introduces beta WebSocket collections for live client testing,
+            desktop-managed mock responses, benchmark exports, and generated
+            docs. The feature is ready for feedback and may still change before
+            stable 1.0.
+          </p>
+        </div>
+        <div class="container comparison-card">
+          <div class="comparison-row head">
+            <span>Area</span>
+            <span>Status</span>
+            <span>What is included</span>
+          </div>
+          <div class="comparison-row">
+            <span>Client</span>
+            <span>Beta</span>
+            <span
+              >Open ws/wss connections, send payloads, and inspect live
+              events.</span
+            >
+          </div>
+          <div class="comparison-row">
+            <span>Mocking</span>
+            <span>Beta</span>
+            <span
+              >Run a local desktop WebSocket mock server and send responses to
+              connected clients.</span
+            >
+          </div>
+          <div class="comparison-row">
+            <span>Docs and reports</span>
+            <span>Beta</span>
+            <span
+              >Publish WebSocket docs and export benchmark data from the active
+              workspace.</span
+            >
+          </div>
         </div>
       </section>
 
@@ -272,22 +346,22 @@ history/
             </p>
             <div class="timeline-list">
               <div>
-                <strong>Proto reference</strong
-                ><span
+                <strong>Proto reference</strong>
+                <span
                   >Service, method, request, response, and source `.proto`
                   information.</span
                 >
               </div>
               <div>
-                <strong>Examples and responses</strong
-                ><span
+                <strong>Examples and responses</strong>
+                <span
                   >Saved request examples and latest responses become readable
                   docs sections.</span
                 >
               </div>
               <div>
-                <strong>Static publishing</strong
-                ><span
+                <strong>Static publishing</strong>
+                <span
                   >Export docs for a static site or keep them inside the
                   workspace folder.</span
                 >
@@ -336,22 +410,22 @@ layang mock:check ./workspace</pre
           </div>
           <div class="cli-points">
             <article>
-              <strong>Validate</strong
-              ><span
+              <strong>Validate</strong>
+              <span
                 >Check workspace structure, request files, proto availability,
                 and mock scenario files.</span
               >
             </article>
             <article>
-              <strong>Run</strong
-              ><span
+              <strong>Run</strong>
+              <span
                 >Execute saved native gRPC requests with clear exit codes for
                 CI/CD.</span
               >
             </article>
             <article>
-              <strong>Report</strong
-              ><span
+              <strong>Report</strong>
+              <span
                 >Output spec, JSON, or JUnit reports for build pipelines.</span
               >
             </article>
@@ -372,7 +446,11 @@ layang mock:check ./workspace</pre
             </p>
           </div>
           <div class="final-actions">
-            <a class="btn primary large" href="https://github.com/flik-lab/layang/releases">Download release</a>
+            <a
+              class="btn primary large"
+              href="https://github.com/flik-lab/layang/releases"
+              >Download release</a
+            >
             <a class="btn large" href="https://github.com/flik-lab/layang"
               >Open GitHub</a
             >
@@ -391,6 +469,7 @@ layang mock:check ./workspace</pre
         </div>
         <div class="footer-links">
           <a href="#features">Features</a>
+          <a href="#websocket">WebSocket beta</a>
           <a href="#mocking">Mocking</a>
           <a href="#documentation">Docs</a>
           <a href="#cli">CLI</a>
