@@ -22,7 +22,7 @@ function ensureElectronWinstaller7z() {
 export default {
   packagerConfig: {
     name: "Layang",
-    executableName: "Layang",
+    executableName: "layang",
     appBundleId: "fliklab.layang.desktop",
     appCategoryType: "public.app-category.developer-tools",
     icon: path.join(rootDir, "electron", "assets", "icon"),
@@ -52,7 +52,7 @@ export default {
         name: "Layang",
         authors: "Flik & Layang contributors",
         description: "Local-first gRPC and mock server workbench.",
-        setupIcon: path.join(rootDir, "electron", "assets", "icon-layang.ico"),
+        setupIcon: path.join(rootDir, "electron", "assets", "icon.ico"),
       },
     },
     {
