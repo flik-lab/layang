@@ -1,10 +1,11 @@
 "use strict";
 
+const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const grpc = require("@grpc/grpc-js");
 const protoLoader = require("@grpc/proto-loader");
-const { readJsonIfExists, walkDirectory } = require("../utils/file-utils.cjs");
+const { readJsonIfExists, walkDirectory, writeProtoWorkspace } = require("../utils/file-utils.cjs");
 const { safeRelativePath } = require("../utils/path-utils.cjs");
 
 let activeMockServer = null;
@@ -176,6 +177,18 @@ function normalizeMockServerPort(value) {
   const numeric = Math.floor(Number(value));
   if (!Number.isFinite(numeric) || numeric <= 0) return 50055;
   return Math.max(1, Math.min(65535, numeric));
+}
+
+/**
+ * Finds a nested package/service object by dotted path.
+ */
+function getByDottedPath(root, dottedPath) {
+  return dottedPath.split(".").reduce((current, part) => {
+    if (current && Object.hasOwn(current, part)) {
+      return current[part];
+    }
+    return undefined;
+  }, root);
 }
 
 /**

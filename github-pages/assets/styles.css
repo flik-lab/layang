@@ -144,12 +144,12 @@ code {
   background: rgba(251, 191, 36, 0.14);
   box-shadow: 0 16px 38px rgba(251, 191, 36, 0.14);
 }
-.btn.star-btn span {
+.btn.star-btn .star-icon {
   color: var(--yellow);
   font-size: 15px;
   line-height: 1;
 }
-.btn.star-btn strong {
+.btn.star-btn .star-count {
   display: inline-flex;
   align-items: center;
   min-height: 22px;

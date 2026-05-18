@@ -1031,13 +1031,13 @@ export function Switch({ checked, onChange, size: _size, ...props }: AnyProps) {
       aria-checked={checked}
       onClick={(event: React.MouseEvent<HTMLButtonElement>) => onChange?.({ ...event, target: { checked: !checked } })}
       className={cn(
-        "relative inline-flex h-4 w-8 shrink-0 rounded-full border border-border transition-colors",
+        "inline-flex h-4 w-8 shrink-0 items-center rounded-full border border-border p-0.5 transition-colors",
         checked ? "bg-primary" : "bg-muted",
       )}
     >
       <span
         className={cn(
-          "absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-background shadow transition-transform",
+          "block h-3 w-3 rounded-full bg-background shadow transition-transform",
           checked ? "translate-x-4" : "translate-x-0",
         )}
       />

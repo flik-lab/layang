@@ -36,17 +36,12 @@
           <a href="#cli">CLI</a>
         </nav>
         <div class="nav-actions">
-          <a
-            class="btn ghost"
-            href="https://github.com/flik-lab/layang"
-            aria-label="GitHub repository"
-            >GitHub</a
-          >
-          <a
-            class="btn primary"
-            href="https://github.com/flik-lab/layang/releases"
-            >Download</a
-          >
+          <a class="btn star-btn" href="https://github.com/flik-lab/layang" aria-label="Star Layang on GitHub">
+            <span class="star-icon" aria-hidden="true">&#9733;</span>
+            Star
+            <strong class="star-count" data-github-stars>5</strong>
+          </a>
+          <a class="btn primary" href="https://github.com/flik-lab/layang/releases">Download</a>
         </div>
       </div>
     </header>
@@ -70,24 +65,15 @@
             beta WebSocket workflow for early testing.
           </p>
           <div class="hero-actions centered-actions">
-            <a
-              class="btn primary large"
-              href="https://github.com/flik-lab/layang/releases"
-              >Download release</a
-            >
-            <a
-              class="btn large star-btn"
-              href="https://github.com/flik-lab/layang"
-              aria-label="Star Layang on GitHub"
-            >
-              <span aria-hidden="true">★</span>
+            <a class="btn primary large" href="https://github.com/flik-lab/layang/releases">Download release</a>
+            <a class="btn large star-btn" href="https://github.com/flik-lab/layang" aria-label="Star Layang on GitHub">
+              <span class="star-icon" aria-hidden="true">&#9733;</span>
               Star on GitHub
+              <strong class="star-count" data-github-stars>5</strong>
             </a>
           </div>
           <div class="install-strip" aria-label="CLI command preview">
-            <span class="terminal-dot red"></span
-            ><span class="terminal-dot yellow"></span
-            ><span class="terminal-dot green"></span>
+            <span class="terminal-dot red"></span><span class="terminal-dot yellow"></span><span class="terminal-dot green"></span>
             <code>layang run ./workspace --env dev --reporter junit</code>
           </div>
         </div>
@@ -96,8 +82,7 @@
           <div class="product-glow"></div>
           <figure class="product-shot">
             <div class="shot-toolbar">
-              <span class="traffic"></span><span class="traffic"></span
-              ><span class="traffic"></span>
+              <span class="traffic"></span><span class="traffic"></span><span class="traffic"></span>
               <span>Layang Workbench</span>
             </div>
             <img
@@ -145,8 +130,7 @@
             <pre class="code-block mini">
 target: localhost:50051
 method: demo.v1.GreeterService/SayHello
-transport: native-grpc</pre
-            >
+transport: native-grpc</pre>
           </article>
           <article class="bento-card">
             <h3>WebSocket beta</h3>
@@ -209,26 +193,17 @@ transport: native-grpc</pre
           <div class="comparison-row">
             <span>Client</span>
             <span>Beta</span>
-            <span
-              >Open ws/wss connections, send payloads, and inspect live
-              events.</span
-            >
+            <span>Open ws/wss connections, send payloads, and inspect live events.</span>
           </div>
           <div class="comparison-row">
             <span>Mocking</span>
             <span>Beta</span>
-            <span
-              >Run a local desktop WebSocket mock server and send responses to
-              connected clients.</span
-            >
+            <span>Run a local desktop WebSocket mock server and send responses to connected clients.</span>
           </div>
           <div class="comparison-row">
             <span>Docs and reports</span>
             <span>Beta</span>
-            <span
-              >Publish WebSocket docs and export benchmark data from the active
-              workspace.</span
-            >
+            <span>Publish WebSocket docs and export benchmark data from the active workspace.</span>
           </div>
         </div>
       </section>
@@ -272,8 +247,7 @@ mocks/
 environments/
   environments.json
 history/
-  history.json</pre
-            >
+  history.json</pre>
           </div>
         </div>
       </section>
@@ -347,24 +321,15 @@ history/
             <div class="timeline-list">
               <div>
                 <strong>Proto reference</strong>
-                <span
-                  >Service, method, request, response, and source `.proto`
-                  information.</span
-                >
+                <span>Service, method, request, response, and source `.proto` information.</span>
               </div>
               <div>
                 <strong>Examples and responses</strong>
-                <span
-                  >Saved request examples and latest responses become readable
-                  docs sections.</span
-                >
+                <span>Saved request examples and latest responses become readable docs sections.</span>
               </div>
               <div>
                 <strong>Static publishing</strong>
-                <span
-                  >Export docs for a static site or keep them inside the
-                  workspace folder.</span
-                >
+                <span>Export docs for a static site or keep them inside the workspace folder.</span>
               </div>
             </div>
           </div>
@@ -394,9 +359,7 @@ history/
         <div class="container cli-grid">
           <div class="terminal-card">
             <div class="terminal-bar">
-              <span class="terminal-dot red"></span
-              ><span class="terminal-dot yellow"></span
-              ><span class="terminal-dot green"></span>
+              <span class="terminal-dot red"></span><span class="terminal-dot yellow"></span><span class="terminal-dot green"></span>
             </div>
             <pre>
 layang validate ./workspace --json
@@ -405,29 +368,20 @@ layang run ./workspace \
   --env dev \
   --reporter junit \
   --output reports/layang-junit.xml
-layang mock:check ./workspace</pre
-            >
+layang mock:check ./workspace</pre>
           </div>
           <div class="cli-points">
             <article>
               <strong>Validate</strong>
-              <span
-                >Check workspace structure, request files, proto availability,
-                and mock scenario files.</span
-              >
+              <span>Check workspace structure, request files, proto availability, and mock scenario files.</span>
             </article>
             <article>
               <strong>Run</strong>
-              <span
-                >Execute saved native gRPC requests with clear exit codes for
-                CI/CD.</span
-              >
+              <span>Execute saved native gRPC requests with clear exit codes for CI/CD.</span>
             </article>
             <article>
               <strong>Report</strong>
-              <span
-                >Output spec, JSON, or JUnit reports for build pipelines.</span
-              >
+              <span>Output spec, JSON, or JUnit reports for build pipelines.</span>
             </article>
           </div>
         </div>
@@ -446,14 +400,12 @@ layang mock:check ./workspace</pre
             </p>
           </div>
           <div class="final-actions">
-            <a
-              class="btn primary large"
-              href="https://github.com/flik-lab/layang/releases"
-              >Download release</a
-            >
-            <a class="btn large" href="https://github.com/flik-lab/layang"
-              >Open GitHub</a
-            >
+            <a class="btn primary large" href="https://github.com/flik-lab/layang/releases">Download release</a>
+            <a class="btn large star-btn" href="https://github.com/flik-lab/layang" aria-label="Star Layang on GitHub">
+              <span class="star-icon" aria-hidden="true">&#9733;</span>
+              Star on GitHub
+              <strong class="star-count" data-github-stars>5</strong>
+            </a>
           </div>
         </div>
       </section>
@@ -462,9 +414,7 @@ layang mock:check ./workspace</pre
     <footer class="footer">
       <div class="container footer-grid">
         <div>
-          <a class="brand footer-brand" href="index.html"
-            ><img src="assets/layang-logo.png" alt="" /><span>Layang</span></a
-          >
+          <a class="brand footer-brand" href="index.html"><img src="assets/layang-logo.png" alt="" /><span>Layang</span></a>
           <p>Workspace-based API tooling for protobuf and gRPC teams.</p>
         </div>
         <div class="footer-links">
@@ -476,5 +426,6 @@ layang mock:check ./workspace</pre
         </div>
       </div>
     </footer>
+    <script src="assets/site.js" defer></script>
   </body>
 </html>

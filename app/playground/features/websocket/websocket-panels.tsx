@@ -84,7 +84,7 @@ export function WebSocketMockSidebar({
     <Stack spacing={1.1}>
       <Alert severity={request ? "info" : "warning"}>
         {request
-          ? "WS Mock is a real local WebSocket server/listener. It never echoes client messages; it only sends the body data manually or periodically."
+          ? "WS Mock is a real local WebSocket server/listener."
           : "Select or create a WebSocket request to edit and run its mock server/listener."}
       </Alert>
       <Paper variant="outlined" sx={{ p: 1, borderRadius: 2 }}>
@@ -193,12 +193,7 @@ export function WebSocketMockSidebar({
           </Stack>
         </Stack>
       </Paper>
-      <Paper variant="outlined" sx={{ p: 1, borderRadius: 2 }}>
-        <Typography variant="body2" fontWeight={600} sx={{ mb: 0.7 }}>
-          Latest WebSocket response
-        </Typography>
-        <FeatureJsonBlock value={latestResult ?? { message: "Connect a WebSocket request to capture a response." }} />
-      </Paper>
+      
     </Stack>
   );
 }

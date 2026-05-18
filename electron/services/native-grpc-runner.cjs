@@ -1,11 +1,9 @@
 "use strict";
 
-const { app } = require("electron");
-const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
-const path = require("node:path");
 const grpc = require("@grpc/grpc-js");
 const protoLoader = require("@grpc/proto-loader");
+const { writeProtoWorkspace } = require("../utils/file-utils.cjs");
 const { safeRelativePath } = require("../utils/path-utils.cjs");
 
 /**
@@ -163,30 +161,6 @@ function validatePayload(payload) {
   if (!payload.method || typeof payload.method !== "object") throw new Error("RPC method metadata is required.");
   if (!Array.isArray(payload.protoFiles) || payload.protoFiles.length === 0)
     throw new Error("At least one proto file is required.");
-}
-
-/**
- * Writes uploaded proto files to a temporary native gRPC workspace.
- */
-async function writeProtoWorkspace(protoFiles) {
-  const id = crypto.randomBytes(8).toString("hex");
-  const workspaceDir = path.join(app.getPath("temp"), `layang-${id}`);
-  await fs.mkdir(workspaceDir, { recursive: true });
-
-  for (const file of protoFiles) {
-    const relativePath = safeRelativePath(file.name);
-    const absolutePath = path.join(workspaceDir, relativePath);
-    const normalizedAbsolute = path.normalize(absolutePath);
-
-    if (!normalizedAbsolute.startsWith(path.normalize(workspaceDir))) {
-      throw new Error(`Unsafe proto path: ${file.name}`);
-    }
-
-    await fs.mkdir(path.dirname(normalizedAbsolute), { recursive: true });
-    await fs.writeFile(normalizedAbsolute, String(file.text || ""), "utf8");
-  }
-
-  return workspaceDir;
 }
 
 /**

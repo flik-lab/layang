@@ -4353,6 +4353,7 @@ export default function PlaygroundPage() {
             active={sidebarOpen && sideSection === "ws-mocks"}
             icon={<Stream />}
             label="WS Mock"
+            status={wsMockStatus.running ? "running" : "idle"}
             onClick={() => {
               setSideSection("ws-mocks");
               setSidebarOpen(true);

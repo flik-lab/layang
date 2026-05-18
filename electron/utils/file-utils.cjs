@@ -1,7 +1,10 @@
 "use strict";
 
+const { app } = require("electron");
+const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const { safeRelativePath } = require("./path-utils.cjs");
 
 async function readJsonIfExists(filePath) {
   try {
@@ -22,6 +25,27 @@ async function writeTextInside(rootDir, relativePath, text) {
   await fs.writeFile(targetPath, text, "utf8");
 }
 
+async function writeProtoWorkspace(protoFiles) {
+  const id = crypto.randomBytes(8).toString("hex");
+  const workspaceDir = path.join(app.getPath("temp"), `layang-${id}`);
+  await fs.mkdir(workspaceDir, { recursive: true });
+
+  for (const file of protoFiles) {
+    const relativePath = safeRelativePath(file.name);
+    const absolutePath = path.join(workspaceDir, relativePath);
+    const normalizedAbsolute = path.normalize(absolutePath);
+
+    if (!normalizedAbsolute.startsWith(path.normalize(workspaceDir))) {
+      throw new Error(`Unsafe proto path: ${file.name}`);
+    }
+
+    await fs.mkdir(path.dirname(normalizedAbsolute), { recursive: true });
+    await fs.writeFile(normalizedAbsolute, String(file.text || ""), "utf8");
+  }
+
+  return workspaceDir;
+}
+
 async function walkDirectory(directoryPath, visitor) {
   let entries;
   try {
@@ -38,4 +62,4 @@ async function walkDirectory(directoryPath, visitor) {
   }
 }
 
-module.exports = { readJsonIfExists, walkDirectory, writeTextInside };
+module.exports = { readJsonIfExists, walkDirectory, writeProtoWorkspace, writeTextInside };
