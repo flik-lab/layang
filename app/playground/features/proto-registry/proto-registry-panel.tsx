@@ -2,7 +2,7 @@
 
 import type { MouseEvent as ReactMouseEvent } from "react";
 
-import { Delete, Download, ProtoIcon, Schema, Storage, Stream, Terminal } from "@/components/shadcn/icons";
+import { Add, Delete, Download, ProtoIcon, Schema, Storage, Stream, Terminal } from "@/components/shadcn/icons";
 import {
   Box,
   Chip,
@@ -16,6 +16,7 @@ import {
   Typography,
 } from "@/components/shadcn/compat";
 import type { LoadedProto, ProtoSourceFile, RpcMethodInfo } from "@/lib/types";
+import type { ApiCollection, ApiCollectionRequest } from "../../shared/workbench-types";
 
 type EndpointServiceGroup = {
   serviceName: string;
@@ -86,6 +87,7 @@ export function buildEndpointGroups(
 /** Renders the proto registry tree and opens proto files in a preview dialog. */
 export function RegistryPanel({
   protoFiles,
+  collections,
   endpointGroups,
   selectedMethodKey,
   loaded,
@@ -93,8 +95,13 @@ export function RegistryPanel({
   onOpenProto,
   onExportProto,
   onSelectMethod,
+  selectedCollectionRequestId,
+  onSelectCollectionRequest,
+  onAddCollectionRequest,
+  onRemoveCollection,
 }: {
   protoFiles: ProtoSourceFile[];
+  collections: ApiCollection[];
   endpointGroups: EndpointFileGroup[];
   selectedMethodKey: string;
   loaded: LoadedProto | null;
@@ -102,8 +109,16 @@ export function RegistryPanel({
   onOpenProto: (file: ProtoSourceFile) => void;
   onExportProto: (file: ProtoSourceFile) => void;
   onSelectMethod: (method: RpcMethodInfo) => void;
+  selectedCollectionRequestId?: string;
+  onSelectCollectionRequest: (collection: ApiCollection, request: ApiCollectionRequest) => void;
+  onAddCollectionRequest: (collectionId: string) => void;
+  onImportGrpcRequest: (collectionId: string) => void;
+  onRemoveCollection: (collectionId: string) => void;
 }) {
-  if (protoFiles.length === 0) return <SmallEmpty body="No proto imported yet." />;
+  if (protoFiles.length === 0 && collections.length === 0)
+    return (
+      <SmallEmpty body="No collection yet. Use the + menu to add a WebSocket collection or import a gRPC proto." />
+    );
 
   const summarySx = {
     cursor: "pointer",
@@ -115,12 +130,102 @@ export function RegistryPanel({
     <Stack spacing={0.25}>
       <Stack direction="row" spacing={0.5} alignItems="center" sx={{ px: 0.2, pb: 0.4 }}>
         <Typography variant="caption" color="text.secondary" noWrap>
-          Endpoints
+          Collections
         </Typography>
         <Chip size="small" label={loaded?.methods.length ?? 0} />
       </Stack>
+      {collections.map((collection) => (
+        <Box key={collection.id} component="details" open sx={{ "&[open] > summary": { color: "text.primary" } }}>
+          <Box component="summary" sx={summarySx}>
+            <Stack
+              direction="row"
+              spacing={0.55}
+              alignItems="center"
+              sx={{ minHeight: 22, px: 0.3, borderRadius: 1, "&:hover": { bgcolor: "action.hover" } }}
+            >
+              <Storage sx={{ fontSize: 14 }} color="primary" />
+              <Typography fontWeight={520} fontSize={11.3} noWrap title={collection.name} sx={{ flex: 1, minWidth: 0 }}>
+                {collection.name}
+              </Typography>
+              <Chip
+                size="small"
+                label={collection.requests.length}
+                sx={{ height: 18, "& .MuiChip-label": { px: 0.65 } }}
+              />
+              <IconButton
+                size="small"
+                title="Add WebSocket request"
+                aria-label={`Add WebSocket request to ${collection.name}`}
+                onClick={(event: ReactMouseEvent<HTMLButtonElement>) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onAddCollectionRequest(collection.id);
+                }}
+                sx={{ p: 0.2 }}
+              >
+                <Add sx={{ fontSize: 14 }} />
+              </IconButton>
+              <IconButton
+                size="small"
+                title="Delete collection"
+                color="error"
+                onClick={(event: ReactMouseEvent<HTMLButtonElement>) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onRemoveCollection(collection.id);
+                }}
+                sx={{ p: 0.2 }}
+              >
+                <Delete sx={{ fontSize: 14 }} />
+              </IconButton>
+            </Stack>
+          </Box>
+          <Stack spacing={0.1} sx={{ pl: 1.15, pt: 0.1, pb: 0.35 }}>
+            <List dense disablePadding className="collection-request-list" sx={{ pl: 0.45 }}>
+              {collection.requests.map((request) => {
+                const active = selectedCollectionRequestId === request.id;
+                return (
+                  <ListItemButton
+                    key={request.id}
+                    selected={active}
+                    title={`${request.kind.toUpperCase()} ${request.url}`}
+                    onClick={() => onSelectCollectionRequest(collection, request)}
+                    sx={{
+                      minHeight: 22,
+                      borderRadius: 1,
+                      mb: 0.03,
+                      px: 0.35,
+                      py: 0,
+                      "&.Mui-selected": { bgcolor: "action.selected" },
+                    }}
+                  >
+                    <ListItemIcon sx={{ minWidth: 22 }}>
+                      {request.kind === "websocket" ? (
+                        <Stream sx={{ fontSize: 13 }} color="primary" />
+                      ) : (
+                        <Terminal sx={{ fontSize: 13 }} color="primary" />
+                      )}
+                    </ListItemIcon>
+                    <ListItemText
+                      primary={`${requestKindBadge(request)}  ${request.name}`}
+                      primaryTypographyProps={{
+                        fontSize: 11.1,
+                        fontWeight: active ? 540 : 450,
+                        noWrap: true,
+                        title: `${request.name} - ${request.url}`,
+                      }}
+                    />
+                  </ListItemButton>
+                );
+              })}
+            </List>
+          </Stack>
+        </Box>
+      ))}
       {endpointGroups.length === 0 ? (
-        <SmallEmpty body="No matching proto, service, or method." />
+        collections.length === 0 ? (
+          <SmallEmpty body="No matching collection, service, or request." />
+        ) : null
       ) : (
         endpointGroups.map((fileGroup) => {
           const protoFile = fileGroup.protoFile;
@@ -314,6 +419,11 @@ export function ProtoSourceBlock({ file }: { file: ProtoSourceFile }) {
       </pre>
     </div>
   );
+}
+
+function requestKindBadge(request: ApiCollectionRequest): string {
+  if (request.kind === "grpc") return "RPC";
+  return "WS";
 }
 
 /** Extracts import statements from a proto source file. */

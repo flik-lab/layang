@@ -85,6 +85,77 @@ declare global {
         updatedAt?: string;
       }>;
     };
+
+    electronWsMock?: {
+      isAvailable: boolean;
+      start?: (payload: {
+        port: number;
+        path?: string;
+        responseText: string;
+        intervalMs?: number;
+        loop?: boolean;
+        maxLoops?: number;
+        streamOnConnect?: boolean;
+        sendOnMessage?: boolean;
+      }) => Promise<{
+        ok: boolean;
+        running?: boolean;
+        port?: number;
+        path?: string;
+        url?: string;
+        clientCount?: number;
+        messageCount?: number;
+        intervalMs?: number;
+        loop?: boolean;
+        maxLoops?: number;
+        streamOnConnect?: boolean;
+        sendOnMessage?: boolean;
+        startedAt?: string;
+        updatedAt?: string;
+        error?: string;
+      }>;
+      update?: (payload: {
+        port?: number;
+        path?: string;
+        responseText?: string;
+        intervalMs?: number;
+        loop?: boolean;
+        maxLoops?: number;
+        streamOnConnect?: boolean;
+        sendOnMessage?: boolean;
+      }) => Promise<{
+        ok: boolean;
+        running?: boolean;
+        url?: string;
+        clientCount?: number;
+        messageCount?: number;
+        error?: string;
+      }>;
+      send?: (payload?: { responseText?: string }) => Promise<{
+        ok: boolean;
+        sent?: number;
+        running?: boolean;
+        clientCount?: number;
+        messageCount?: number;
+        error?: string;
+      }>;
+      stop?: () => Promise<{ ok: boolean; running?: boolean; message?: string; error?: string }>;
+      status?: () => Promise<{
+        running: boolean;
+        port?: number;
+        path?: string;
+        url?: string;
+        clientCount?: number;
+        messageCount?: number;
+        intervalMs?: number;
+        loop?: boolean;
+        maxLoops?: number;
+        streamOnConnect?: boolean;
+        sendOnMessage?: boolean;
+        startedAt?: string;
+        updatedAt?: string;
+      }>;
+    };
     electronWindow?: {
       isAvailable: boolean;
       minimize?: () => Promise<{ ok: boolean }>;

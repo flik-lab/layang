@@ -261,7 +261,7 @@ button:disabled {
   line-height: 1;
   overflow: hidden;
   cursor: default;
-  -webkit-app-region: no-drag;
+  -webkit-app-region: drag;
 }
 
 .request-tab:focus-visible {
@@ -326,6 +326,7 @@ button:disabled {
   opacity: 0.72;
   padding: 0;
   cursor: pointer;
+  -webkit-app-region: no-drag;
 }
 
 .request-tab__action:hover {
@@ -594,4 +595,58 @@ button:disabled {
 .workbench-stacked-tab {
   transform: translateZ(0);
   backface-visibility: hidden;
+}
+
+.workbench-url-input {
+  height: 28px;
+  font-size: 11.2px;
+  line-height: 1.2;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.collection-add-request {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  min-height: 24px;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font-size: 11.4px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.collection-add-request:hover {
+  background: var(--hover);
+}
+
+.collection-request-list {
+  gap: 1px;
+}
+
+.collection-request-list .shadcn-list-button {
+  min-height: 22px;
+  padding: 1px 4px;
+  gap: 4px;
+  border-radius: 6px;
+}
+
+.collection-request-list .shadcn-list-button > span:first-child {
+  min-width: 24px;
+}
+
+.collection-request-list .shadcn-list-button > span:last-child > span:first-child {
+  font-size: 10.9px;
+  line-height: 1.25;
+}
+
+/* Keep the titlebar draggable across the tab strip while preserving clicks on tab labels/actions. */
+.request-tab__dot,
+.request-tab__title {
+  -webkit-app-region: no-drag;
 }

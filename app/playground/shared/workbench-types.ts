@@ -1,11 +1,12 @@
 import type { ColorMode } from "../design-system";
 import type { GrpcResult, MetadataPair, ProtoSourceFile, RpcMethodInfo } from "@/lib/types";
 
-export type TransportMode = "grpc-web" | "native-grpc";
+export type TransportMode = "grpc-web" | "native-grpc" | "websocket" | "rest";
 export type EnvironmentKey = string;
-export type RequestTab = "body" | "metadata" | "schema" | "docs" | "benchmark" | "examples" | "assertions" | "mock";
+export type RequestTab = "body" | "metadata" | "schema" | "docs" | "benchmark" | "examples" | "mock" | "history";
 export type ResponseTab = "messages" | "trailers" | "headers" | "raw" | "history" | "report";
-export type SideSection = "registry" | "examples" | "history" | "docs" | "mocks";
+export type ApiRequestKind = "rest" | "grpc" | "websocket";
+export type SideSection = "registry" | "examples" | "history" | "docs" | "mocks" | "ws-mocks";
 
 export type EnvironmentConfig = {
   key: string;
@@ -42,6 +43,29 @@ export type SavedExample = {
   metadata: MetadataPair[];
   expectedJson: string;
   createdAt: string;
+};
+
+export type ApiCollectionRequest = {
+  id: string;
+  collectionId: string;
+  name: string;
+  kind: ApiRequestKind;
+  method?: string;
+  url: string;
+  grpcMethodKey?: string;
+  body: string;
+  headers: MetadataPair[];
+  mockResponse?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ApiCollection = {
+  id: string;
+  name: string;
+  requests: ApiCollectionRequest[];
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type AssertionResult = {
@@ -113,6 +137,23 @@ export type MockServerStatus = {
   startedAt?: string;
   updatedAt?: string;
   configVersion?: number;
+};
+
+export type WebSocketMockStatus = {
+  running: boolean;
+  port?: number;
+  path?: string;
+  url?: string;
+  clientCount?: number;
+  messageCount?: number;
+  intervalMs?: number;
+  loop?: boolean;
+  maxLoops?: number;
+  streamOnConnect?: boolean;
+  sendOnMessage?: boolean;
+  message?: string;
+  startedAt?: string;
+  updatedAt?: string;
 };
 
 export type MockScenarioResponse = {
@@ -188,6 +229,9 @@ export type RequestSession = {
   requestJson: string;
   metadata: MetadataPair[];
   transportMode: TransportMode;
+  requestKind?: ApiRequestKind;
+  requestUrl?: string;
+  httpMethod?: string;
   baseUrl: string;
   nativeTarget: string;
   environmentKey: EnvironmentKey;
@@ -206,11 +250,15 @@ export type ProjectData = {
   version: 2;
   updatedAt: string;
   transportMode: TransportMode;
+  requestKind?: ApiRequestKind;
+  requestUrl?: string;
+  httpMethod?: string;
   baseUrl: string;
   nativeTarget: string;
   environmentKey: EnvironmentKey;
   environments: EnvironmentConfig[];
   protoFiles: ProtoSourceFile[];
+  collections: ApiCollection[];
   selectedMethodKey: string;
   requestJson: string;
   metadata: MetadataPair[];

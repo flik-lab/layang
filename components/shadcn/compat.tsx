@@ -855,7 +855,7 @@ export function Alert({
     info:
       variant === "filled"
         ? { backgroundColor: tokens.primary, borderColor: tokens.primaryStrong, color: "#ffffff" }
-        : { backgroundColor: tokens.surface, borderColor: "rgba(139, 124, 255, 0.55)", color: tokens.primaryStrong },
+        : { backgroundColor: tokens.surface, borderColor: "rgba(59, 130, 246, 0.55)", color: tokens.primaryStrong },
   };
   return (
     <div

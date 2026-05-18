@@ -189,8 +189,6 @@ export function renderMethodPublicationMarkdown(input: {
     "",
     "## Examples",
     "",
-    renderExpectedExampleGuide(),
-    "",
     examples.length
       ? examples.flatMap((example, index) => renderExampleDocBlock(example, index)).join("\n")
       : "No saved examples yet.",
@@ -208,10 +206,9 @@ export function renderMethodPublicationMarkdown(input: {
 }
 
 /**
- * Renders one saved example with request, metadata, and expected response snippets.
+ * Renders one saved example with request and metadata snippets.
  */
 export function renderExampleDocBlock(example: SavedExample, index: number): string[] {
-  const expectedText = example.expectedJson.trim();
   return [
     `### ${index + 1}. ${example.name}`,
     "",
@@ -221,31 +218,7 @@ export function renderExampleDocBlock(example: SavedExample, index: number): str
     safePrettyJson(safeJsonParse(example.requestJson.trim() || "{}")),
     "```",
     "",
-    expectedText ? "Expected / test assertions:" : "Expected / test assertions: not defined",
-    ...(expectedText ? ["", "```json", safePrettyJson(safeJsonParse(expectedText)), "```"] : []),
-    "",
   ];
-}
-
-/**
- * Documents how the Examples > Expected/Test field is evaluated when an example is run.
- */
-export function renderExpectedExampleGuide(): string {
-  return [
-    "### How to fill Expected / Tests",
-    "",
-    "The Expected field is the JSON from the Tests tab that runs when the saved example is executed. Leave it empty to skip validation.",
-    "",
-    "Supported keys:",
-    "",
-    "```json",
-    safePrettyJson({ grpcStatus: "0", minMessages: 1, maxLatencyMs: 1000 }),
-    "```",
-    "",
-    "- `grpcStatus`: expected gRPC trailer status, for example `0` for OK.",
-    "- `minMessages`: minimum response messages expected. Use `1` for unary responses and higher values for streams.",
-    "- `maxLatencyMs`: maximum total request duration in milliseconds.",
-  ].join("\n");
 }
 
 /**

@@ -1,4 +1,4 @@
-export type TransportMode = "grpc-web" | "native-grpc";
+export type TransportMode = "grpc-web" | "native-grpc" | "websocket" | "rest";
 export type EnvironmentKey = string;
 
 export type EnvironmentConfig = {
@@ -65,7 +65,7 @@ export function environmentLabel(environments: EnvironmentConfig[], key: Environ
 /** Resolves a short label for the compact environment button. */
 export function environmentShortLabel(environments: EnvironmentConfig[], key: EnvironmentKey): string {
   const label = environmentLabel(environments, key);
-  return label.length > 3 ? `${label.slice(0, 3)}...` : label;
+  return label.length > 8 ? `${label.slice(0, 8)}...` : label;
 }
 
 /** Resolves the URL/target to use for a transport mode and environment key. */
@@ -78,7 +78,7 @@ export function getEnvironmentTarget(
 ): string {
   if (key !== "default" && key !== "manual") {
     const env = environments.find((item) => item.key === key) ?? defaultEnvironments.find((item) => item.key === key);
-    if (env) return transport === "grpc-web" ? env.grpcWebBaseUrl : env.nativeTarget;
+    if (env) return transport === "native-grpc" ? env.nativeTarget : env.grpcWebBaseUrl;
   }
-  return transport === "grpc-web" ? fallbackBaseUrl : fallbackNativeTarget;
+  return transport === "native-grpc" ? fallbackNativeTarget : fallbackBaseUrl;
 }

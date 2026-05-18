@@ -31,6 +31,8 @@ import type {
   LegacyWorkspace,
   MethodDoc,
   ProjectData,
+  ApiCollection,
+  ApiCollectionRequest,
   RequestSession,
   ResponseTab,
   SavedExample,
@@ -48,6 +50,7 @@ export function defaultProjectData(): ProjectData {
     environmentKey: "default",
     environments: defaultEnvironments,
     protoFiles: [],
+    collections: [],
     selectedMethodKey: "",
     requestJson: "{}",
     metadata: defaultMetadata,
@@ -128,6 +131,7 @@ export function normalizeProjectData(input: Partial<ProjectData> | LegacyWorkspa
       : "default",
     environments: featureMergeEnvironments((data as ProjectData).environments),
     protoFiles: Array.isArray(data.protoFiles) ? data.protoFiles : [],
+    collections: normalizeApiCollections((data as ProjectData).collections),
     metadata: Array.isArray(data.metadata) ? data.metadata : defaultMetadata,
     examples: Array.isArray(data.examples) ? data.examples : [],
     methodDocs: Array.isArray((data as ProjectData).methodDocs)
@@ -140,7 +144,8 @@ export function normalizeProjectData(input: Partial<ProjectData> | LegacyWorkspa
     mockServer: normalizeMockServerProject((data as ProjectData).mockServer),
     requestTabs: normalizedTabs,
     activeRequestId,
-    transportMode: data.transportMode === "native-grpc" ? "native-grpc" : "grpc-web",
+    transportMode:
+      data.transportMode === "native-grpc" || data.transportMode === "websocket" ? data.transportMode : "grpc-web",
     baseUrl: data.baseUrl ?? defaults.baseUrl,
     nativeTarget: data.nativeTarget ?? defaults.nativeTarget,
     selectedMethodKey: data.selectedMethodKey ?? "",
@@ -157,6 +162,7 @@ export function looksLikeProjectData(value: unknown): value is Partial<ProjectDa
   const record = value as Partial<ProjectData>;
   return (
     Array.isArray(record.protoFiles) ||
+    Array.isArray((record as ProjectData).collections) ||
     Array.isArray(record.environments) ||
     Array.isArray(record.requestTabs) ||
     Array.isArray(record.examples) ||
@@ -165,6 +171,66 @@ export function looksLikeProjectData(value: unknown): value is Partial<ProjectDa
     typeof record.baseUrl === "string" ||
     typeof record.nativeTarget === "string"
   );
+}
+
+/**
+ * Normalizes custom API collections used for WebSocket, gRPC, and future request types.
+ */
+export function normalizeApiCollections(input: unknown): ApiCollection[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((collection): collection is Partial<ApiCollection> => Boolean(collection && typeof collection === "object"))
+    .map((collection) => {
+      const id = typeof collection.id === "string" && collection.id ? collection.id : createId();
+      const now = new Date().toISOString();
+      return {
+        id,
+        name: typeof collection.name === "string" && collection.name.trim() ? collection.name : "Untitled Collection",
+        requests: normalizeApiCollectionRequests(collection.requests, id),
+        createdAt: typeof collection.createdAt === "string" ? collection.createdAt : now,
+        updatedAt: typeof collection.updatedAt === "string" ? collection.updatedAt : now,
+      };
+    });
+}
+
+function normalizeApiCollectionRequests(input: unknown, collectionId: string): ApiCollectionRequest[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((request): request is Partial<ApiCollectionRequest> => Boolean(request && typeof request === "object"))
+    .map((request) => {
+      const now = new Date().toISOString();
+      const kind = request.kind === "grpc" ? "grpc" : "websocket";
+      return {
+        id: typeof request.id === "string" && request.id ? request.id : createId(),
+        collectionId,
+        name:
+          typeof request.name === "string" && request.name.trim() ? request.name : defaultCollectionRequestName(kind),
+        kind,
+        method:
+          typeof request.method === "string" && request.method && kind === "grpc"
+            ? request.method.toUpperCase()
+            : undefined,
+        url: typeof request.url === "string" ? request.url : defaultCollectionRequestUrl(kind),
+        grpcMethodKey: typeof request.grpcMethodKey === "string" ? request.grpcMethodKey : undefined,
+        body: typeof request.body === "string" ? request.body : kind === "websocket" ? "" : "{}",
+        headers: Array.isArray(request.headers) ? request.headers : [],
+        mockResponse: typeof request.mockResponse === "string" ? request.mockResponse : undefined,
+        createdAt: typeof request.createdAt === "string" ? request.createdAt : now,
+        updatedAt: typeof request.updatedAt === "string" ? request.updatedAt : now,
+      };
+    });
+}
+
+function defaultCollectionRequestName(kind: ApiCollectionRequest["kind"]): string {
+  if (kind === "websocket") return "WebSocket Request";
+  if (kind === "grpc") return "gRPC Request";
+  return "WebSocket Request";
+}
+
+function defaultCollectionRequestUrl(kind: ApiCollectionRequest["kind"]): string {
+  if (kind === "websocket") return "ws://localhost:8080";
+  if (kind === "grpc") return "http://localhost:9080/grpc/web";
+  return "ws://localhost:8080";
 }
 
 /**
@@ -245,7 +311,14 @@ export function normalizeRequestSession(session: RequestSession): RequestSession
   return {
     ...session,
     metadata: Array.isArray(session.metadata) ? session.metadata : [],
-    transportMode: session.transportMode === "native-grpc" ? "native-grpc" : "grpc-web",
+    transportMode:
+      session.transportMode === "native-grpc" || session.transportMode === "websocket"
+        ? session.transportMode
+        : "grpc-web",
+    requestKind:
+      session.requestKind === "grpc" || session.requestKind === "websocket" ? session.requestKind : undefined,
+    requestUrl: session.requestUrl ?? "",
+    httpMethod: session.httpMethod ?? "GET",
     baseUrl: session.baseUrl ?? "http://localhost:9080/grpc/web",
     nativeTarget: session.nativeTarget ?? "localhost:50051",
     environmentKey: isEnvironmentKey(session.environmentKey) ? session.environmentKey : "default",

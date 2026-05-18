@@ -34,6 +34,7 @@ import {
   Search,
   Storage,
   StopCircle,
+  Stream,
   UploadFile,
 } from "@/components/shadcn/icons";
 import {
@@ -58,7 +59,6 @@ import {
   Select,
   Snackbar,
   Stack,
-  Switch,
   Table,
   TableBody,
   TableCell,
@@ -107,6 +107,20 @@ import {
   CodeTextField as FeatureCodeTextField,
   SchemaTable as FeatureSchemaTable,
 } from "./features/request-editor/request-editor-panels";
+import { ExamplesPanel } from "./features/examples/examples-panel";
+import {
+  MockServerPanel,
+  MockServerSettingsDialog,
+  MockServerSidebar,
+} from "./features/mock-server/mock-server-panels";
+import { ExampleSidebar, HistorySidebar } from "./features/sidebar/sidebar-panels";
+import {
+  WebSocketBenchmarkPanel,
+  WebSocketDocsPanel,
+  WebSocketMockPanel,
+  WebSocketMockSidebar,
+  renderWebSocketDocsMarkdown,
+} from "./features/websocket/websocket-panels";
 import {
   appendLimitedUiEvent,
   applyWorkspaceLayoutSnapshot,
@@ -123,6 +137,7 @@ import {
   mergeExamples,
   mergeMethodDocs,
   mergeProtoFiles,
+  normalizeApiCollections,
   normalizeProjectData,
   normalizeVisibleResponseTab,
   readStoredProject,
@@ -141,9 +156,7 @@ import {
   buildDefaultMockScenario,
   buildMockMappingRows,
   createDefaultMockServerProject,
-  createDefaultMockStreamDefaults,
   currentFileEmptyEditorText,
-  describeMockMatcher,
   ensureUniqueMockScenarioId,
   formatMockScenarioBundle,
   formatSingleMockScenarioForEditor,
@@ -171,10 +184,9 @@ import {
   MessageTable as FeatureMessageTable,
 } from "./features/response-viewer/response-viewer";
 import { ResponseToolbar, ResponseWorkbenchTabs } from "./features/response-viewer/response-toolbar";
-import { eventToUiEvent, writeConsoleLog } from "./features/request-runner/request-result-utils";
+import { evaluateAssertions, eventToUiEvent, writeConsoleLog } from "./features/request-runner/request-result-utils";
 import { createRequestSession } from "./features/request-runner/request-session-model";
 import { downloadTextFile } from "./shared/browser-utils";
-import { EmptyState } from "./shared/components/empty-state";
 import { toErrorMessage } from "./shared/error-utils";
 import { formatTimestampShort, timestampForFile } from "./shared/formatters";
 import { safeJsonParse } from "./shared/json-utils";
@@ -182,8 +194,6 @@ import { clamp } from "./shared/number-utils";
 import { methodKey, methodTypeLabel } from "./shared/rpc-method-utils";
 import { createId, savedExampleKey, slugify } from "./shared/entity-utils";
 import {
-  buttonSx,
-  compactCardSx,
   defaultAssertion,
   defaultMetadata,
   defaultMockPort,
@@ -205,7 +215,11 @@ import { useStableEventCallback } from "./hooks/use-stable-event-callback";
 import { useBenchmarkRunner } from "./hooks/use-benchmark-runner";
 import { useRequestRunner } from "./hooks/use-request-runner";
 import type {
+  ApiCollection,
+  ApiCollectionRequest,
+  ApiRequestKind,
   AssertionResult,
+  BenchmarkResult,
   DocResultSnapshot,
   EnvironmentConfig,
   EnvironmentKey,
@@ -214,9 +228,6 @@ import type {
   MethodDoc,
   MockFormat,
   MockMethodScenarioFile,
-  MockMethodScenarioRow,
-  MockParseResult,
-  MockScenarioBundle,
   MockServerProject,
   MockServerStatus,
   MockStreamSettings,
@@ -231,17 +242,81 @@ import type {
   WorkspaceExportBundle,
   WorkspaceImportRecord,
   WorkspaceLayoutSnapshot,
+  WebSocketMockStatus,
+  MockScenarioBundle,
 } from "./shared/workbench-types";
 import type { GrpcEvent, GrpcResult, LoadedProto, MetadataPair, ProtoSourceFile, RpcMethodInfo } from "@/lib/types";
 
 type CompatTheme = ReturnType<typeof createTheme>;
 
+type WebSocketClientState = {
+  readyState: "closed" | "connecting" | "open";
+  url: string;
+  sessionId: string;
+  messageCount: number;
+  lastError?: string;
+};
+
+type ManagedWebSocketClient = {
+  socket: WebSocket;
+  sessionId: string;
+  requestId: string;
+  url: string;
+  startedAt: Date;
+  messages: unknown[];
+};
+
+function webSocketDocKey(request: Pick<ApiCollectionRequest, "id"> | null | undefined) {
+  return request?.id ? `ws:${request.id}` : "";
+}
+
+function findWebSocketRequestForDocKey(collections: ApiCollection[], key: string) {
+  const requestId = key.startsWith("ws:") ? key.slice(3) : key;
+  for (const collection of collections) {
+    const request = collection.requests.find((item) => item.id === requestId && item.kind === "websocket");
+    if (request) return { ...request, collectionName: collection.name };
+  }
+  return null;
+}
+
 type ButtonClickEvent = ReactMouseEvent<HTMLButtonElement>;
 type ElementClickEvent = ReactMouseEvent<HTMLElement>;
 type TextInputChangeEvent = ChangeEvent<HTMLInputElement | HTMLTextAreaElement>;
 type SelectInputChangeEvent = ChangeEvent<HTMLSelectElement>;
-type SwitchInputChangeEvent = ChangeEvent<HTMLInputElement>;
 type TextInputKeyboardEvent = ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>;
+
+function isWebSocketUrl(value?: string) {
+  return /^wss?:\/\//i.test((value ?? "").trim());
+}
+
+function grpcBaseUrlFallback(candidate: string | undefined, fallback: string | undefined) {
+  if (candidate && !isWebSocketUrl(candidate)) return candidate;
+  if (fallback && !isWebSocketUrl(fallback)) return fallback;
+  return "http://localhost:9080/grpc/web";
+}
+
+function defaultWebSocketMockResponse(name = "WebSocket Request") {
+  return JSON.stringify(
+    [
+      {
+        type: "message",
+        request: name,
+        count: "{{count}}",
+        message: "Hello from mock WebSocket",
+        timestamp: "{{now}}",
+      },
+      {
+        type: "message",
+        request: name,
+        count: "{{count}}",
+        message: "Second mock WebSocket message",
+        timestamp: "{{now}}",
+      },
+    ],
+    null,
+    2,
+  );
+}
 
 export default function PlaygroundPage() {
   const prefersDark = useMediaQuery("(prefers-color-scheme: dark)");
@@ -258,8 +333,10 @@ export default function PlaygroundPage() {
   const [environmentKey, setEnvironmentKey] = useState<EnvironmentKey>("default");
   const [environments, setEnvironments] = useState<EnvironmentConfig[]>(defaultEnvironments);
   const [protoFiles, setProtoFiles] = useState<ProtoSourceFile[]>([]);
+  const [collections, setCollections] = useState<ApiCollection[]>([]);
   const [loaded, setLoaded] = useState<LoadedProto | null>(null);
   const [selectedMethodKey, setSelectedMethodKey] = useState("");
+  const [activeCollectionRequestId, setActiveCollectionRequestId] = useState("");
   const [requestJson, setRequestJson] = useState("{}");
   const [metadata, setMetadata] = useState<MetadataPair[]>(defaultMetadata);
   const [examples, setExamples] = useState<SavedExample[]>([]);
@@ -296,6 +373,13 @@ export default function PlaygroundPage() {
     severity: "info" | "success" | "warning" | "error";
   }>({ id: 0, open: false, message: "", severity: "info" });
   const [workspaceMenuAnchor, setWorkspaceMenuAnchor] = useState<HTMLElement | null>(null);
+  const [collectionMenuAnchor, setCollectionMenuAnchor] = useState<HTMLElement | null>(null);
+  const [collectionDialogOpen, setCollectionDialogOpen] = useState(false);
+  const [collectionNameDraft, setCollectionNameDraft] = useState("");
+  const [requestNameDialogOpen, setRequestNameDialogOpen] = useState(false);
+  const [requestNameDraft, setRequestNameDraft] = useState("");
+  const [requestTargetCollectionId, setRequestTargetCollectionId] = useState("");
+  const pendingCollectionImportRef = useRef<string>("");
   const [workspaceFolderPath, setWorkspaceFolderPath] = useState("");
   const [envMenuAnchor, setEnvMenuAnchor] = useState<HTMLElement | null>(null);
   const [envDialogOpen, setEnvDialogOpen] = useState(false);
@@ -307,6 +391,24 @@ export default function PlaygroundPage() {
   const [protoPreview, setProtoPreview] = useState<ProtoSourceFile | null>(null);
   const [requestTab, setRequestTab] = useState<RequestTab>("body");
   const [responseTab, setResponseTab] = useState<ResponseTab>("messages");
+  const [wsBenchmarkIterations, setWsBenchmarkIterations] = useState(5);
+  const [wsBenchmarkResults, setWsBenchmarkResults] = useState<BenchmarkResult[]>([]);
+  const [wsBenchmarkRunning, setWsBenchmarkRunning] = useState(false);
+  const [wsMockResponseText, setWsMockResponseText] = useState(defaultWebSocketMockResponse());
+  const [wsMockPort, setWsMockPort] = useState(8090);
+  const [wsMockPath, setWsMockPath] = useState("/mock/ws");
+  const [wsMockIntervalMs, setWsMockIntervalMs] = useState(1000);
+  const [wsMockLoop, setWsMockLoop] = useState(false);
+  const [wsMockMaxLoops, setWsMockMaxLoops] = useState(0);
+  const [wsMockStreamOnConnect, setWsMockStreamOnConnect] = useState(false);
+  const [wsMockStatus, setWsMockStatus] = useState<WebSocketMockStatus>({ running: false });
+  const wsClientRef = useRef<ManagedWebSocketClient | null>(null);
+  const [wsClientState, setWsClientState] = useState<WebSocketClientState>({
+    readyState: "closed",
+    url: "",
+    sessionId: "",
+    messageCount: 0,
+  });
   const responseBodyRef = useRef<HTMLDivElement | null>(null);
   const [showMessageTopButton, setShowMessageTopButton] = useState(false);
   const [requestSessions, setRequestSessions] = useState<RequestSession[]>([]);
@@ -315,6 +417,7 @@ export default function PlaygroundPage() {
   const _abortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const sidebarResizeRef = useRef(false);
   const responseResizeRef = useRef(false);
+  const wsBenchmarkAbortRef = useRef<AbortController | null>(null);
   const _cancelledRunIdsRef = useRef<Set<string>>(new Set());
   const activeRequestIdRef = useRef("");
   const workspaceAutosaveRef = useRef<{
@@ -446,6 +549,20 @@ export default function PlaygroundPage() {
   }, [prefersDark]);
 
   useEffect(() => {
+    return () => {
+      const client = wsClientRef.current;
+      wsClientRef.current = null;
+      try {
+        if (client?.socket.readyState === WebSocket.OPEN || client?.socket.readyState === WebSocket.CONNECTING) {
+          client.socket.close(1000, "App closed");
+        }
+      } catch {
+        // Ignore browser WebSocket close errors during unmount.
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     activeRequestIdRef.current = activeRequestId;
   }, [activeRequestId]);
 
@@ -463,6 +580,7 @@ export default function PlaygroundPage() {
     environmentKey,
     environments,
     protoFiles,
+    collections,
     selectedMethodKey,
     requestJson,
     metadata,
@@ -535,6 +653,7 @@ export default function PlaygroundPage() {
     environmentKey,
     environments,
     protoFiles,
+    collections,
     selectedMethodKey,
     requestJson,
     metadata,
@@ -710,21 +829,52 @@ export default function PlaygroundPage() {
     return loaded.methods.find((method) => methodKey(method) === selectedMethodKey) ?? null;
   }, [loaded, selectedMethodKey]);
 
+  const activeCollectionRequest = useMemo(() => {
+    if (!activeCollectionRequestId) return null;
+    for (const collection of collections) {
+      const request = collection.requests.find((item) => item.id === activeCollectionRequestId);
+      if (request) return { ...request, collectionName: collection.name };
+    }
+    return null;
+  }, [collections, activeCollectionRequestId]);
+
   const activeMethodKey = selectedMethod ? methodKey(selectedMethod) : "";
+  const activeCollectionKey = activeCollectionRequest
+    ? `${activeCollectionRequest.collectionName ?? "Collection"}/${activeCollectionRequest.name}`
+    : "";
+  const activeDocKey = activeMethodKey || webSocketDocKey(activeCollectionRequest);
+  const activeExampleKey = activeMethodKey || activeCollectionKey;
   const currentExamples = useMemo(
-    () => (activeMethodKey ? examples.filter((example) => savedExampleKey(example) === activeMethodKey) : []),
-    [examples, activeMethodKey],
+    () => (activeExampleKey ? examples.filter((example) => savedExampleKey(example) === activeExampleKey) : []),
+    [examples, activeExampleKey],
   );
   const currentHistory = useMemo(
-    () => (activeMethodKey ? history.filter((item) => item.method === activeMethodKey) : []),
-    [history, activeMethodKey],
+    () => (activeExampleKey ? history.filter((item) => item.method === activeExampleKey) : []),
+    [history, activeExampleKey],
   );
+  const activeWebSocketMockResponseText =
+    activeCollectionRequest?.kind === "websocket"
+      ? (activeCollectionRequest.mockResponse ?? wsMockResponseText)
+      : wsMockResponseText;
   const latestResultByMethod = useMemo(() => buildLatestResultByMethod(requestSessions), [requestSessions]);
   const savedDocResultByMethod = useMemo(() => buildSavedDocResultByMethod(docResults), [docResults]);
   const currentMethodDoc = useMemo(
     () => (activeMethodKey ? getOrCreateMethodDoc(methodDocs, selectedMethod) : null),
     [methodDocs, selectedMethod, activeMethodKey],
   );
+  const currentWebSocketDoc = useMemo(() => {
+    const key = webSocketDocKey(activeCollectionRequest);
+    if (!key || activeCollectionRequest?.kind !== "websocket") return null;
+    return (
+      methodDocs.find((doc) => doc.methodKey === key) ?? {
+        methodKey: key,
+        serviceName: activeCollectionRequest.collectionName ?? "WebSocket Collection",
+        methodName: activeCollectionRequest.name,
+        published: false,
+        updatedAt: activeCollectionRequest.updatedAt,
+      }
+    );
+  }, [methodDocs, activeCollectionRequest]);
   const activeDocsResult = activeMethodKey
     ? (savedDocResultByMethod.get(activeMethodKey) ?? latestResultByMethod.get(activeMethodKey) ?? null)
     : null;
@@ -733,18 +883,47 @@ export default function PlaygroundPage() {
     [mockServer, loaded],
   );
   const allMockScenarios = parsedMockConfig.ok ? parsedMockConfig.bundle.scenarios : [];
-  const publishedDocs = useMemo(
-    () =>
-      buildPublishableDocs(
-        loaded?.methods ?? [],
-        methodDocs,
-        examples,
-        protoFiles,
-        savedDocResultByMethod,
-        allMockScenarios,
-      ),
-    [loaded, methodDocs, examples, protoFiles, savedDocResultByMethod, allMockScenarios],
-  );
+  const publishedDocs = useMemo(() => {
+    const grpcDocs = buildPublishableDocs(
+      loaded?.methods ?? [],
+      methodDocs,
+      examples,
+      protoFiles,
+      savedDocResultByMethod,
+      allMockScenarios,
+    );
+    const wsDocs = methodDocs
+      .filter((doc) => doc.published && doc.methodKey.startsWith("ws:"))
+      .map((doc) => {
+        const request = findWebSocketRequestForDocKey(collections, doc.methodKey);
+        if (!request) return doc;
+        const key = `${request.collectionName ?? "Collection"}/${request.name}`;
+        const requestExamples = examples.filter((example) => savedExampleKey(example) === key);
+        const session = requestSessions.find((item) => item.methodKey === request.id);
+        return {
+          ...doc,
+          serviceName: request.collectionName ?? doc.serviceName,
+          methodName: request.name,
+          generatedMarkdown: renderWebSocketDocsMarkdown({
+            collectionRequest: request,
+            url: session?.baseUrl || request.url,
+            message: session?.requestJson || request.body || "",
+            examples: requestExamples,
+            latestResult: session?.lastResult ?? null,
+          }),
+        };
+      });
+    return [...grpcDocs, ...wsDocs];
+  }, [
+    loaded,
+    methodDocs,
+    examples,
+    protoFiles,
+    savedDocResultByMethod,
+    allMockScenarios,
+    collections,
+    requestSessions,
+  ]);
   const currentMockFile = useMemo(
     () => getMockMethodScenarioFile(mockServer, selectedMethod),
     [mockServer, selectedMethod],
@@ -800,8 +979,19 @@ export default function PlaygroundPage() {
     return buildFeatureEndpointGroups(loaded.methods, protoFiles, deferredRegistryFilter);
   }, [loaded, protoFiles, deferredRegistryFilter]);
 
-  const activeTransportMode = activeSession?.transportMode ?? transportMode;
-  const activeBaseUrl = activeSession?.baseUrl ?? baseUrl;
+  const rawActiveTransportMode = activeSession?.transportMode ?? transportMode;
+  const activeIsWebSocket = activeCollectionRequest?.kind === "websocket" || activeSession?.requestKind === "websocket";
+  const activeTransportMode: TransportMode = activeIsWebSocket
+    ? "websocket"
+    : rawActiveTransportMode === "websocket"
+      ? "grpc-web"
+      : rawActiveTransportMode;
+  const webSocketSubprotocolValue = activeIsWebSocket
+    ? (metadata.find((item) => item.key.trim().toLowerCase() === "sec-websocket-protocol")?.value ?? "")
+    : "";
+  const activeBaseUrl = activeIsWebSocket
+    ? (activeSession?.baseUrl ?? activeCollectionRequest?.url ?? "ws://localhost:8080")
+    : grpcBaseUrlFallback(activeSession?.baseUrl, baseUrl);
   const activeNativeTarget = activeSession?.nativeTarget ?? nativeTarget;
   const activeEnvironmentKey = activeSession?.environmentKey ?? environmentKey;
   const effectiveBaseUrl = featureGetEnvironmentTarget(
@@ -818,12 +1008,20 @@ export default function PlaygroundPage() {
     activeBaseUrl,
     activeNativeTarget,
   );
-  const draftEffectiveBaseUrl = activeTransportMode === "grpc-web" ? targetDraft : effectiveBaseUrl;
-  const draftEffectiveNativeTarget = activeTransportMode === "native-grpc" ? targetDraft : effectiveNativeTarget;
+  const isNativeTransport = activeTransportMode === "native-grpc";
+  const draftEffectiveBaseUrl = isNativeTransport ? effectiveBaseUrl : targetDraft;
+  const draftEffectiveNativeTarget = isNativeTransport ? targetDraft : effectiveNativeTarget;
 
   useEffect(() => {
-    setTargetDraft(activeTransportMode === "grpc-web" ? effectiveBaseUrl : effectiveNativeTarget);
-  }, [activeRequestId, activeTransportMode, activeEnvironmentKey, effectiveBaseUrl, effectiveNativeTarget]);
+    setTargetDraft(isNativeTransport ? effectiveNativeTarget : effectiveBaseUrl);
+  }, [
+    activeRequestId,
+    activeTransportMode,
+    activeEnvironmentKey,
+    effectiveBaseUrl,
+    effectiveNativeTarget,
+    isNativeTransport,
+  ]);
 
   useEffect(() => {
     if (!mockServerStatus.running || !loaded || !window.electronMock?.update) return;
@@ -843,6 +1041,43 @@ export default function PlaygroundPage() {
     }, 1500);
     return () => window.clearInterval(timer);
   }, [mockServerStatus.running]);
+
+  useEffect(() => {
+    if (!wsMockStatus.running || !window.electronWsMock?.update) return;
+    const timer = window.setTimeout(() => {
+      void window.electronWsMock
+        ?.update?.({
+          responseText: activeWebSocketMockResponseText,
+          intervalMs: wsMockIntervalMs,
+          loop: wsMockLoop,
+          maxLoops: wsMockMaxLoops,
+          streamOnConnect: wsMockStreamOnConnect,
+          sendOnMessage: false,
+        })
+        .then((result) => {
+          if (result?.ok)
+            setWsMockStatus((current) => ({ ...current, ...result, running: result.running ?? current.running }));
+        });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [
+    activeWebSocketMockResponseText,
+    wsMockIntervalMs,
+    wsMockLoop,
+    wsMockMaxLoops,
+    wsMockStreamOnConnect,
+    wsMockStatus.running,
+  ]);
+
+  useEffect(() => {
+    if (!wsMockStatus.running || !window.electronWsMock?.status) return;
+    const timer = window.setInterval(() => {
+      void window.electronWsMock?.status?.().then((result) => {
+        setWsMockStatus((current) => (current.running || result?.running ? { ...current, ...result } : current));
+      });
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [wsMockStatus.running]);
 
   useEffect(() => {
     setMockScenarioEditorDraft(null);
@@ -877,6 +1112,7 @@ export default function PlaygroundPage() {
     activeBaseUrl,
     activeNativeTarget,
     targetDraft,
+    activeCollectionRequest,
     responseTab,
     environments,
     setError,
@@ -911,25 +1147,24 @@ export default function PlaygroundPage() {
   }, [loaded, selectedMethod]);
 
   const previewUrl = selectedMethod
-    ? activeTransportMode === "grpc-web"
-      ? buildGrpcWebUrl(draftEffectiveBaseUrl, selectedMethod.serviceName, selectedMethod.methodName)
-      : `${draftEffectiveNativeTarget.replace(/\/+$/, "")}/${selectedMethod.serviceName}/${selectedMethod.methodName}`
-    : activeTransportMode === "grpc-web"
-      ? draftEffectiveBaseUrl
-      : draftEffectiveNativeTarget;
+    ? activeTransportMode === "native-grpc"
+      ? `${draftEffectiveNativeTarget.replace(/\/+$/, "")}/${selectedMethod.serviceName}/${selectedMethod.methodName}`
+      : buildGrpcWebUrl(draftEffectiveBaseUrl, selectedMethod.serviceName, selectedMethod.methodName)
+    : isNativeTransport
+      ? draftEffectiveNativeTarget
+      : draftEffectiveBaseUrl;
 
   const messageEvents = events.filter((event) => event.kind === "message");
   const reportPayload = useMemo(
     () => ({
       exportedAt: hydrated ? new Date().toISOString() : "",
       transportMode: activeTransportMode,
-      target: activeTransportMode === "grpc-web" ? draftEffectiveBaseUrl : draftEffectiveNativeTarget,
-      method: selectedMethod ? methodLabel(selectedMethod) : null,
+      target: isNativeTransport ? draftEffectiveNativeTarget : draftEffectiveBaseUrl,
+      method: selectedMethod ? methodLabel(selectedMethod) : (activeCollectionRequest?.name ?? null),
       request: safeJsonParse(requestJson),
       metadata: metadata.filter((item) => item.key.trim()),
       result: lastResult,
       events,
-      assertions: assertionResults,
     }),
     [
       hydrated,
@@ -937,13 +1172,40 @@ export default function PlaygroundPage() {
       draftEffectiveBaseUrl,
       draftEffectiveNativeTarget,
       selectedMethod,
+      activeCollectionRequest,
+      isNativeTransport,
       requestJson,
       metadata,
       lastResult,
       events,
-      assertionResults,
     ],
   );
+  const requestTabItems = useMemo<Array<{ value: RequestTab; label: string }>>(
+    () =>
+      activeIsWebSocket
+        ? [
+            { value: "body", label: "Message" },
+            { value: "metadata", label: "Headers" },
+            { value: "examples", label: currentExamples.length ? `Examples ${currentExamples.length}` : "Examples" },
+            { value: "mock", label: "Mock" },
+            { value: "docs", label: "Docs" },
+            { value: "benchmark", label: "Benchmark" },
+          ]
+        : [
+            { value: "body", label: "Body" },
+            { value: "metadata", label: "Metadata" },
+            { value: "schema", label: "Schema" },
+            { value: "docs", label: "Docs" },
+            { value: "benchmark", label: "Benchmark" },
+            { value: "examples", label: currentExamples.length ? `Examples ${currentExamples.length}` : "Examples" },
+            { value: "mock", label: "Mock" },
+          ],
+    [activeIsWebSocket, currentExamples.length],
+  );
+
+  useEffect(() => {
+    if (!requestTabItems.some((item) => item.value === requestTab)) setRequestTab("body");
+  }, [requestTab, requestTabItems]);
 
   /**
    * Appends a transport event to the matching request tab without leaking data into another tab.
@@ -989,6 +1251,7 @@ export default function PlaygroundPage() {
       environmentKey,
       environments,
       protoFiles,
+      collections,
       selectedMethodKey,
       requestJson,
       metadata,
@@ -1013,6 +1276,7 @@ export default function PlaygroundPage() {
     setEnvironmentKey(project.environmentKey ?? "default");
     setEnvironments(featureMergeEnvironments(project.environments));
     setProtoFiles(project.protoFiles);
+    setCollections(normalizeApiCollections(project.collections));
     setMetadata(project.metadata.length ? project.metadata : defaultMetadata);
     setExamples(project.examples ?? []);
     setMethodDocs(project.methodDocs ?? []);
@@ -1030,7 +1294,10 @@ export default function PlaygroundPage() {
     if (project.protoFiles.length === 0) {
       setLoaded(null);
       setSelectedMethodKey("");
-      setRequestJson(project.requestJson || "{}");
+      const activeSession =
+        project.requestTabs.find((session) => session.id === project.activeRequestId) ?? project.requestTabs[0];
+      if (activeSession) activateRequestSession(activeSession);
+      else setRequestJson(project.requestJson || "{}");
       return;
     }
 
@@ -1039,6 +1306,10 @@ export default function PlaygroundPage() {
       setLoaded(result);
       const activeSession =
         project.requestTabs.find((session) => session.id === project.activeRequestId) ?? project.requestTabs[0];
+      if (activeSession?.requestKind) {
+        activateRequestSession(activeSession);
+        return;
+      }
       const preferredMethodKey = activeSession?.methodKey ?? project.selectedMethodKey;
       const method = result.methods.find((item) => methodKey(item) === preferredMethodKey) ?? result.methods[0];
       if (method) {
@@ -1284,7 +1555,7 @@ export default function PlaygroundPage() {
       setExamples((current) => mergeExamples(current, bundledExamples));
     }
 
-    showToast("Endpoint data loaded.", "success");
+    showToast("Collection data loaded.", "success");
   }
 
   /**
@@ -1419,7 +1690,7 @@ export default function PlaygroundPage() {
   }
 
   /**
-   * Imports proto files or endpoint bundles selected by the user.
+   * Imports collection files or endpoint bundles selected by the user.
    */
   async function handleProtoFiles(files: FileList | null) {
     setError("");
@@ -1438,7 +1709,7 @@ export default function PlaygroundPage() {
       const protoOnly = fileArray.filter((file) => file.name.toLowerCase().endsWith(".proto"));
       if (protoOnly.length === 0) {
         showToast(
-          endpointBundles.length ? "Endpoint data loaded." : "No .proto or endpoint .json file selected.",
+          endpointBundles.length ? "Collection data loaded." : "No collection .json or .proto file selected.",
           endpointBundles.length ? "success" : "warning",
         );
         return;
@@ -1471,13 +1742,25 @@ export default function PlaygroundPage() {
               .includes(file.name.toLowerCase().replace(/\.proto$/, "")),
           ),
         ) ?? result.methods[0];
-      selectMethod(result.root, method);
+      const pendingCollectionId = pendingCollectionImportRef.current;
+      pendingCollectionImportRef.current = "";
+      if (pendingCollectionId) {
+        addCollectionRequest(pendingCollectionId, "grpc", {
+          name: method.methodName,
+          url: buildGrpcWebUrl(draftEffectiveBaseUrl, method.serviceName, method.methodName),
+          grpcMethodKey: methodKey(method),
+          body: JSON.stringify(generateExampleFromType(result.root, method.requestType), null, 2),
+        });
+      } else {
+        selectMethod(result.root, method);
+      }
       setSideSection("registry");
     } catch (err) {
       const message = toErrorMessage(err);
       setError(message);
       showToast(message, "error");
     } finally {
+      pendingCollectionImportRef.current = "";
       if (protoInputRef.current) protoInputRef.current.value = "";
     }
   }
@@ -1563,6 +1846,7 @@ export default function PlaygroundPage() {
    * Selects a method and reuses an existing tab for the same service/method pair.
    */
   function selectMethod(root: protobuf.Root, method: RpcMethodInfo) {
+    setActiveCollectionRequestId("");
     const key = methodKey(method);
     const existing = requestSessions.find((session) => session.methodKey === key);
     if (existing) {
@@ -1570,10 +1854,11 @@ export default function PlaygroundPage() {
       return;
     }
 
+    const grpcTransportMode: TransportMode = activeTransportMode === "native-grpc" ? "native-grpc" : "grpc-web";
     const session = createRequestSession(root, method, {
       metadata,
-      transportMode: activeTransportMode,
-      baseUrl: activeBaseUrl,
+      transportMode: grpcTransportMode,
+      baseUrl: grpcBaseUrlFallback(activeBaseUrl, baseUrl),
       nativeTarget: activeNativeTarget,
       environmentKey: activeEnvironmentKey,
       assertionJson,
@@ -1592,11 +1877,23 @@ export default function PlaygroundPage() {
 
     activeRequestIdRef.current = session.id;
     setActiveRequestId(session.id);
-    setSelectedMethodKey(session.methodKey);
+    if (session.requestKind) {
+      setActiveCollectionRequestId(session.methodKey);
+      setSelectedMethodKey("");
+    } else {
+      setActiveCollectionRequestId("");
+      setSelectedMethodKey(session.methodKey);
+    }
     setRequestJson(session.requestJson);
     setMetadata(session.metadata.length ? session.metadata : defaultMetadata);
-    setTransportMode(session.transportMode ?? transportMode);
-    setBaseUrl(session.baseUrl ?? baseUrl);
+    const nextTransportMode: TransportMode =
+      session.requestKind === "websocket"
+        ? "websocket"
+        : session.transportMode === "websocket"
+          ? "grpc-web"
+          : (session.transportMode ?? transportMode);
+    setTransportMode(nextTransportMode);
+    if (session.requestKind !== "websocket") setBaseUrl(grpcBaseUrlFallback(session.baseUrl, baseUrl));
     setNativeTarget(session.nativeTarget ?? nativeTarget);
     setEnvironmentKey(session.environmentKey ?? environmentKey);
     setAssertionJson(session.assertionJson ?? assertionJson);
@@ -1613,6 +1910,7 @@ export default function PlaygroundPage() {
     activeRequestIdRef.current = "";
     setActiveRequestId("");
     setSelectedMethodKey("");
+    setActiveCollectionRequestId("");
     setRequestJson("{}");
     setEvents([]);
     setLastResult(null);
@@ -1625,6 +1923,7 @@ export default function PlaygroundPage() {
    */
   function closeRequestSession(sessionId: string) {
     requestRunner.cancelRequest(sessionId);
+    if (wsClientRef.current?.sessionId === sessionId) closeManualWebSocketClient("Tab closed");
     setRequestSessions((current) => {
       const next = current.filter((session) => session.id !== sessionId);
 
@@ -1650,16 +1949,18 @@ export default function PlaygroundPage() {
   }
 
   /**
-   * Closes all request tabs except the active one.
+   * Closes all request tabs except the target tab.
    */
-  function closeOtherRequestSessions() {
-    if (!activeRequestId) return;
+  function closeOtherRequestSessions(sessionId = activeRequestId) {
+    if (!sessionId) return;
+    const keptSession = requestSessions.find((session) => session.id === sessionId);
     requestSessions
-      .filter((session) => session.id !== activeRequestId)
+      .filter((session) => session.id !== sessionId)
       .forEach((session) => {
         requestRunner.cancelRequest(session.id);
       });
-    setRequestSessions((current) => current.filter((session) => session.id === activeRequestId));
+    setRequestSessions((current) => current.filter((session) => session.id === sessionId));
+    if (keptSession && sessionId !== activeRequestId) queueMicrotask(() => activateRequestSession(keptSession));
   }
 
   /**
@@ -1683,8 +1984,8 @@ export default function PlaygroundPage() {
    * Clears history for the active method only.
    */
   function clearHistory() {
-    if (!activeMethodKey) return;
-    setHistory((current) => current.filter((item) => item.method !== activeMethodKey));
+    if (!activeExampleKey) return;
+    setHistory((current) => current.filter((item) => item.method !== activeExampleKey));
   }
 
   /**
@@ -1707,6 +2008,535 @@ export default function PlaygroundPage() {
   }
 
   /**
+   * Updates the saved definition for the active custom collection request.
+   */
+  function patchActiveCollectionRequest(patch: Partial<ApiCollectionRequest>) {
+    if (!activeCollectionRequestId) return;
+    setCollections((current) =>
+      current.map((collection) => ({
+        ...collection,
+        requests: collection.requests.map((request) =>
+          request.id === activeCollectionRequestId
+            ? { ...request, ...patch, updatedAt: new Date().toISOString() }
+            : request,
+        ),
+        updatedAt: collection.requests.some((request) => request.id === activeCollectionRequestId)
+          ? new Date().toISOString()
+          : collection.updatedAt,
+      })),
+    );
+  }
+
+  function updateActiveWebSocketMockResponse(value: string) {
+    setWsMockResponseText(value);
+    if (activeCollectionRequest?.kind === "websocket") patchActiveCollectionRequest({ mockResponse: value });
+  }
+
+  async function copyActiveWebSocketMockResponse() {
+    try {
+      await navigator.clipboard?.writeText(activeWebSocketMockResponseText);
+      showToast("WebSocket mock response copied.", "success");
+    } catch {
+      showToast("Unable to copy WebSocket mock response.", "warning");
+    }
+  }
+
+  function updateWebSocketSubprotocol(value: string) {
+    const next = value.trim() ? [{ key: "Sec-WebSocket-Protocol", value }] : [];
+    setMetadata(next);
+    updateActiveSession({ metadata: next });
+    patchActiveCollectionRequest({ headers: next });
+  }
+
+  function buildWebSocketMockPayload() {
+    return {
+      port: Math.max(1, Math.min(65535, Math.floor(Number(wsMockPort) || 8090))),
+      path: wsMockPath.trim() || "/mock/ws",
+      responseText: activeWebSocketMockResponseText,
+      intervalMs: Math.max(1, Math.floor(Number(wsMockIntervalMs) || 1000)),
+      loop: wsMockLoop,
+      maxLoops: Math.max(0, Math.floor(Number(wsMockMaxLoops) || 0)),
+      streamOnConnect: wsMockStreamOnConnect,
+      sendOnMessage: false,
+    };
+  }
+
+  async function startWebSocketMockServer() {
+    if (!activeCollectionRequest || activeCollectionRequest.kind !== "websocket") {
+      showToast("Select a WebSocket request before starting a WS mock server.", "warning");
+      return;
+    }
+    if (!window.electronWsMock?.start) {
+      showToast("WebSocket mock server is available in the desktop app only.", "warning");
+      return;
+    }
+    const result = await window.electronWsMock.start(buildWebSocketMockPayload());
+    if (!result?.ok) {
+      showToast(result?.error || "Unable to start WebSocket mock server.", "error");
+      return;
+    }
+    setWsMockStatus({ running: true, ...result });
+    if (result.port) setWsMockPort(result.port);
+    if (result.path) setWsMockPath(result.path);
+    if (result.url) {
+      setTargetDraft(result.url);
+      updateActiveSession({ baseUrl: result.url, requestUrl: result.url });
+      patchActiveCollectionRequest({ url: result.url });
+    }
+    showToast("WebSocket mock server started.", "success");
+  }
+
+  async function stopWebSocketMockServer() {
+    if (!window.electronWsMock?.stop) {
+      showToast("WebSocket mock server is available in the desktop app only.", "warning");
+      return;
+    }
+    const result = await window.electronWsMock.stop();
+    if (!result?.ok) {
+      showToast(result?.error || "Unable to stop WebSocket mock server.", "error");
+      return;
+    }
+    setWsMockStatus({ running: false });
+    showToast("WebSocket mock server stopped.", "success");
+  }
+
+  async function sendWebSocketMockOnce() {
+    if (!window.electronWsMock?.send) {
+      showToast("WebSocket mock server is available in the desktop app only.", "warning");
+      return;
+    }
+    const result = await window.electronWsMock.send({ responseText: activeWebSocketMockResponseText });
+    if (!result?.ok) {
+      showToast(result?.error || "Start the WebSocket mock server before sending a message.", "warning");
+      return;
+    }
+    setWsMockStatus((current) => ({ ...current, ...result, running: result.running ?? current.running }));
+    const sent = result.sent ?? 0;
+    showToast(
+      sent > 0
+        ? `Sent mock message to ${sent} WebSocket client(s).`
+        : "No mock message was sent. Connect a client or enable Loop after the sequence is finished.",
+      sent > 0 ? "success" : "info",
+    );
+  }
+
+  function webSocketProtocolsFromActiveMetadata() {
+    const value = metadata.find((item) => item.key.trim().toLowerCase() === "sec-websocket-protocol")?.value ?? "";
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function buildWebSocketResult(
+    client: ManagedWebSocketClient,
+    trailers: Record<string, string> = { "grpc-status": "0", "grpc-message": "WebSocket connected" },
+  ): GrpcResult {
+    const completedAt = new Date();
+    return {
+      httpStatus: 101,
+      headers: { upgrade: "websocket" },
+      trailers,
+      messages: [...client.messages],
+      totalMessages: client.messages.length,
+      durationMs: completedAt.getTime() - client.startedAt.getTime(),
+      requestUrl: client.url,
+      startedAt: client.startedAt.toISOString(),
+      completedAt: completedAt.toISOString(),
+      transport: "websocket",
+    };
+  }
+
+  function updateWebSocketLiveResult(client: ManagedWebSocketClient) {
+    const result = buildWebSocketResult(client);
+    const evaluatedAssertions = evaluateAssertions(result, assertionJson);
+    if (activeRequestIdRef.current === client.sessionId) {
+      setLastResult(result);
+      setAssertionResults(evaluatedAssertions);
+      setResponseTab("messages");
+    }
+    updateRequestSession(client.sessionId, {
+      lastResult: result,
+      assertionResults: evaluatedAssertions,
+      responseTab: "messages",
+      status: "running",
+    });
+  }
+
+  function prepareWebSocketClientSession(url: string) {
+    if (!activeCollectionRequest || activeCollectionRequest.kind !== "websocket") {
+      showToast("Select a WebSocket request before sending a message.", "warning");
+      return null;
+    }
+    const now = new Date().toISOString();
+    const reusableSession =
+      requestSessions.find((session) => session.methodKey === activeCollectionRequest.id) ??
+      (activeSession?.methodKey === activeCollectionRequest.id ? activeSession : null);
+    const session: RequestSession = {
+      id: reusableSession?.id ?? createId(),
+      methodKey: activeCollectionRequest.id,
+      title: activeCollectionRequest.name,
+      serviceName: activeCollectionRequest.collectionName ?? "WebSocket Collection",
+      requestJson,
+      metadata: metadata.map((item) => ({ ...item })),
+      transportMode: "websocket",
+      requestKind: "websocket",
+      requestUrl: url,
+      baseUrl: url,
+      nativeTarget: activeNativeTarget,
+      environmentKey: activeEnvironmentKey,
+      assertionJson,
+      responseTab: "messages",
+      events: [],
+      lastResult: null,
+      assertionResults: [],
+      running: true,
+      status: "running",
+      openedAt: reusableSession?.openedAt ?? now,
+      updatedAt: now,
+    };
+    setError("");
+    upsertRequestSessionPreservingOrder(session);
+    activateRequestSession(session);
+    setEvents([]);
+    setLastResult(null);
+    setAssertionResults([]);
+    setResponseTab("messages");
+    return session;
+  }
+
+  function appendWebSocketEvent(sessionId: string, event: GrpcEvent) {
+    appendLiveEventToSession(sessionId, event);
+  }
+
+  function closeManualWebSocketClient(reason = "Closed by user", notify = true) {
+    const client = wsClientRef.current;
+    if (!client) return;
+    wsClientRef.current = null;
+    try {
+      if (client.socket.readyState === WebSocket.OPEN || client.socket.readyState === WebSocket.CONNECTING) {
+        client.socket.close(1000, reason);
+      }
+    } catch {
+      // Ignore browser WebSocket close errors.
+    }
+    setWsClientState((current) => ({ ...current, readyState: "closed" }));
+    updateRequestSession(client.sessionId, { running: false, status: "done" });
+    if (notify) showToast("WebSocket disconnected.", "info");
+  }
+
+  function sendMessageThroughActiveWebSocket(client: ManagedWebSocketClient) {
+    const body = requestJson.trim();
+    if (!body) {
+      showToast("Message body is empty. Add data in the Message tab before sending.", "warning");
+      return false;
+    }
+    client.socket.send(body);
+    appendWebSocketEvent(client.sessionId, {
+      type: "log",
+      level: "info",
+      message: "WebSocket message sent",
+      details: safeJsonParse(body),
+    });
+    updateActiveSession({ requestJson: body, requestUrl: client.url, baseUrl: client.url, status: "running" });
+    patchActiveCollectionRequest({ body, url: client.url });
+    showToast("WebSocket message sent.", "success");
+    return true;
+  }
+
+  function handleSendWebSocketMessage() {
+    if (!activeCollectionRequest || activeCollectionRequest.kind !== "websocket") {
+      showToast("Select a WebSocket request before sending a message.", "warning");
+      return;
+    }
+    const url = (targetDraft || activeCollectionRequest.url || activeBaseUrl).trim();
+    if (!url || !isWebSocketUrl(url)) {
+      showToast("Use a ws:// or wss:// URL before sending a WebSocket message.", "warning");
+      return;
+    }
+    commitTargetDraft(url);
+
+    const existing = wsClientRef.current;
+    if (
+      existing &&
+      existing.requestId === activeCollectionRequest.id &&
+      existing.url === url &&
+      existing.socket.readyState === WebSocket.OPEN
+    ) {
+      sendMessageThroughActiveWebSocket(existing);
+      return;
+    }
+
+    if (existing) closeManualWebSocketClient("Switching WebSocket request", false);
+    const session = prepareWebSocketClientSession(url);
+    if (!session) return;
+
+    let socket: WebSocket;
+    try {
+      const protocols = webSocketProtocolsFromActiveMetadata();
+      socket = protocols.length ? new WebSocket(url, protocols) : new WebSocket(url);
+    } catch (err) {
+      updateRequestSession(session.id, { running: false, status: "error" });
+      showToast(toErrorMessage(err), "error");
+      return;
+    }
+
+    const client: ManagedWebSocketClient = {
+      socket,
+      sessionId: session.id,
+      requestId: activeCollectionRequest.id,
+      url,
+      startedAt: new Date(),
+      messages: [],
+    };
+    wsClientRef.current = client;
+    setWsClientState({ readyState: "connecting", url, sessionId: session.id, messageCount: 0 });
+    appendWebSocketEvent(session.id, { type: "log", level: "info", message: "Opening WebSocket", details: { url } });
+
+    socket.onopen = () => {
+      appendWebSocketEvent(session.id, {
+        type: "headers",
+        httpStatus: 101,
+        headers: { upgrade: "websocket" },
+        contentType: "",
+      });
+      setWsClientState({ readyState: "open", url, sessionId: session.id, messageCount: client.messages.length });
+      sendMessageThroughActiveWebSocket(client);
+    };
+
+    socket.onmessage = (event) => {
+      const value = safeJsonParse(String(event.data));
+      client.messages.push(value);
+      appendWebSocketEvent(session.id, { type: "message", index: client.messages.length - 1, value });
+      setWsClientState({ readyState: "open", url, sessionId: session.id, messageCount: client.messages.length });
+      updateWebSocketLiveResult(client);
+    };
+
+    socket.onerror = () => {
+      const message = "WebSocket connection failed.";
+      appendWebSocketEvent(session.id, { type: "error", message, details: { url } });
+      setWsClientState((current) => ({ ...current, readyState: "closed", lastError: message }));
+      updateRequestSession(session.id, { running: false, status: "error" });
+      showToast(message, "error");
+    };
+
+    socket.onclose = (event) => {
+      const ok = event.wasClean || client.messages.length > 0 || event.code === 1000;
+      const trailers = {
+        "grpc-status": ok ? "0" : "2",
+        "grpc-message": event.reason || (ok ? "WebSocket closed" : "WebSocket closed unexpectedly"),
+        "websocket-code": String(event.code),
+      };
+      appendWebSocketEvent(session.id, { type: "trailers", trailers });
+      const result = buildWebSocketResult(client, trailers);
+      const evaluatedAssertions = evaluateAssertions(result, assertionJson);
+      if (activeRequestIdRef.current === session.id) {
+        setLastResult(result);
+        setAssertionResults(evaluatedAssertions);
+      }
+      updateRequestSession(session.id, {
+        lastResult: result,
+        assertionResults: evaluatedAssertions,
+        running: false,
+        status: ok ? "done" : "error",
+      });
+      const timestamp = new Date().toISOString();
+      setHistory((current) =>
+        [
+          {
+            id: createId(),
+            method: `${activeCollectionRequest.collectionName ?? "Collection"}/${activeCollectionRequest.name}`,
+            status: trailers["grpc-status"],
+            durationMs: result.durationMs,
+            messageCount: client.messages.length,
+            time: formatTimestampShort(timestamp),
+            timestamp,
+          },
+          ...current,
+        ].slice(0, 80),
+      );
+      if (wsClientRef.current?.sessionId === session.id) wsClientRef.current = null;
+      setWsClientState({ readyState: "closed", url, sessionId: session.id, messageCount: client.messages.length });
+    };
+  }
+
+  function openAddCollectionDialog() {
+    setCollectionMenuAnchor(null);
+    setCollectionNameDraft(nextCollectionName());
+    setCollectionDialogOpen(true);
+  }
+
+  function nextCollectionName() {
+    let index = collections.length + 1;
+    let name = collections.length === 0 ? "Untitled WS Collection" : `Untitled WS Collection ${index}`;
+    const names = new Set(collections.map((collection) => collection.name.toLowerCase()));
+    while (names.has(name.toLowerCase())) {
+      index += 1;
+      name = `Untitled WS Collection ${index}`;
+    }
+    return name;
+  }
+
+  function nextWebSocketRequestName(collectionId: string) {
+    const collection = collections.find((item) => item.id === collectionId);
+    const names = new Set((collection?.requests ?? []).map((request) => request.name.toLowerCase()));
+    let index = (collection?.requests.length ?? 0) + 1;
+    let name = index <= 1 ? "New WebSocket Request" : `New WebSocket Request ${index}`;
+    while (names.has(name.toLowerCase())) {
+      index += 1;
+      name = `New WebSocket Request ${index}`;
+    }
+    return name;
+  }
+
+  function openAddWebSocketRequestDialog(collectionId: string) {
+    setRequestTargetCollectionId(collectionId);
+    setRequestNameDraft(nextWebSocketRequestName(collectionId));
+    setRequestNameDialogOpen(true);
+  }
+
+  function confirmAddWebSocketRequest() {
+    const name = requestNameDraft.trim();
+    if (!requestTargetCollectionId) {
+      setRequestNameDialogOpen(false);
+      return;
+    }
+    if (!name) {
+      showToast("WebSocket request name is required.", "warning");
+      return;
+    }
+    addCollectionRequest(requestTargetCollectionId, "websocket", {
+      name,
+      mockResponse: defaultWebSocketMockResponse(name),
+    });
+    setRequestNameDialogOpen(false);
+    setRequestTargetCollectionId("");
+  }
+
+  function confirmAddCollection() {
+    const name = collectionNameDraft.trim();
+    if (!name) {
+      showToast("Collection name is required.", "warning");
+      return;
+    }
+    const now = new Date().toISOString();
+    const collection: ApiCollection = { id: createId(), name, requests: [], createdAt: now, updatedAt: now };
+    setCollections((current) => [collection, ...current]);
+    setCollectionDialogOpen(false);
+    showToast("WebSocket collection added.", "success");
+  }
+
+  function removeCollection(collectionId: string) {
+    setCollections((current) => current.filter((collection) => collection.id !== collectionId));
+    const removedRequestIds = new Set(
+      collections.find((collection) => collection.id === collectionId)?.requests.map((request) => request.id) ?? [],
+    );
+    setRequestSessions((current) => current.filter((session) => !removedRequestIds.has(session.methodKey)));
+    if (removedRequestIds.has(activeCollectionRequestId)) clearActiveView();
+  }
+
+  function createCollectionRequest(
+    collectionId: string,
+    kind: ApiRequestKind,
+    overrides: Partial<ApiCollectionRequest> = {},
+  ): ApiCollectionRequest {
+    const now = new Date().toISOString();
+    const defaultName = kind === "grpc" ? "gRPC Request" : "WebSocket Request";
+    const defaultUrl = kind === "grpc" ? draftEffectiveBaseUrl : "ws://localhost:8080";
+    return {
+      id: createId(),
+      collectionId,
+      name: overrides.name ?? defaultName,
+      kind,
+      method: overrides.method,
+      url: overrides.url ?? defaultUrl,
+      grpcMethodKey: overrides.grpcMethodKey,
+      body: overrides.body ?? (kind === "grpc" ? "{}" : ""),
+      headers: overrides.headers ?? [],
+      mockResponse:
+        overrides.mockResponse ??
+        (kind === "websocket" ? defaultWebSocketMockResponse(overrides.name ?? defaultName) : undefined),
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  function addCollectionRequest(
+    collectionId: string,
+    kind: ApiRequestKind,
+    overrides: Partial<ApiCollectionRequest> = {},
+  ) {
+    const request = createCollectionRequest(collectionId, kind, overrides);
+    const existingCollection = collections.find((collection) => collection.id === collectionId);
+    const fallbackCollection: ApiCollection = {
+      id: collectionId,
+      name: "Collection",
+      requests: [],
+      createdAt: request.createdAt,
+      updatedAt: request.updatedAt,
+    };
+    const nextCollection = {
+      ...(existingCollection ?? fallbackCollection),
+      requests: [request, ...(existingCollection?.requests ?? [])],
+      updatedAt: new Date().toISOString(),
+    };
+    setCollections((current) =>
+      current.map((collection) => (collection.id === collectionId ? nextCollection : collection)),
+    );
+    selectCollectionRequest(nextCollection, request);
+    showToast(`${request.name} added.`, "success");
+  }
+
+  function importGrpcRequestIntoCollection(collectionId: string) {
+    pendingCollectionImportRef.current = collectionId;
+    protoInputRef.current?.click();
+  }
+
+  function createCollectionRequestSession(collection: ApiCollection, request: ApiCollectionRequest): RequestSession {
+    const now = new Date().toISOString();
+    const mode: TransportMode = request.kind === "websocket" ? "websocket" : "grpc-web";
+    return {
+      id: createId(),
+      methodKey: request.id,
+      title: request.name,
+      serviceName: collection.name,
+      requestJson: request.body || (request.kind === "grpc" ? "{}" : ""),
+      metadata: request.headers.length ? request.headers.map((item) => ({ ...item })) : [],
+      transportMode: mode,
+      requestKind: request.kind,
+      requestUrl: request.url,
+      httpMethod: request.method,
+      baseUrl: request.url,
+      nativeTarget: activeNativeTarget,
+      environmentKey: activeEnvironmentKey,
+      assertionJson,
+      responseTab: "messages",
+      events: [],
+      lastResult: null,
+      assertionResults: [],
+      running: false,
+      status: "idle",
+      openedAt: now,
+      updatedAt: now,
+    };
+  }
+
+  function selectCollectionRequest(collection: ApiCollection, request: ApiCollectionRequest) {
+    if (request.kind === "grpc" && request.grpcMethodKey && loaded) {
+      const grpcMethod = loaded.methods.find((method) => methodKey(method) === request.grpcMethodKey);
+      if (grpcMethod) {
+        selectMethod(loaded.root, grpcMethod);
+        return;
+      }
+    }
+    const existing = requestSessions.find((session) => session.methodKey === request.id);
+    const session = existing ?? createCollectionRequestSession(collection, request);
+    if (!existing) upsertRequestSessionPreservingOrder(session);
+    activateRequestSession(session);
+    setRequestTab("body");
+  }
+
+  /**
    * Inserts a new request tab or updates an existing one without changing tab order.
    */
   function upsertRequestSessionPreservingOrder(session: RequestSession) {
@@ -1724,6 +2554,9 @@ export default function PlaygroundPage() {
    * Updates the active transport mode.
    */
   function handleTransportModeChange(value: TransportMode) {
+    if (value === "rest") return;
+    if (activeIsWebSocket && value !== "websocket") return;
+    if (!activeIsWebSocket && value === "websocket") return;
     setTransportMode(value);
     updateActiveSession({ transportMode: value });
   }
@@ -1740,25 +2573,32 @@ export default function PlaygroundPage() {
    * Commits a URL/target change to the active session or saved environment.
    */
   function handleTargetChange(value: string) {
+    if (activeIsWebSocket) {
+      updateActiveSession({ baseUrl: value, requestUrl: value });
+      patchActiveCollectionRequest({ url: value });
+      return;
+    }
+
     if (activeEnvironmentKey !== "default" && activeEnvironmentKey !== "manual") {
       setEnvironments((current) =>
         current.map((env) =>
           env.key === activeEnvironmentKey
-            ? activeTransportMode === "grpc-web"
-              ? { ...env, grpcWebBaseUrl: value }
-              : { ...env, nativeTarget: value }
+            ? activeTransportMode === "native-grpc"
+              ? { ...env, nativeTarget: value }
+              : { ...env, grpcWebBaseUrl: value }
             : env,
         ),
       );
       return;
     }
 
-    if (activeTransportMode === "grpc-web") {
-      setBaseUrl(value);
-      updateActiveSession({ baseUrl: value });
-    } else {
+    if (activeTransportMode === "native-grpc") {
       setNativeTarget(value);
       updateActiveSession({ nativeTarget: value });
+    } else {
+      setBaseUrl(value);
+      updateActiveSession({ baseUrl: value, requestUrl: value });
+      patchActiveCollectionRequest({ url: value });
     }
   }
 
@@ -1781,10 +2621,16 @@ export default function PlaygroundPage() {
    */
   function saveCurrentEnvironment() {
     setEnvMenuAnchor(null);
-    const currentUrl = activeTransportMode === "grpc-web" ? draftEffectiveBaseUrl : draftEffectiveNativeTarget;
+    const currentUrl = activeTransportMode === "native-grpc" ? draftEffectiveNativeTarget : draftEffectiveBaseUrl;
     setEnvDialogMode("create");
     setEnvEditingKey("");
-    setEnvDraftName(selectedMethod ? `${selectedMethod.methodName} Env` : "New Environment");
+    setEnvDraftName(
+      selectedMethod
+        ? `${selectedMethod.methodName} Env`
+        : activeCollectionRequest
+          ? `${activeCollectionRequest.name} Env`
+          : "New Environment",
+    );
     setEnvDraftUrl(currentUrl);
     setEnvDialogOpen(true);
   }
@@ -1801,7 +2647,7 @@ export default function PlaygroundPage() {
     }
     if (!url) {
       showToast(
-        activeTransportMode === "grpc-web" ? "gRPC-Web base URL is required." : "Native gRPC target is required.",
+        activeTransportMode === "native-grpc" ? "Native gRPC target is required." : "Request URL is required.",
         "warning",
       );
       return;
@@ -1814,7 +2660,7 @@ export default function PlaygroundPage() {
             ? {
                 ...env,
                 label: name,
-                grpcWebBaseUrl: activeTransportMode === "grpc-web" ? url : env.grpcWebBaseUrl,
+                grpcWebBaseUrl: activeTransportMode === "native-grpc" ? env.grpcWebBaseUrl : url,
                 nativeTarget: activeTransportMode === "native-grpc" ? url : env.nativeTarget,
               }
             : env,
@@ -1829,7 +2675,7 @@ export default function PlaygroundPage() {
     const env: EnvironmentConfig = {
       key,
       label: name,
-      grpcWebBaseUrl: activeTransportMode === "grpc-web" ? url : draftEffectiveBaseUrl,
+      grpcWebBaseUrl: activeTransportMode === "native-grpc" ? draftEffectiveBaseUrl : url,
       nativeTarget: activeTransportMode === "native-grpc" ? url : draftEffectiveNativeTarget,
     };
     setEnvironments((current) => featureMergeEnvironments([...current, env]));
@@ -1854,7 +2700,7 @@ export default function PlaygroundPage() {
     setEnvDialogMode("edit");
     setEnvEditingKey(env.key);
     setEnvDraftName(env.label);
-    setEnvDraftUrl(activeTransportMode === "grpc-web" ? env.grpcWebBaseUrl : env.nativeTarget);
+    setEnvDraftUrl(activeTransportMode === "native-grpc" ? env.nativeTarget : env.grpcWebBaseUrl);
     setEnvDialogOpen(true);
   }
 
@@ -1878,6 +2724,7 @@ export default function PlaygroundPage() {
   function handleRequestJsonChange(value: string) {
     setRequestJson(value);
     updateActiveSession({ requestJson: value });
+    patchActiveCollectionRequest({ body: value });
   }
 
   /**
@@ -2582,6 +3429,191 @@ export default function PlaygroundPage() {
     );
   }
 
+  function websocketProtocolsFromMetadataRows(rows: MetadataPair[]): string[] {
+    const protocolHeader = rows.find((item) => item.key.trim().toLowerCase() === "sec-websocket-protocol");
+    if (!protocolHeader) return [];
+    return protocolHeader.value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  async function runSingleWebSocketBenchmarkProbe(
+    url: string,
+    body: string,
+    rows: MetadataPair[],
+    signal: AbortSignal,
+  ): Promise<{ ok: boolean; status: string; durationMs: number; messageCount: number }> {
+    const started = performance.now();
+    const protocols = websocketProtocolsFromMetadataRows(rows);
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let opened = false;
+      let messageCount = 0;
+      let socket: WebSocket | null = null;
+      const finish = (ok: boolean, status: string) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        signal.removeEventListener("abort", abort);
+        resolve({ ok, status, durationMs: performance.now() - started, messageCount });
+      };
+      const abort = () => {
+        try {
+          socket?.close(1000, "Benchmark stopped");
+        } catch {
+          // Ignore close errors.
+        }
+        reject(new DOMException("Aborted", "AbortError"));
+      };
+      const timeout = window.setTimeout(() => {
+        try {
+          socket?.close(1000, "Benchmark timeout");
+        } catch {
+          // Ignore close errors.
+        }
+        finish(opened || messageCount > 0, messageCount ? "message received" : "open timeout");
+      }, 5000);
+
+      try {
+        socket = protocols.length ? new WebSocket(url, protocols) : new WebSocket(url);
+      } catch (error) {
+        window.clearTimeout(timeout);
+        reject(error);
+        return;
+      }
+
+      signal.addEventListener("abort", abort);
+      socket.onopen = () => {
+        opened = true;
+        const payload = body.trim();
+        if (payload) socket?.send(payload);
+        if (!payload) {
+          try {
+            socket?.close(1000, "Benchmark open complete");
+          } catch {
+            // Ignore close errors.
+          }
+          finish(true, "open");
+        }
+      };
+      socket.onmessage = () => {
+        messageCount += 1;
+        try {
+          socket?.close(1000, "Benchmark sample complete");
+        } catch {
+          // Ignore close errors.
+        }
+        finish(true, "message received");
+      };
+      socket.onerror = () => finish(false, "connection error");
+      socket.onclose = (event) =>
+        finish(opened || event.wasClean || messageCount > 0, event.reason || `close ${event.code}`);
+    });
+  }
+
+  async function runWebSocketBenchmark() {
+    if (!activeCollectionRequest || activeCollectionRequest.kind !== "websocket" || wsBenchmarkRunning) {
+      showToast("Select a WebSocket request before running a benchmark.", "warning");
+      return;
+    }
+    const url = targetDraft.trim();
+    if (!url) {
+      showToast("WebSocket URL is required.", "warning");
+      return;
+    }
+    const runs = Math.max(1, Math.min(1000, Math.trunc(wsBenchmarkIterations || 1)));
+    const abortController = new AbortController();
+    wsBenchmarkAbortRef.current = abortController;
+    setWsBenchmarkResults([]);
+    setWsBenchmarkRunning(true);
+    try {
+      for (let index = 1; index <= runs; index += 1) {
+        if (abortController.signal.aborted) break;
+        const timestamp = new Date().toISOString();
+        try {
+          const result = await runSingleWebSocketBenchmarkProbe(url, requestJson, metadata, abortController.signal);
+          setWsBenchmarkResults((current) => [
+            ...current,
+            {
+              id: createId(),
+              index,
+              status: result.status,
+              durationMs: result.durationMs,
+              messageCount: result.messageCount,
+              ok: result.ok,
+              timestamp,
+            },
+          ]);
+        } catch (err) {
+          if (abortController.signal.aborted) break;
+          setWsBenchmarkResults((current) => [
+            ...current,
+            {
+              id: createId(),
+              index,
+              status: toErrorMessage(err),
+              durationMs: 0,
+              messageCount: 0,
+              ok: false,
+              timestamp,
+            },
+          ]);
+        }
+      }
+      showToast(
+        abortController.signal.aborted ? "WebSocket benchmark stopped." : "WebSocket benchmark finished.",
+        abortController.signal.aborted ? "warning" : "success",
+      );
+    } finally {
+      if (wsBenchmarkAbortRef.current === abortController) wsBenchmarkAbortRef.current = null;
+      setWsBenchmarkRunning(false);
+    }
+  }
+
+  function stopWebSocketBenchmark() {
+    wsBenchmarkAbortRef.current?.abort();
+  }
+
+  function exportWebSocketBenchmark() {
+    if (!activeCollectionRequest || wsBenchmarkResults.length === 0) {
+      showToast("Run a WebSocket benchmark before exporting benchmark results.", "warning");
+      return;
+    }
+    const stats = calculateBenchmarkStats(wsBenchmarkResults);
+    downloadTextFile(
+      `layang-ws-benchmark-${slugify(activeCollectionRequest.name)}-${timestampForFile()}.json`,
+      JSON.stringify(
+        {
+          kind: "layang-websocket-benchmark",
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          collection: activeCollectionRequest.collectionName ?? "Collection",
+          request: activeCollectionRequest.name,
+          endpoint: targetDraft,
+          requestMessage: requestJson,
+          headers: metadata.filter((item) => item.key.trim()),
+          stats: {
+            total: wsBenchmarkResults.length,
+            successful: stats.successful.length,
+            failed: stats.failed.length,
+            averageMs: stats.average,
+            fastestMs: stats.fastest,
+            slowestMs: stats.slowest,
+            p50Ms: stats.p50,
+            p95Ms: stats.p95,
+            errorRate: stats.errorRate,
+          },
+          latestResponse: lastResult,
+          results: wsBenchmarkResults,
+        },
+        null,
+        2,
+      ),
+      "application/json",
+    );
+  }
+
   /**
    * Switches the response panel tab without recreating the tab strip on every live event.
    */
@@ -2600,14 +3632,6 @@ export default function PlaygroundPage() {
   const exportResponseStable = useStableEventCallback(exportResponse);
   const saveCurrentResultForDocsStable = useStableEventCallback(saveCurrentResultForDocs);
   const clearActiveResponseStable = useStableEventCallback(clearActiveResponse);
-
-  /**
-   * Updates the JSON assertion/test editor.
-   */
-  function handleAssertionJsonChange(value: string) {
-    setAssertionJson(value);
-    updateActiveSession({ assertionJson: value });
-  }
 
   /**
    * Starts left sidebar resize tracking.
@@ -2645,6 +3669,7 @@ export default function PlaygroundPage() {
     setMetadata((current) => {
       const next = [...current, { key: "", value: "" }];
       updateActiveSession({ metadata: next });
+      patchActiveCollectionRequest({ headers: next });
       return next;
     });
   }
@@ -2656,6 +3681,7 @@ export default function PlaygroundPage() {
     setMetadata((current) => {
       const next = current.map((item, itemIndex) => (itemIndex === index ? { ...item, [field]: value } : item));
       updateActiveSession({ metadata: next });
+      patchActiveCollectionRequest({ headers: next });
       return next;
     });
   }
@@ -2667,6 +3693,7 @@ export default function PlaygroundPage() {
     setMetadata((current) => {
       const next = current.filter((_, itemIndex) => itemIndex !== index);
       updateActiveSession({ metadata: next });
+      patchActiveCollectionRequest({ headers: next });
       return next;
     });
   }
@@ -2675,12 +3702,14 @@ export default function PlaygroundPage() {
    * Saves the current request as an example for the active method.
    */
   function saveCurrentExample() {
-    if (!selectedMethod) return;
+    if (!selectedMethod && !activeCollectionRequest) return;
+    const serviceName = selectedMethod?.serviceName ?? activeCollectionRequest?.collectionName ?? "Collection";
+    const methodName = selectedMethod?.methodName ?? activeCollectionRequest?.name ?? "WebSocket Request";
     const example: SavedExample = {
       id: createId(),
-      name: `${selectedMethod.methodName} example ${currentExamples.length + 1}`,
-      serviceName: selectedMethod.serviceName,
-      methodName: selectedMethod.methodName,
+      name: `${methodName} example ${currentExamples.length + 1}`,
+      serviceName,
+      methodName,
       requestJson,
       metadata,
       expectedJson: assertionJson,
@@ -2695,14 +3724,16 @@ export default function PlaygroundPage() {
    * Exports examples for the active method only.
    */
   function exportCurrentMethodExamples() {
-    if (!selectedMethod || currentExamples.length === 0) return;
+    if ((!selectedMethod && !activeCollectionRequest) || currentExamples.length === 0) return;
+    const serviceName = selectedMethod?.serviceName ?? activeCollectionRequest?.collectionName ?? "Collection";
+    const methodName = selectedMethod?.methodName ?? activeCollectionRequest?.name ?? "WebSocket Request";
     downloadTextFile(
-      `layang-examples-${selectedMethod.methodName}-${timestampForFile()}.json`,
+      `layang-examples-${slugify(methodName)}-${timestampForFile()}.json`,
       JSON.stringify(
         {
           version: 1,
           type: "layang-examples",
-          method: { serviceName: selectedMethod.serviceName, methodName: selectedMethod.methodName },
+          method: { serviceName, methodName },
           examples: currentExamples,
         },
         null,
@@ -2731,8 +3762,8 @@ export default function PlaygroundPage() {
         return;
       }
       setExamples((current) => mergeExamples(current, incoming));
-      const matching = activeMethodKey
-        ? incoming.find((example) => savedExampleKey(example) === activeMethodKey)
+      const matching = activeExampleKey
+        ? incoming.find((example) => savedExampleKey(example) === activeExampleKey)
         : incoming[0];
       if (matching) loadExample(matching);
       showToast(`${incoming.length} example(s) loaded.`, "success");
@@ -2747,7 +3778,12 @@ export default function PlaygroundPage() {
    * Saves the latest response for the active method so generated docs can include it later.
    */
   function saveCurrentResultForDocs() {
-    if (!selectedMethod) return;
+    if (!selectedMethod) {
+      if (activeCollectionRequest?.kind === "websocket") {
+        showToast("Open the WebSocket Docs tab to preview or export docs with the latest response.", "info");
+      }
+      return;
+    }
     const sourceResult = lastResult ?? activeDocsResult;
     if (!sourceResult) {
       showToast("Run this method before saving a result for docs.", "warning");
@@ -2808,6 +3844,53 @@ export default function PlaygroundPage() {
     setMethodDocs((current) => current.filter((doc) => doc.methodKey !== key));
     setDocResults((current) => current.filter((item) => item.methodKey !== key));
     showToast("Generated docs entry removed for this method.", "success");
+  }
+
+  function buildActiveWebSocketDocsMarkdown() {
+    return renderWebSocketDocsMarkdown({
+      collectionRequest: activeCollectionRequest,
+      url: targetDraft,
+      message: requestJson,
+      examples: currentExamples,
+      latestResult: lastResult,
+    });
+  }
+
+  function publishCurrentWebSocketDoc() {
+    if (!activeCollectionRequest || activeCollectionRequest.kind !== "websocket") return;
+    const key = webSocketDocKey(activeCollectionRequest);
+    setMethodDocs((current) =>
+      upsertMethodDoc(current, {
+        methodKey: key,
+        serviceName: activeCollectionRequest.collectionName ?? "WebSocket Collection",
+        methodName: activeCollectionRequest.name,
+        published: true,
+        updatedAt: new Date().toISOString(),
+        generatedMarkdown: buildActiveWebSocketDocsMarkdown(),
+      }),
+    );
+    setSideSection("docs");
+    setSidebarOpen(true);
+    showToast("WebSocket docs published to the Docs sidebar.", "success");
+  }
+
+  function unpublishCurrentWebSocketDoc() {
+    if (!activeCollectionRequest || activeCollectionRequest.kind !== "websocket") return;
+    const key = webSocketDocKey(activeCollectionRequest);
+    setMethodDocs((current) =>
+      current.map((doc) =>
+        doc.methodKey === key ? { ...doc, published: false, updatedAt: new Date().toISOString() } : doc,
+      ),
+    );
+    showToast("WebSocket docs unpublished.", "success");
+  }
+
+  function previewCurrentWebSocketDoc() {
+    if (!activeCollectionRequest || activeCollectionRequest.kind !== "websocket") return;
+    setDocsPreview({
+      title: `${activeCollectionRequest.collectionName ?? "Collection"}/${activeCollectionRequest.name}`,
+      markdown: buildActiveWebSocketDocsMarkdown(),
+    });
   }
 
   /**
@@ -2885,6 +3968,28 @@ export default function PlaygroundPage() {
    * Opens a publishable doc entry from the Docs sidebar.
    */
   function openDocFromSidebar(doc: MethodDoc) {
+    if (doc.methodKey.startsWith("ws:")) {
+      const request = findWebSocketRequestForDocKey(collections, doc.methodKey);
+      const session = request ? requestSessions.find((item) => item.methodKey === request.id) : null;
+      const key = request
+        ? `${request.collectionName ?? "Collection"}/${request.name}`
+        : `${doc.serviceName}/${doc.methodName}`;
+      const requestExamples = examples.filter((example) => savedExampleKey(example) === key);
+      setDocsPreview({
+        title: key,
+        markdown: request
+          ? renderWebSocketDocsMarkdown({
+              collectionRequest: request,
+              url: session?.baseUrl || request.url,
+              message: session?.requestJson || request.body || "",
+              examples: requestExamples,
+              latestResult: session?.lastResult ?? null,
+            })
+          : doc.generatedMarkdown || "# WebSocket docs\n\nRequest not found in this workspace.",
+      });
+      return;
+    }
+
     const found = loaded?.methods.find(
       (method) => method.serviceName === doc.serviceName && method.methodName === doc.methodName,
     );
@@ -2925,40 +4030,76 @@ export default function PlaygroundPage() {
    * Loads an example into its matching request tab.
    */
   function loadExample(example: SavedExample) {
-    if (!loaded) return;
-    const found = loaded.methods.find(
+    const found = loaded?.methods.find(
       (method) => method.serviceName === example.serviceName && method.methodName === example.methodName,
     );
-    if (!found) return;
-    const key = methodKey(found);
-    const existing = requestSessions.find((session) => session.methodKey === key);
-    if (existing?.running) {
-      showToast(
-        `${found.methodName} is running in ${existing.title}. Stop it before loading another example.`,
-        "warning",
-      );
+    if (found && loaded) {
+      const key = methodKey(found);
+      const existing = requestSessions.find((session) => session.methodKey === key);
+      if (existing?.running) {
+        showToast(
+          `${found.methodName} is running in ${existing.title}. Stop it before loading another example.`,
+          "warning",
+        );
+        return;
+      }
+      const session: RequestSession = existing
+        ? {
+            ...existing,
+            requestJson: example.requestJson,
+            metadata: example.metadata.map((item) => ({ ...item })),
+            assertionJson: example.expectedJson,
+            updatedAt: new Date().toISOString(),
+          }
+        : createRequestSession(loaded.root, found, {
+            requestJson: example.requestJson,
+            metadata: example.metadata,
+            transportMode: activeTransportMode,
+            baseUrl: activeBaseUrl,
+            nativeTarget: activeNativeTarget,
+            assertionJson: example.expectedJson,
+          });
+
+      upsertRequestSessionPreservingOrder(session);
+      activateRequestSession(session);
+      setRequestTab("body");
       return;
     }
-    const session: RequestSession = existing
-      ? {
-          ...existing,
-          requestJson: example.requestJson,
-          metadata: example.metadata.map((item) => ({ ...item })),
-          assertionJson: example.expectedJson,
-          updatedAt: new Date().toISOString(),
-        }
-      : createRequestSession(loaded.root, found, {
-          requestJson: example.requestJson,
-          metadata: example.metadata,
-          transportMode: activeTransportMode,
-          baseUrl: activeBaseUrl,
-          nativeTarget: activeNativeTarget,
-          assertionJson: example.expectedJson,
-        });
 
-    upsertRequestSessionPreservingOrder(session);
-    activateRequestSession(session);
-    setRequestTab("body");
+    for (const collection of collections) {
+      const request = collection.requests.find(
+        (item) => collection.name === example.serviceName && item.name === example.methodName,
+      );
+      if (!request) continue;
+      const existing = requestSessions.find((session) => session.methodKey === request.id);
+      if (existing?.running) {
+        showToast(
+          `${request.name} is running in ${existing.title}. Stop it before loading another example.`,
+          "warning",
+        );
+        return;
+      }
+      const session: RequestSession = existing
+        ? {
+            ...existing,
+            requestJson: example.requestJson,
+            metadata: example.metadata.map((item) => ({ ...item })),
+            assertionJson: example.expectedJson,
+            updatedAt: new Date().toISOString(),
+          }
+        : createCollectionRequestSession(collection, {
+            ...request,
+            body: example.requestJson,
+            headers: example.metadata.map((item) => ({ ...item })),
+          });
+      upsertRequestSessionPreservingOrder(session);
+      activateRequestSession(session);
+      patchActiveCollectionRequest({ body: example.requestJson, headers: example.metadata });
+      setRequestTab("body");
+      return;
+    }
+
+    showToast("No matching gRPC method or WebSocket request found for that example.", "warning");
   }
 
   /**
@@ -2968,8 +4109,21 @@ export default function PlaygroundPage() {
     const method = loaded?.methods.find(
       (item) => item.serviceName === example.serviceName && item.methodName === example.methodName,
     );
+    let collectionRequest = null as (ApiCollectionRequest & { collectionName?: string }) | null;
+    if (!method) {
+      for (const collection of collections) {
+        const request = collection.requests.find(
+          (item) => collection.name === example.serviceName && item.name === example.methodName,
+        );
+        if (request) {
+          collectionRequest = { ...request, collectionName: collection.name };
+          break;
+        }
+      }
+    }
     await requestRunner.runRequest({
       overrideMethod: method,
+      overrideCollectionRequest: collectionRequest,
       overrideRequestJson: example.requestJson,
       overrideMetadata: example.metadata,
       overrideAssertionJson: example.expectedJson,
@@ -3026,7 +4180,7 @@ export default function PlaygroundPage() {
               direction="row"
               spacing={0.7}
               alignItems="center"
-              sx={{ width: 166, flexShrink: 0, justifyContent: "flex-start", WebkitAppRegion: "no-drag" }}
+              sx={{ width: 166, flexShrink: 0, justifyContent: "flex-start", WebkitAppRegion: "drag" }}
             >
               <Tooltip title="Layang workspace">
                 <Button
@@ -3070,10 +4224,10 @@ export default function PlaygroundPage() {
                   <Download fontSize="small" /> Export portable JSON
                 </MenuItem>
                 <MenuItem onClick={openWorkspaceImporter}>
-                  <UploadFile fontSize="small" /> Import workspace / proto / docs / examples
+                  <UploadFile fontSize="small" /> Import workspace / collection / docs / examples
                 </MenuItem>
                 <MenuItem onClick={openProtoFolderImporter}>
-                  <UploadFile fontSize="small" /> Import proto folder
+                  <UploadFile fontSize="small" /> Import gRPC proto / collection folder
                 </MenuItem>
                 <Divider />
                 <MenuItem
@@ -3121,17 +4275,8 @@ export default function PlaygroundPage() {
             </Box>
             <Box
               aria-label="Drag window"
-              sx={{ alignSelf: "stretch", width: 12, flexShrink: 0, WebkitAppRegion: "drag" }}
+              sx={{ alignSelf: "stretch", width: 72, flexShrink: 0, WebkitAppRegion: "drag" }}
             />
-            <Tooltip title={`Switch to ${themeMode === "dark" ? "light" : "dark"} mode`}>
-              <IconButton size="small" onClick={toggleTheme} sx={{ flexShrink: 0, WebkitAppRegion: "no-drag" }}>
-                {themeMode === "dark" ? (
-                  <DarkMode sx={{ fontSize: 16 }} color="primary" />
-                ) : (
-                  <LightMode sx={{ fontSize: 16 }} color="primary" />
-                )}
-              </IconButton>
-            </Tooltip>
             <WindowControls />
           </Stack>
         </AppBar>
@@ -3149,7 +4294,7 @@ export default function PlaygroundPage() {
           hidden
           multiple
           type="file"
-          accept=".proto"
+          accept=".proto,.json"
           {...{ webkitdirectory: "", directory: "" }}
           onChange={(event: ChangeEvent<HTMLInputElement>) => void handleProtoFiles(event.target.files)}
         />
@@ -3170,7 +4315,7 @@ export default function PlaygroundPage() {
           <RailButton
             active={sidebarOpen && sideSection === "registry"}
             icon={<Api />}
-            label="APIs"
+            label="Collections"
             onClick={() => {
               setSideSection("registry");
               setSidebarOpen(true);
@@ -3197,10 +4342,19 @@ export default function PlaygroundPage() {
           <RailButton
             active={sidebarOpen && sideSection === "mocks"}
             icon={<MockServer />}
-            label="Mocks"
+            label="gRPC Mock"
             status={mockServerStatus.running ? "running" : "idle"}
             onClick={() => {
               setSideSection("mocks");
+              setSidebarOpen(true);
+            }}
+          />
+          <RailButton
+            active={sidebarOpen && sideSection === "ws-mocks"}
+            icon={<Stream />}
+            label="WS Mock"
+            onClick={() => {
+              setSideSection("ws-mocks");
               setSidebarOpen(true);
             }}
           />
@@ -3213,6 +4367,26 @@ export default function PlaygroundPage() {
               setSidebarOpen(true);
             }}
           />
+          <Box
+            sx={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              bottom: 10,
+              display: "flex",
+              justifyContent: "center",
+            }}
+          >
+            <Tooltip title={`Switch to ${themeMode === "dark" ? "light" : "dark"} mode`} placement="right">
+              <IconButton size="small" aria-label="Toggle theme" onClick={toggleTheme} sx={iconButtonSx}>
+                {themeMode === "dark" ? (
+                  <DarkMode sx={{ fontSize: 16 }} color="primary" />
+                ) : (
+                  <LightMode sx={{ fontSize: 16 }} color="primary" />
+                )}
+              </IconButton>
+            </Tooltip>
+          </Box>
         </Box>
 
         {sidebarOpen && (
@@ -3238,31 +4412,54 @@ export default function PlaygroundPage() {
                 docsCount={publishedDocs.length}
                 mockCount={0}
                 onHide={() => setSidebarOpen(false)}
+                action={
+                  sideSection === "registry" ? (
+                    <Tooltip title="Collection menu">
+                      <IconButton
+                        size="small"
+                        aria-label="Collection menu"
+                        onClick={(event: ButtonClickEvent) => setCollectionMenuAnchor(event.currentTarget)}
+                      >
+                        <Add sx={{ fontSize: 15 }} />
+                      </IconButton>
+                    </Tooltip>
+                  ) : undefined
+                }
               />
-              {sideSection === "registry" && (
-                <Stack direction="row" spacing={0.7}>
-                  <Button
-                    fullWidth
-                    size="small"
-                    variant="contained"
-                    startIcon={<UploadFile />}
-                    onClick={() => protoInputRef.current?.click()}
-                  >
-                    Import
-                  </Button>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    onClick={() => protoFolderInputRef.current?.click()}
-                    sx={{ minWidth: 72 }}
-                  >
-                    Folder
-                  </Button>
-                  <Button size="small" variant="outlined" onClick={loadSample} sx={{ minWidth: 68 }}>
-                    Sample
-                  </Button>
-                </Stack>
-              )}
+              <Menu
+                anchorEl={collectionMenuAnchor}
+                open={sideSection === "registry" && Boolean(collectionMenuAnchor)}
+                onClose={() => setCollectionMenuAnchor(null)}
+              >
+                <MenuItem onClick={openAddCollectionDialog}>
+                  <Add fontSize="small" /> Add WS Collection
+                </MenuItem>
+                <Divider />
+                <MenuItem
+                  onClick={() => {
+                    setCollectionMenuAnchor(null);
+                    protoInputRef.current?.click();
+                  }}
+                >
+                  <UploadFile fontSize="small" /> Import gRPC proto / collection
+                </MenuItem>
+                <MenuItem
+                  onClick={() => {
+                    setCollectionMenuAnchor(null);
+                    protoFolderInputRef.current?.click();
+                  }}
+                >
+                  <UploadFile fontSize="small" /> Import collection folder
+                </MenuItem>
+                <MenuItem
+                  onClick={() => {
+                    setCollectionMenuAnchor(null);
+                    loadSample();
+                  }}
+                >
+                  <ExampleIcon fontSize="small" /> Load sample gRPC collection
+                </MenuItem>
+              </Menu>
               <input
                 ref={protoInputRef}
                 hidden
@@ -3291,7 +4488,7 @@ export default function PlaygroundPage() {
                   size="small"
                   value={registryFilter}
                   onChange={(event: TextInputChangeEvent) => setRegistryFilter(event.target.value)}
-                  placeholder="Search APIs"
+                  placeholder="Search collections"
                   InputProps={{
                     startAdornment: (
                       <InputAdornment position="start">
@@ -3306,8 +4503,10 @@ export default function PlaygroundPage() {
                 {sideSection === "registry" && (
                   <FeatureRegistryPanel
                     protoFiles={protoFiles}
+                    collections={collections}
                     endpointGroups={endpointGroups}
                     selectedMethodKey={selectedMethodKey}
+                    selectedCollectionRequestId={activeCollectionRequestId}
                     loaded={loaded}
                     onRemoveProto={removeProtoFile}
                     onOpenProto={setProtoPreview}
@@ -3319,6 +4518,10 @@ export default function PlaygroundPage() {
                       )
                     }
                     onSelectMethod={(method) => loaded && selectMethod(loaded.root, method)}
+                    onSelectCollectionRequest={selectCollectionRequest}
+                    onAddCollectionRequest={openAddWebSocketRequestDialog}
+                    onImportGrpcRequest={importGrpcRequestIntoCollection}
+                    onRemoveCollection={removeCollection}
                   />
                 )}
                 {sideSection === "examples" && (
@@ -3328,7 +4531,7 @@ export default function PlaygroundPage() {
                     onRun={(example) => void runExample(example)}
                     onDelete={(id) => setExamples((current) => current.filter((item) => item.id !== id))}
                     onClear={() =>
-                      setExamples((current) => current.filter((item) => savedExampleKey(item) !== activeMethodKey))
+                      setExamples((current) => current.filter((item) => savedExampleKey(item) !== activeExampleKey))
                     }
                   />
                 )}
@@ -3348,10 +4551,35 @@ export default function PlaygroundPage() {
                     onExport={exportMockScenarioFile}
                   />
                 )}
+                {sideSection === "ws-mocks" && (
+                  <WebSocketMockSidebar
+                    request={activeCollectionRequest?.kind === "websocket" ? activeCollectionRequest : null}
+                    mockResponseText={activeWebSocketMockResponseText}
+                    latestResult={activeIsWebSocket ? lastResult : null}
+                    status={wsMockStatus}
+                    port={wsMockPort}
+                    pathValue={wsMockPath}
+                    intervalMs={wsMockIntervalMs}
+                    loop={wsMockLoop}
+                    maxLoops={wsMockMaxLoops}
+                    streamOnConnect={wsMockStreamOnConnect}
+                    onMockResponseTextChange={updateActiveWebSocketMockResponse}
+                    onPortChange={setWsMockPort}
+                    onPathChange={setWsMockPath}
+                    onIntervalMsChange={setWsMockIntervalMs}
+                    onLoopChange={setWsMockLoop}
+                    onMaxLoopsChange={setWsMockMaxLoops}
+                    onStreamOnConnectChange={setWsMockStreamOnConnect}
+                    onStart={() => void startWebSocketMockServer()}
+                    onStop={() => void stopWebSocketMockServer()}
+                    onSendOnce={() => void sendWebSocketMockOnce()}
+                    onCopy={copyActiveWebSocketMockResponse}
+                  />
+                )}
                 {sideSection === "docs" && (
                   <FeatureDocsSidebar
                     docs={publishedDocs}
-                    activeMethodKey={activeMethodKey}
+                    activeMethodKey={activeDocKey}
                     onExport={exportPublicDocs}
                     onOpen={(doc) => openDocFromSidebar(doc)}
                     onUnpublish={(doc) => unpublishMethodDoc(doc.methodKey)}
@@ -3404,16 +4632,34 @@ export default function PlaygroundPage() {
                     <Typography
                       variant="subtitle1"
                       noWrap
-                      title={selectedMethod ? selectedMethod.methodName : "Select an API method"}
+                      title={
+                        selectedMethod
+                          ? selectedMethod.methodName
+                          : (activeCollectionRequest?.name ?? "Select a collection request")
+                      }
                     >
-                      {selectedMethod ? `${selectedMethod.methodName}` : "Select an API method"}
+                      {selectedMethod
+                        ? `${selectedMethod.methodName}`
+                        : (activeCollectionRequest?.name ?? "Select a collection request")}
                     </Typography>
-                    {selectedMethod && (
+                    {(selectedMethod || activeCollectionRequest) && (
                       <Chip
                         size="small"
                         variant="outlined"
-                        color={selectedMethod.responseStream ? "secondary" : "primary"}
-                        label={methodTypeLabel(selectedMethod)}
+                        color={
+                          selectedMethod?.responseStream || activeCollectionRequest?.kind === "websocket"
+                            ? "secondary"
+                            : "primary"
+                        }
+                        label={
+                          selectedMethod
+                            ? methodTypeLabel(selectedMethod)
+                            : activeCollectionRequest?.kind === "websocket"
+                              ? "WebSocket"
+                              : activeCollectionRequest?.kind === "grpc"
+                                ? "gRPC"
+                                : "Request"
+                        }
                       />
                     )}
                   </Stack>
@@ -3421,14 +4667,27 @@ export default function PlaygroundPage() {
                     variant="caption"
                     color="text.secondary"
                     noWrap
-                    title={selectedMethod?.serviceName ?? "Import proto files to build the registry."}
+                    title={
+                      selectedMethod?.serviceName ??
+                      activeCollectionRequest?.collectionName ??
+                      "Import or add a collection request."
+                    }
                   >
-                    {selectedMethod?.serviceName ?? "Import proto files to build the registry."}
+                    {selectedMethod?.serviceName ??
+                      activeCollectionRequest?.collectionName ??
+                      "Import or add a collection request."}
                   </Typography>
                 </Box>
                 {activeRunning ? (
                   <Tooltip title="Stop running request">
-                    <IconButton size="small" color="warning" onClick={() => requestRunner.cancelRequest()}>
+                    <IconButton
+                      size="small"
+                      color="warning"
+                      onClick={() => {
+                        if (wsClientRef.current?.sessionId === activeRequestId) closeManualWebSocketClient();
+                        else requestRunner.cancelRequest();
+                      }}
+                    >
                       <StopCircle fontSize="small" />
                     </IconButton>
                   </Tooltip>
@@ -3437,13 +4696,23 @@ export default function PlaygroundPage() {
                     size="small"
                     variant="contained"
                     startIcon={<PlayArrow />}
-                    disabled={!selectedMethod || (activeTransportMode === "native-grpc" && !isNativeBridgeAvailable)}
+                    disabled={
+                      (!selectedMethod && !activeCollectionRequest) ||
+                      activeCollectionRequest?.kind === "grpc" ||
+                      (activeTransportMode === "native-grpc" && !isNativeBridgeAvailable)
+                    }
                     onClick={() => {
                       commitTargetDraft();
                       void requestRunner.runRequest();
                     }}
                   >
-                    {selectedMethod?.responseStream ? "Start stream" : "Send"}
+                    {activeCollectionRequest?.kind === "websocket"
+                      ? requestJson.trim()
+                        ? "Connect & send"
+                        : "Connect"
+                      : selectedMethod?.responseStream
+                        ? "Start stream"
+                        : "Send"}
                   </Button>
                 )}
               </Stack>
@@ -3459,7 +4728,7 @@ export default function PlaygroundPage() {
                   variant="outlined"
                   onClick={(event: ButtonClickEvent) => setEnvMenuAnchor(event.currentTarget)}
                   title={featureEnvironmentLabel(environments, activeEnvironmentKey)}
-                  sx={{ width: 54, minWidth: 54, px: 0.5, justifyContent: "center", flexShrink: 0 }}
+                  sx={{ width: 88, minWidth: 88, px: 0.5, justifyContent: "center", flexShrink: 0 }}
                 >
                   <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {featureEnvironmentShortLabel(environments, activeEnvironmentKey)}
@@ -3474,7 +4743,7 @@ export default function PlaygroundPage() {
                   </MenuItem>
                   <Divider />
                   {environments.map((env) => {
-                    const target = activeTransportMode === "grpc-web" ? env.grpcWebBaseUrl : env.nativeTarget;
+                    const target = activeTransportMode === "native-grpc" ? env.nativeTarget : env.grpcWebBaseUrl;
                     return (
                       <MenuItem
                         key={env.key}
@@ -3509,34 +4778,60 @@ export default function PlaygroundPage() {
                     <Add sx={{ fontSize: 16, mr: 1 }} /> Save New Environment
                   </MenuItem>
                 </Menu>
-                <FormControl size="small" sx={{ width: 145 }}>
+                <FormControl size="small" sx={{ width: activeIsWebSocket ? 132 : 145 }}>
                   <Select
-                    value={activeTransportMode}
+                    value={
+                      activeIsWebSocket
+                        ? "websocket"
+                        : activeTransportMode === "rest"
+                          ? "grpc-web"
+                          : activeTransportMode
+                    }
+                    disabled={activeIsWebSocket}
                     onChange={(event: SelectInputChangeEvent) =>
                       handleTransportModeChange(event.target.value as TransportMode)
                     }
                   >
-                    <MenuItem value="grpc-web">gRPC-Web</MenuItem>
-                    <MenuItem value="native-grpc">Native gRPC</MenuItem>
+                    {activeIsWebSocket ? (
+                      <MenuItem value="websocket">WebSocket</MenuItem>
+                    ) : (
+                      [
+                        <MenuItem key="grpc-web" value="grpc-web">
+                          gRPC-Web
+                        </MenuItem>,
+                        <MenuItem key="native-grpc" value="native-grpc">
+                          Native gRPC
+                        </MenuItem>,
+                      ]
+                    )}
                   </Select>
                 </FormControl>
                 <TextField
                   size="small"
                   fullWidth
+                  className="workbench-url-input"
                   value={targetDraft}
                   onChange={(event: TextInputChangeEvent) => handleTargetDraftChange(event.target.value)}
                   onBlur={() => commitTargetDraft()}
                   onKeyDown={(event: TextInputKeyboardEvent) => {
                     if (event.key === "Enter") commitTargetDraft();
                   }}
-                  placeholder={activeTransportMode === "grpc-web" ? "APISIX / Envoy base URL" : "localhost:50051"}
+                  placeholder={
+                    activeIsWebSocket
+                      ? "ws://localhost:8080"
+                      : activeTransportMode === "native-grpc"
+                        ? "localhost:50051"
+                        : "APISIX / Envoy base URL"
+                  }
                   InputProps={{
                     startAdornment: (
                       <InputAdornment position="start">
-                        {activeTransportMode === "grpc-web" ? (
-                          <Language sx={{ fontSize: 16 }} />
-                        ) : (
+                        {activeIsWebSocket ? (
+                          <Stream sx={{ fontSize: 16 }} />
+                        ) : activeTransportMode === "native-grpc" ? (
                           <DesktopWindows sx={{ fontSize: 16 }} />
+                        ) : (
+                          <Language sx={{ fontSize: 16 }} />
                         )}
                       </InputAdornment>
                     ),
@@ -3565,135 +4860,211 @@ export default function PlaygroundPage() {
                 </Typography>
               </Box>
 
-              <WorkbenchTabs<RequestTab>
-                value={requestTab}
-                onChange={setRequestTab}
-                items={[
-                  { value: "body", label: "Body" },
-                  { value: "metadata", label: "Metadata" },
-                  { value: "schema", label: "Schema" },
-                  { value: "docs", label: "Docs" },
-                  { value: "benchmark", label: "Benchmark" },
-                  {
-                    value: "examples",
-                    label: currentExamples.length ? `Examples ${currentExamples.length}` : "Examples",
-                  },
-                  { value: "mock", label: "Mock" },
-                  { value: "assertions", label: "Tests" },
-                ]}
-              />
+              <WorkbenchTabs<RequestTab> value={requestTab} onChange={setRequestTab} items={requestTabItems} />
               <Box sx={{ p: designSystem.space.panelPadding, minHeight: 0, flex: 1, overflow: "auto" }}>
-                {requestTab === "body" && (
-                  <Stack spacing={1} sx={{ minHeight: 0 }}>
-                    <Stack
-                      direction="row"
-                      spacing={0.7}
-                      alignItems="center"
-                      justifyContent="space-between"
-                      flexWrap="wrap"
-                      useFlexGap
-                    >
-                      <Stack direction="row" spacing={0.7} alignItems="center" flexWrap="wrap" useFlexGap>
-                        {selectedMethod && currentMockScenarios.length > 0 && (
-                          <FormControl size="small" sx={{ width: 220 }}>
-                            <Select
-                              value={currentMockActiveScenario?.id ?? currentMockScenarios[0]?.id ?? ""}
-                              onChange={(event: SelectInputChangeEvent) =>
-                                handleMockScenarioSelectChange(selectedMethod, String(event.target.value))
-                              }
-                            >
-                              {currentMockScenarios.map((scenario) => (
-                                <MenuItem key={scenario.id} value={scenario.id}>
-                                  {scenario.id}
-                                </MenuItem>
-                              ))}
-                            </Select>
-                          </FormControl>
-                        )}
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          onClick={generateRequestJsonFromSelectedScenario}
-                          disabled={!selectedMethod || currentMockScenarios.length === 0}
-                        >
-                          Generate from scenario
+                {requestTab === "body" &&
+                  (activeIsWebSocket ? (
+                    <Stack spacing={1} sx={{ minHeight: 0 }}>
+                      <Stack
+                        direction="row"
+                        spacing={0.7}
+                        alignItems="center"
+                        justifyContent="space-between"
+                        flexWrap="wrap"
+                        useFlexGap
+                      >
+                        <Box sx={{ minWidth: 0 }}>
+                          <Typography variant="subtitle1">WebSocket send data</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Data from this body is sent to the WebSocket after the connection opens. Leave it empty for
+                            connect-only.
+                          </Typography>
+                        </Box>
+                        <Stack direction="row" spacing={0.7} alignItems="center" flexWrap="wrap" useFlexGap>
+                          <Chip
+                            size="small"
+                            variant="outlined"
+                            color={
+                              wsClientState.readyState === "open"
+                                ? "success"
+                                : wsClientState.readyState === "connecting"
+                                  ? "warning"
+                                  : "default"
+                            }
+                            label={
+                              wsClientState.readyState === "open"
+                                ? `Connected${wsClientState.messageCount ? ` · ${wsClientState.messageCount} msg` : ""}`
+                                : wsClientState.readyState === "connecting"
+                                  ? "Connecting"
+                                  : "Disconnected"
+                            }
+                          />
+                          {wsClientState.readyState === "open" && (
+                            <Button size="small" variant="outlined" onClick={() => closeManualWebSocketClient()}>
+                              Disconnect
+                            </Button>
+                          )}
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={prettifyRequestJson}
+                            disabled={!requestJson.trim()}
+                          >
+                            Prettier JSON
+                          </Button>
+                          <Button
+                            size="small"
+                            variant="contained"
+                            startIcon={<PlayArrow />}
+                            onClick={handleSendWebSocketMessage}
+                            disabled={
+                              !activeCollectionRequest ||
+                              activeCollectionRequest.kind !== "websocket" ||
+                              wsClientState.readyState === "connecting"
+                            }
+                          >
+                            Send
+                          </Button>
+                        </Stack>
+                      </Stack>
+                      <FeatureCodeTextField
+                        value={requestJson}
+                        onChange={handleRequestJsonChange}
+                        minRows={7}
+                        maxRows={12}
+                        language="json"
+                      />
+                    </Stack>
+                  ) : (
+                    <Stack spacing={1} sx={{ minHeight: 0 }}>
+                      <Stack
+                        direction="row"
+                        spacing={0.7}
+                        alignItems="center"
+                        justifyContent="space-between"
+                        flexWrap="wrap"
+                        useFlexGap
+                      >
+                        <Stack direction="row" spacing={0.7} alignItems="center" flexWrap="wrap" useFlexGap>
+                          {selectedMethod && currentMockScenarios.length > 0 && (
+                            <FormControl size="small" sx={{ width: 220 }}>
+                              <Select
+                                value={currentMockActiveScenario?.id ?? currentMockScenarios[0]?.id ?? ""}
+                                onChange={(event: SelectInputChangeEvent) =>
+                                  handleMockScenarioSelectChange(selectedMethod, String(event.target.value))
+                                }
+                              >
+                                {currentMockScenarios.map((scenario) => (
+                                  <MenuItem key={scenario.id} value={scenario.id}>
+                                    {scenario.id}
+                                  </MenuItem>
+                                ))}
+                              </Select>
+                            </FormControl>
+                          )}
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={generateRequestJsonFromSelectedScenario}
+                            disabled={!selectedMethod || currentMockScenarios.length === 0}
+                          >
+                            Generate from scenario
+                          </Button>
+                        </Stack>
+                        <Stack direction="row" spacing={0.7} alignItems="center">
+                          <Button size="small" variant="outlined" onClick={prettifyRequestJson}>
+                            Prettier JSON
+                          </Button>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={generateRandomRequestJson}
+                            disabled={!selectedMethod}
+                          >
+                            Generate random
+                          </Button>
+                        </Stack>
+                      </Stack>
+                      <FeatureCodeTextField
+                        value={requestJson}
+                        onChange={handleRequestJsonChange}
+                        minRows={7}
+                        maxRows={12}
+                        language="json"
+                      />
+                    </Stack>
+                  ))}
+                {requestTab === "metadata" &&
+                  (activeIsWebSocket ? (
+                    <Stack spacing={1.1}>
+                      <Stack spacing={0.25}>
+                        <Typography variant="subtitle1">WebSocket subprotocol</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Optional WebSocket subprotocol. Message data is sent from the Message tab.
+                        </Typography>
+                      </Stack>
+                      <TextField
+                        size="small"
+                        label="Sec-WebSocket-Protocol"
+                        fullWidth
+                        value={webSocketSubprotocolValue}
+                        onChange={(event: TextInputChangeEvent) => updateWebSocketSubprotocol(event.target.value)}
+                        placeholder="json, chat.v1"
+                        helperText="Comma-separated subprotocols, for example json, chat.v1."
+                      />
+                    </Stack>
+                  ) : (
+                    <Stack spacing={1}>
+                      <Stack direction="row" justifyContent="space-between" alignItems="center">
+                        <Typography variant="subtitle1">Metadata</Typography>
+                        <Button size="small" startIcon={<Add />} onClick={addMetadataRow}>
+                          Add row
                         </Button>
                       </Stack>
-                      <Stack direction="row" spacing={0.7} alignItems="center">
-                        <Button size="small" variant="outlined" onClick={prettifyRequestJson}>
-                          Prettier JSON
-                        </Button>
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          onClick={generateRandomRequestJson}
-                          disabled={!selectedMethod}
-                        >
-                          Generate random
-                        </Button>
-                      </Stack>
-                    </Stack>
-                    <FeatureCodeTextField
-                      value={requestJson}
-                      onChange={handleRequestJsonChange}
-                      minRows={7}
-                      maxRows={12}
-                      language="json"
-                    />
-                  </Stack>
-                )}
-                {requestTab === "metadata" && (
-                  <Stack spacing={1}>
-                    <Stack direction="row" justifyContent="space-between" alignItems="center">
-                      <Typography variant="subtitle1">Metadata</Typography>
-                      <Button size="small" startIcon={<Add />} onClick={addMetadataRow}>
-                        Add row
-                      </Button>
-                    </Stack>
-                    <TableContainer component={Paper} variant="outlined">
-                      <Table size="small">
-                        <TableHead>
-                          <TableRow>
-                            <TableCell>Key</TableCell>
-                            <TableCell>Value</TableCell>
-                            <TableCell width={56}>Action</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {metadata.map((item, index) => (
-                            <TableRow key={`${item.key}-${item.value}`}>
-                              <TableCell>
-                                <TextField
-                                  size="small"
-                                  fullWidth
-                                  value={item.key}
-                                  onChange={(event: TextInputChangeEvent) =>
-                                    updateMetadataRow(index, "key", event.target.value)
-                                  }
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <TextField
-                                  size="small"
-                                  fullWidth
-                                  value={item.value}
-                                  onChange={(event: TextInputChangeEvent) =>
-                                    updateMetadataRow(index, "value", event.target.value)
-                                  }
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <IconButton size="small" color="error" onClick={() => removeMetadataRow(index)}>
-                                  <Delete sx={{ fontSize: 16 }} />
-                                </IconButton>
-                              </TableCell>
+                      <TableContainer component={Paper} variant="outlined">
+                        <Table size="small">
+                          <TableHead>
+                            <TableRow>
+                              <TableCell>Key</TableCell>
+                              <TableCell>Value</TableCell>
+                              <TableCell width={56}>Action</TableCell>
                             </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </TableContainer>
-                  </Stack>
-                )}
+                          </TableHead>
+                          <TableBody>
+                            {metadata.map((item, index) => (
+                              <TableRow key={`${item.key}-${item.value}`}>
+                                <TableCell>
+                                  <TextField
+                                    size="small"
+                                    fullWidth
+                                    value={item.key}
+                                    onChange={(event: TextInputChangeEvent) =>
+                                      updateMetadataRow(index, "key", event.target.value)
+                                    }
+                                  />
+                                </TableCell>
+                                <TableCell>
+                                  <TextField
+                                    size="small"
+                                    fullWidth
+                                    value={item.value}
+                                    onChange={(event: TextInputChangeEvent) =>
+                                      updateMetadataRow(index, "value", event.target.value)
+                                    }
+                                  />
+                                </TableCell>
+                                <TableCell>
+                                  <IconButton size="small" color="error" onClick={() => removeMetadataRow(index)}>
+                                    <Delete sx={{ fontSize: 16 }} />
+                                  </IconButton>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </Stack>
+                  ))}
                 {requestTab === "schema" && (
                   <Stack spacing={1.2}>
                     <FeatureSchemaTable
@@ -3708,38 +5079,80 @@ export default function PlaygroundPage() {
                     />
                   </Stack>
                 )}
-                {requestTab === "docs" && (
-                  <FeatureMethodDocsPanel
-                    selectedMethod={selectedMethod}
-                    doc={currentMethodDoc}
-                    examples={currentExamples}
-                    docsResult={activeDocsResult}
-                    onPreview={previewCurrentMethodDoc}
-                    onSaveResult={saveCurrentResultForDocs}
-                    onExportPublic={exportPublicDocs}
-                    onPublish={publishCurrentMethodDoc}
-                    onUnpublish={unpublishCurrentMethodDoc}
-                    onDelete={deleteCurrentMethodDoc}
+                {requestTab === "history" && (
+                  <FeatureHistoryTable
+                    history={currentHistory}
+                    filterQuery={deferredResponseFilter}
+                    onClear={clearHistory}
                   />
                 )}
-                {requestTab === "benchmark" && (
-                  <FeatureBenchmarkPanel
-                    selectedMethod={selectedMethod}
-                    iterations={benchmark.iterations}
-                    onIterationsChange={benchmark.setIterations}
-                    periodMs={benchmark.periodMs}
-                    onPeriodMsChange={benchmark.setPeriodMs}
-                    running={benchmark.running}
-                    results={benchmark.results}
-                    onRun={() => void benchmark.runBenchmark()}
-                    onStop={benchmark.stopBenchmark}
-                    onExportBenchmark={exportCurrentBenchmark}
-                  />
-                )}
+                {requestTab === "docs" &&
+                  (activeIsWebSocket ? (
+                    <WebSocketDocsPanel
+                      collectionRequest={activeCollectionRequest}
+                      url={targetDraft}
+                      message={requestJson}
+                      examples={currentExamples}
+                      latestResult={lastResult}
+                      doc={currentWebSocketDoc}
+                      onPreview={previewCurrentWebSocketDoc}
+                      onPublish={publishCurrentWebSocketDoc}
+                      onUnpublish={unpublishCurrentWebSocketDoc}
+                      onExport={() =>
+                        activeCollectionRequest &&
+                        downloadTextFile(
+                          `layang-ws-docs-${slugify(activeCollectionRequest.name)}-${timestampForFile()}.md`,
+                          buildActiveWebSocketDocsMarkdown(),
+                          "text/markdown",
+                        )
+                      }
+                    />
+                  ) : (
+                    <FeatureMethodDocsPanel
+                      selectedMethod={selectedMethod}
+                      doc={currentMethodDoc}
+                      examples={currentExamples}
+                      docsResult={activeDocsResult}
+                      onPreview={previewCurrentMethodDoc}
+                      onSaveResult={saveCurrentResultForDocs}
+                      onExportPublic={exportPublicDocs}
+                      onPublish={publishCurrentMethodDoc}
+                      onUnpublish={unpublishCurrentMethodDoc}
+                      onDelete={deleteCurrentMethodDoc}
+                    />
+                  ))}
+                {requestTab === "benchmark" &&
+                  (activeIsWebSocket ? (
+                    <WebSocketBenchmarkPanel
+                      request={activeCollectionRequest}
+                      iterations={wsBenchmarkIterations}
+                      onIterationsChange={setWsBenchmarkIterations}
+                      running={wsBenchmarkRunning}
+                      results={wsBenchmarkResults}
+                      lastResult={lastResult}
+                      onRun={() => void runWebSocketBenchmark()}
+                      onStop={stopWebSocketBenchmark}
+                      onExport={exportWebSocketBenchmark}
+                    />
+                  ) : (
+                    <FeatureBenchmarkPanel
+                      selectedMethod={selectedMethod}
+                      iterations={benchmark.iterations}
+                      onIterationsChange={benchmark.setIterations}
+                      periodMs={benchmark.periodMs}
+                      onPeriodMsChange={benchmark.setPeriodMs}
+                      running={benchmark.running}
+                      results={benchmark.results}
+                      onRun={() => void benchmark.runBenchmark()}
+                      onStop={benchmark.stopBenchmark}
+                      onExportBenchmark={exportCurrentBenchmark}
+                    />
+                  ))}
                 {requestTab === "examples" && (
                   <ExamplesPanel
                     examples={currentExamples}
                     selectedMethod={selectedMethod}
+                    canSave={Boolean(selectedMethod || activeCollectionRequest)}
                     onSave={saveCurrentExample}
                     onImport={() => exampleInputRef.current?.click()}
                     onExport={exportCurrentMethodExamples}
@@ -3748,46 +5161,54 @@ export default function PlaygroundPage() {
                     onDelete={(id) => setExamples((current) => current.filter((item) => item.id !== id))}
                   />
                 )}
-                {requestTab === "mock" && (
-                  <MockServerPanel
-                    selectedMethod={selectedMethod}
-                    status={mockServerStatus}
-                    currentFile={currentMockFile}
-                    currentParseResult={currentMockParse}
-                    editorText={currentMockEditorText}
-                    streamDefaults={mockServer.streamDefaults}
-                    mappingRows={mockMappingRows}
-                    onScenarioTextChange={handleMockScenarioTextChange}
-                    onFormatChange={handleMockFormatChange}
-                    onFormat={formatMockScenarioEditor}
-                    onAddScenario={addMockScenarioFromCurrent}
-                    onScenarioSelectChange={handleMockScenarioSelectChange}
-                    onMethodEnabledChange={handleMockMethodEnabledChange}
-                    onScenarioStreamSettingsChange={handleMockScenarioStreamSettingsChange}
-                    onEditScenario={openMockScenarioManager}
-                    onImport={() => mockScenarioInputRef.current?.click()}
-                    onExport={exportMockScenarioFile}
-                    onOpenFolder={() => void openMockScenarioFolder()}
-                    onOpenSettings={() => setMockSettingsOpen(true)}
-                  />
-                )}
-                {requestTab === "assertions" && (
-                  <Stack spacing={1}>
-                    <Typography variant="subtitle1">Tests</Typography>
-                    <Alert severity="info">
-                      Fill Expected/Tests as JSON assertions, for example{" "}
-                      <code>{JSON.stringify({ grpcStatus: "0", minMessages: 1, maxLatencyMs: 1000 })}</code>. Leave it
-                      empty to skip validation.
-                    </Alert>
-                    <FeatureCodeTextField
-                      value={assertionJson}
-                      onChange={handleAssertionJsonChange}
-                      minRows={7}
-                      language="json"
+                {requestTab === "mock" &&
+                  (activeIsWebSocket ? (
+                    <WebSocketMockPanel
+                      request={activeCollectionRequest}
+                      mockResponseText={activeWebSocketMockResponseText}
+                      onMockResponseTextChange={updateActiveWebSocketMockResponse}
+                      latestResult={lastResult}
+                      status={wsMockStatus}
+                      port={wsMockPort}
+                      pathValue={wsMockPath}
+                      intervalMs={wsMockIntervalMs}
+                      loop={wsMockLoop}
+                      maxLoops={wsMockMaxLoops}
+                      streamOnConnect={wsMockStreamOnConnect}
+                      onPortChange={setWsMockPort}
+                      onPathChange={setWsMockPath}
+                      onIntervalMsChange={setWsMockIntervalMs}
+                      onLoopChange={setWsMockLoop}
+                      onMaxLoopsChange={setWsMockMaxLoops}
+                      onStreamOnConnectChange={setWsMockStreamOnConnect}
+                      onStart={() => void startWebSocketMockServer()}
+                      onStop={() => void stopWebSocketMockServer()}
+                      onSendOnce={() => void sendWebSocketMockOnce()}
+                      onCopy={copyActiveWebSocketMockResponse}
                     />
-                    <AssertionResults results={assertionResults} />
-                  </Stack>
-                )}
+                  ) : (
+                    <MockServerPanel
+                      selectedMethod={selectedMethod}
+                      status={mockServerStatus}
+                      currentFile={currentMockFile}
+                      currentParseResult={currentMockParse}
+                      editorText={currentMockEditorText}
+                      streamDefaults={mockServer.streamDefaults}
+                      mappingRows={mockMappingRows}
+                      onScenarioTextChange={handleMockScenarioTextChange}
+                      onFormatChange={handleMockFormatChange}
+                      onFormat={formatMockScenarioEditor}
+                      onAddScenario={addMockScenarioFromCurrent}
+                      onScenarioSelectChange={handleMockScenarioSelectChange}
+                      onMethodEnabledChange={handleMockMethodEnabledChange}
+                      onScenarioStreamSettingsChange={handleMockScenarioStreamSettingsChange}
+                      onEditScenario={openMockScenarioManager}
+                      onImport={() => mockScenarioInputRef.current?.click()}
+                      onExport={exportMockScenarioFile}
+                      onOpenFolder={() => void openMockScenarioFolder()}
+                      onOpenSettings={() => setMockSettingsOpen(true)}
+                    />
+                  ))}
               </Box>
             </Paper>
 
@@ -3876,10 +5297,7 @@ export default function PlaygroundPage() {
                   />
                 )}
                 {responseTab === "report" && (
-                  <Stack spacing={1.2}>
-                    <AssertionResults results={assertionResults} />
-                    <FeatureJsonBlock value={reportPayload} highlightQuery={deferredResponseFilter} />
-                  </Stack>
+                  <FeatureJsonBlock value={reportPayload} highlightQuery={deferredResponseFilter} />
                 )}
               </Box>
             </Paper>
@@ -3930,6 +5348,69 @@ export default function PlaygroundPage() {
           </DialogActions>
         </Dialog>
 
+        <Dialog open={collectionDialogOpen} onClose={() => setCollectionDialogOpen(false)} fullWidth maxWidth="xs">
+          <DialogTitle>Add WS Collection</DialogTitle>
+          <DialogContent sx={{ pt: 1 }}>
+            <Stack spacing={1.2} sx={{ mt: 0.5 }}>
+              <Alert severity="warning" variant="outlined">
+                WebSocket is a beta version and is not stable yet.
+              </Alert>
+              <TextField
+                autoFocus
+                size="small"
+                label="WebSocket collection name"
+                value={collectionNameDraft}
+                onChange={(event: TextInputChangeEvent) => setCollectionNameDraft(event.target.value)}
+                onKeyDown={(event: TextInputKeyboardEvent) => {
+                  if (event.key === "Enter") confirmAddCollection();
+                }}
+                placeholder="Sample WebSocket Collection"
+              />
+              <Typography variant="caption" color="text.secondary">
+                After this collection is created, use the + button in its row to add WebSocket requests. Import proto
+                files when you need gRPC.
+              </Typography>
+            </Stack>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setCollectionDialogOpen(false)}>Cancel</Button>
+            <Button variant="contained" onClick={confirmAddCollection}>
+              Add WS Collection
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        <Dialog open={requestNameDialogOpen} onClose={() => setRequestNameDialogOpen(false)} fullWidth maxWidth="xs">
+          <DialogTitle>Add WebSocket Request</DialogTitle>
+          <DialogContent sx={{ pt: 1 }}>
+            <Stack spacing={1.2} sx={{ mt: 0.5 }}>
+              <Alert severity="warning" variant="outlined">
+                WebSocket is a beta version and is not stable yet.
+              </Alert>
+              <TextField
+                autoFocus
+                size="small"
+                label="WebSocket request name"
+                value={requestNameDraft}
+                onChange={(event: TextInputChangeEvent) => setRequestNameDraft(event.target.value)}
+                onKeyDown={(event: TextInputKeyboardEvent) => {
+                  if (event.key === "Enter") confirmAddWebSocketRequest();
+                }}
+                placeholder="Chat stream"
+              />
+              <Typography variant="caption" color="text.secondary">
+                The name is used for the tab, history, examples, docs, and WebSocket mock response template.
+              </Typography>
+            </Stack>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setRequestNameDialogOpen(false)}>Cancel</Button>
+            <Button variant="contained" onClick={confirmAddWebSocketRequest}>
+              Add Request
+            </Button>
+          </DialogActions>
+        </Dialog>
+
         <Dialog open={envDialogOpen} onClose={() => setEnvDialogOpen(false)} fullWidth maxWidth="xs">
           <DialogTitle>{envDialogMode === "edit" ? "Update Environment" : "Save Environment"}</DialogTitle>
           <DialogContent sx={{ pt: 1 }}>
@@ -3944,10 +5425,10 @@ export default function PlaygroundPage() {
               />
               <TextField
                 size="small"
-                label={activeTransportMode === "grpc-web" ? "gRPC-Web base URL" : "Native gRPC target"}
+                label={activeTransportMode === "native-grpc" ? "Native gRPC target" : "Request URL / base URL"}
                 value={envDraftUrl}
                 onChange={(event: TextInputChangeEvent) => setEnvDraftUrl(event.target.value)}
-                placeholder={activeTransportMode === "grpc-web" ? "http://127.0.0.1:9080/grpc/web" : "127.0.0.1:50051"}
+                placeholder={activeTransportMode === "native-grpc" ? "127.0.0.1:50051" : "https://api.example.com"}
               />
               <Typography variant="caption" color="text.secondary">
                 {envDialogMode === "edit"
@@ -4039,854 +5520,31 @@ export default function PlaygroundPage() {
 /**
  * Renders method-scoped saved examples in the sidebar.
  */
-function ExampleSidebar({
-  examples,
-  onLoad,
-  onRun,
-  onDelete,
-  onClear,
-}: {
-  examples: SavedExample[];
-  onLoad: (example: SavedExample) => void;
-  onRun: (example: SavedExample) => void;
-  onDelete: (id: string) => void;
-  onClear: () => void;
-}) {
-  if (examples.length === 0) return <SmallEmpty body="Save a request as an example." />;
-  return (
-    <Stack spacing={designSystem.space.gap}>
-      <Button size="small" color="error" variant="text" onClick={onClear} sx={{ ...buttonSx, alignSelf: "flex-start" }}>
-        Clear examples
-      </Button>
-      {examples.map((example) => (
-        <Paper key={example.id} variant="outlined" sx={compactCardSx}>
-          <Stack spacing={0.7}>
-            <Box sx={{ minWidth: 0 }}>
-              <Typography variant="body2" fontWeight={520} noWrap title={example.name}>
-                {example.name}
-              </Typography>
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                noWrap
-                title={`${example.serviceName}/${example.methodName}`}
-                display="block"
-              >
-                {example.serviceName}/{example.methodName}
-              </Typography>
-            </Box>
-            <Stack direction="row" spacing={0.5} alignItems="center">
-              <Button size="small" variant="outlined" onClick={() => onLoad(example)} sx={buttonSx}>
-                Load
-              </Button>
-              <Button size="small" variant="contained" onClick={() => onRun(example)} sx={buttonSx}>
-                Run
-              </Button>
-              <IconButton size="small" color="error" onClick={() => onDelete(example.id)} sx={iconButtonSx}>
-                <Delete sx={{ fontSize: 14 }} />
-              </IconButton>
-            </Stack>
-          </Stack>
-        </Paper>
-      ))}
-    </Stack>
-  );
-}
 
 /**
  * Renders method-scoped request history in the sidebar.
  */
-function HistorySidebar({ history, onClear }: { history: HistoryItem[]; onClear: () => void }) {
-  if (history.length === 0) return <SmallEmpty body="Request history appears here." />;
-  return (
-    <Stack spacing={designSystem.space.gap}>
-      <Button size="small" color="error" variant="text" onClick={onClear} sx={{ ...buttonSx, alignSelf: "flex-start" }}>
-        Clear history
-      </Button>
-      {history.slice(0, 30).map((item) => (
-        <Paper key={item.id} variant="outlined" sx={compactCardSx}>
-          <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
-            <Typography
-              variant="body2"
-              fontWeight={540}
-              noWrap
-              title={item.method.split("/").pop()}
-              sx={{ minWidth: 0 }}
-            >
-              {item.method.split("/").pop()}
-            </Typography>
-            <Chip size="small" label={item.status} />
-          </Stack>
-          <Typography variant="caption" color="text.secondary" noWrap title={item.method} display="block">
-            {item.method}
-          </Typography>
-          <Typography variant="caption" color="text.secondary" display="block">
-            {item.durationMs} ms - {formatTimestampShort(item.timestamp)}
-          </Typography>
-        </Paper>
-      ))}
-    </Stack>
-  );
-}
 
 /**
  * Renders a compact empty-state card.
  */
-function SmallEmpty({ body }: { body: string }) {
-  return (
-    <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
-      <Typography variant="body2" color="text.secondary">
-        {body}
-      </Typography>
-    </Paper>
-  );
-}
-
-function MethodMockSwitch({ checked, onChange }: { checked: boolean; onChange: (checked: boolean) => void }) {
-  return (
-    <Switch
-      checked={checked}
-      onChange={(event: SwitchInputChangeEvent) => onChange(event.target.checked)}
-      aria-label={checked ? "Mock enabled for method" : "Mock disabled for method"}
-      title={checked ? "Mock enabled" : "Mock disabled"}
-    />
-  );
-}
 
 /**
  * Renders compact mock server controls inside the left sidebar.
  */
-function MockServerSidebar({
-  mockServer,
-  selectedMethod,
-  status,
-  currentFile,
-  currentParseResult,
-  onSettings,
-  onGenerate,
-  onStart,
-  onStop,
-  onImport,
-  onExport,
-}: {
-  mockServer: MockServerProject;
-  selectedMethod: RpcMethodInfo | null;
-  status: MockServerStatus;
-  currentFile: MockMethodScenarioFile;
-  currentParseResult: MockParseResult;
-  onSettings: () => void;
-  onGenerate: () => void;
-  onStart: () => void;
-  onStop: () => void;
-  onImport: () => void;
-  onExport: () => void;
-}) {
-  return (
-    <Stack spacing={designSystem.space.gap}>
-      <Paper variant="outlined" sx={compactCardSx}>
-        <Stack spacing={0.8}>
-          <Stack direction="row" spacing={0.6} alignItems="center" justifyContent="space-between">
-            <Typography variant="body2" fontWeight={560}>
-              Mock server
-            </Typography>
-            <Chip
-              size="small"
-              color={status.running ? "success" : "default"}
-              label={status.running ? "Running" : "Stopped"}
-            />
-          </Stack>
-          <Typography variant="caption" color="text.secondary" display="block">
-            Port {status.port ?? mockServer.port}
-          </Typography>
-          {status.url && (
-            <Typography variant="caption" color="text.secondary" display="block">
-              {status.url}
-            </Typography>
-          )}
-          {status.message && (
-            <Typography variant="caption" color="text.secondary" display="block">
-              {status.message}
-            </Typography>
-          )}
-          <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap">
-            <Button size="small" variant="outlined" onClick={onSettings} sx={buttonSx}>
-              Settings
-            </Button>
-            <Button
-              size="small"
-              variant="contained"
-              startIcon={<PlayArrow />}
-              onClick={onStart}
-              disabled={status.running}
-              sx={buttonSx}
-            >
-              Start
-            </Button>
-            <Button
-              size="small"
-              variant="outlined"
-              color="error"
-              startIcon={<StopCircle />}
-              onClick={onStop}
-              disabled={!status.running}
-              sx={buttonSx}
-            >
-              Stop
-            </Button>
-          </Stack>
-        </Stack>
-      </Paper>
-      <Paper variant="outlined" sx={compactCardSx}>
-        <Stack spacing={0.7}>
-          <Typography variant="body2" fontWeight={560}>
-            Current method file
-          </Typography>
-          <Typography variant="caption" color={selectedMethod ? "text.secondary" : "error"} display="block">
-            {selectedMethod
-              ? `${safeMockFileBaseName(selectedMethod)}.${currentFile.format === "yaml" ? "yaml" : "json"}`
-              : "Select a method first"}
-          </Typography>
-          <Typography variant="caption" color={currentParseResult.ok ? "text.secondary" : "error"} display="block">
-            {currentParseResult.ok ? "Method mock file ready" : currentParseResult.error}
-          </Typography>
-          <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap">
-            <Button size="small" variant="outlined" onClick={onGenerate} disabled={!selectedMethod} sx={buttonSx}>
-              Add scenario
-            </Button>
-            <Button size="small" variant="outlined" onClick={onImport} disabled={!selectedMethod} sx={buttonSx}>
-              Import
-            </Button>
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={onExport}
-              disabled={!selectedMethod || !currentParseResult.ok}
-              sx={buttonSx}
-            >
-              Export
-            </Button>
-          </Stack>
-        </Stack>
-      </Paper>
-    </Stack>
-  );
-}
 
 /**
  * Renders mock server settings that apply across the running server and all method files.
  */
-function MockServerSettingsDialog({
-  open,
-  onClose,
-  mockServer,
-  status,
-  parseResult,
-  mappingRows,
-  onPortChange,
-  onScenarioSelectChange,
-  onMethodEnabledChange,
-  onScenarioStreamSettingsChange,
-  onStreamBaseChange,
-  onStart,
-  onStop,
-}: {
-  open: boolean;
-  onClose: () => void;
-  mockServer: MockServerProject;
-  status: MockServerStatus;
-  parseResult: MockParseResult;
-  mappingRows: MockMethodScenarioRow[];
-  onPortChange: (value: string) => void;
-  onScenarioSelectChange: (method: RpcMethodInfo, scenarioId: string) => void;
-  onMethodEnabledChange: (method: RpcMethodInfo, enabled: boolean) => void;
-  onScenarioStreamSettingsChange: (
-    method: RpcMethodInfo,
-    scenarioId: string,
-    patch: Partial<MockStreamSettings>,
-  ) => void;
-  onStreamBaseChange: (patch: Partial<MockStreamSettings>) => void;
-  onStart: () => void;
-  onStop: () => void;
-}) {
-  const streamDefaults = mockServer.streamDefaults ?? createDefaultMockStreamDefaults();
-  return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="lg">
-      <DialogTitle>Mock server settings</DialogTitle>
-      <DialogContent sx={{ pt: 1 }}>
-        <Stack spacing={1.2} sx={{ mt: 0.5 }}>
-          <Paper variant="outlined" sx={{ p: 1.2, borderRadius: 2 }}>
-            <Stack spacing={1}>
-              <Stack direction="row" spacing={1} alignItems="end" flexWrap="wrap">
-                <TextField
-                  size="small"
-                  type="number"
-                  label="Port"
-                  value={String(mockServer.port)}
-                  onChange={(event: TextInputChangeEvent) => onPortChange(event.target.value)}
-                  sx={{ width: 120 }}
-                />
-                {status.running ? (
-                  <Button size="small" color="error" variant="outlined" startIcon={<StopCircle />} onClick={onStop}>
-                    Stop
-                  </Button>
-                ) : (
-                  <Button size="small" variant="contained" startIcon={<PlayArrow />} onClick={onStart}>
-                    Start
-                  </Button>
-                )}
-                <Box sx={{ flex: 1, minWidth: 160 }} />
-                <Chip
-                  size="small"
-                  color={status.running ? "success" : "default"}
-                  label={status.running ? `Running on ${status.port ?? mockServer.port}` : "Stopped"}
-                />
-              </Stack>
-              <Stack direction="row" spacing={0.8} alignItems="center" flexWrap="wrap">
-                <Typography variant="caption" color="text.secondary" display="block">
-                  Default stream
-                </Typography>
-                <TextField
-                  size="small"
-                  type="number"
-                  label="Interval ms"
-                  value={String(streamDefaults.intervalMs ?? 0)}
-                  onChange={(event: TextInputChangeEvent) =>
-                    onStreamBaseChange({ intervalMs: Math.max(0, Math.floor(Number(event.target.value) || 0)) })
-                  }
-                  sx={{ width: 130 }}
-                />
-                <Stack spacing={0.3}>
-                  <Typography variant="caption" color="text.secondary" display="block">
-                    Loop
-                  </Typography>
-                  <FormControl size="small" sx={{ width: 120 }}>
-                    <Select
-                      value={streamDefaults.loop ? "yes" : "no"}
-                      onChange={(event: SelectInputChangeEvent) =>
-                        onStreamBaseChange({ loop: event.target.value === "yes" })
-                      }
-                    >
-                      <MenuItem value="no">No</MenuItem>
-                      <MenuItem value="yes">Yes</MenuItem>
-                    </Select>
-                  </FormControl>
-                </Stack>
-                <TextField
-                  size="small"
-                  type="number"
-                  label="Max loops"
-                  value={String(streamDefaults.maxLoops ?? 0)}
-                  onChange={(event: TextInputChangeEvent) =>
-                    onStreamBaseChange({ maxLoops: Math.max(0, Math.floor(Number(event.target.value) || 0)) })
-                  }
-                  helperText="0 = infinite"
-                  sx={{ width: 130 }}
-                />
-              </Stack>
-            </Stack>
-          </Paper>
-
-          <Paper variant="outlined" sx={{ p: 1.2, borderRadius: 2 }}>
-            <Stack spacing={0.9}>
-              <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1} flexWrap="wrap">
-                <Typography variant="body2" fontWeight={560}>
-                  Methods
-                </Typography>
-              </Stack>
-              {parseResult.ok ? (
-                <TableContainer component={Paper} variant="outlined">
-                  <Table size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Mock</TableCell>
-                        <TableCell>Method</TableCell>
-                        <TableCell>Type</TableCell>
-                        <TableCell>Scenario</TableCell>
-                        <TableCell>Stream override</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {mappingRows.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={5}>Import proto files before adding scenarios.</TableCell>
-                        </TableRow>
-                      ) : (
-                        mappingRows.map((row) => {
-                          const stream = row.activeScenario?.stream;
-                          const canStream = row.mode === "server-stream" && Boolean(row.activeScenario);
-                          return (
-                            <TableRow key={`settings-${row.methodKey}`}>
-                              <TableCell sx={{ width: 72 }}>
-                                <MethodMockSwitch
-                                  checked={row.methodEnabled}
-                                  onChange={(checked) => onMethodEnabledChange(row.method, checked)}
-                                />
-                              </TableCell>
-                              <TableCell title={`${row.serviceName}/${row.methodName}`}>{row.methodName}</TableCell>
-                              <TableCell>{row.mode}</TableCell>
-                              <TableCell sx={{ minWidth: 230 }}>
-                                {row.scenarios.length ? (
-                                  <FormControl size="small" sx={{ minWidth: 220 }}>
-                                    <Select
-                                      value={row.activeScenarioId || row.scenarios[0]?.id || ""}
-                                      onChange={(event: SelectInputChangeEvent) =>
-                                        onScenarioSelectChange(row.method, String(event.target.value))
-                                      }
-                                    >
-                                      {row.scenarios.map((scenario) => (
-                                        <MenuItem
-                                          key={`scenario-option-${row.methodKey}-${scenario.id}`}
-                                          value={scenario.id}
-                                        >
-                                          {scenario.id}
-                                        </MenuItem>
-                                      ))}
-                                    </Select>
-                                  </FormControl>
-                                ) : (
-                                  <Typography variant="caption" color="error" display="block">
-                                    No scenario
-                                  </Typography>
-                                )}
-                              </TableCell>
-                              <TableCell sx={{ minWidth: 360 }}>
-                                {canStream ? (
-                                  <Stack direction="row" spacing={0.6} alignItems="center" flexWrap="wrap">
-                                    <TextField
-                                      size="small"
-                                      type="number"
-                                      label="Interval"
-                                      value={String(stream?.intervalMs ?? streamDefaults.intervalMs ?? 0)}
-                                      onChange={(event: TextInputChangeEvent) =>
-                                        onScenarioStreamSettingsChange(row.method, row.activeScenarioId, {
-                                          intervalMs: Math.max(0, Math.floor(Number(event.target.value) || 0)),
-                                        })
-                                      }
-                                      sx={{ width: 110 }}
-                                    />
-                                    <Stack spacing={0.3}>
-                                      <Typography variant="caption" color="text.secondary" display="block">
-                                        Loop
-                                      </Typography>
-                                      <FormControl size="small" sx={{ width: 110 }}>
-                                        <Select
-                                          value={(stream?.loop ?? streamDefaults.loop) ? "yes" : "no"}
-                                          onChange={(event: SelectInputChangeEvent) =>
-                                            onScenarioStreamSettingsChange(row.method, row.activeScenarioId, {
-                                              loop: event.target.value === "yes",
-                                            })
-                                          }
-                                        >
-                                          <MenuItem value="no">No</MenuItem>
-                                          <MenuItem value="yes">Yes</MenuItem>
-                                        </Select>
-                                      </FormControl>
-                                    </Stack>
-                                    <TextField
-                                      size="small"
-                                      type="number"
-                                      label="Max"
-                                      value={String(stream?.maxLoops ?? streamDefaults.maxLoops ?? 0)}
-                                      onChange={(event: TextInputChangeEvent) =>
-                                        onScenarioStreamSettingsChange(row.method, row.activeScenarioId, {
-                                          maxLoops: Math.max(0, Math.floor(Number(event.target.value) || 0)),
-                                        })
-                                      }
-                                      sx={{ width: 100 }}
-                                    />
-                                  </Stack>
-                                ) : (
-                                  <Typography variant="caption" color="text.secondary" display="block">
-                                    {row.mode === "unary" ? "Unary method" : "Streaming type not supported"}
-                                  </Typography>
-                                )}
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })
-                      )}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              ) : (
-                <Alert severity="error" variant="filled">
-                  {parseResult.error}
-                </Alert>
-              )}
-            </Stack>
-          </Paper>
-        </Stack>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>Close</Button>
-      </DialogActions>
-    </Dialog>
-  );
-}
 
 /**
  * Renders the selected method mock file editor and per-method scenario controls.
  */
-function MockServerPanel({
-  selectedMethod,
-  status,
-  currentFile,
-  currentParseResult,
-  editorText,
-  streamDefaults,
-  mappingRows,
-  onScenarioTextChange,
-  onFormatChange,
-  onFormat,
-  onAddScenario,
-  onScenarioSelectChange,
-  onMethodEnabledChange,
-  onScenarioStreamSettingsChange,
-  onEditScenario,
-  onImport,
-  onExport,
-  onOpenFolder,
-  onOpenSettings,
-}: {
-  selectedMethod: RpcMethodInfo | null;
-  status: MockServerStatus;
-  currentFile: MockMethodScenarioFile;
-  currentParseResult: MockParseResult;
-  editorText: string;
-  streamDefaults: Required<Pick<MockStreamSettings, "intervalMs" | "loop" | "maxLoops">>;
-  mappingRows: MockMethodScenarioRow[];
-  onScenarioTextChange: (value: string) => void;
-  onFormatChange: (format: MockFormat) => void;
-  onFormat: () => void;
-  onAddScenario: () => void;
-  onScenarioSelectChange: (method: RpcMethodInfo, scenarioId: string) => void;
-  onMethodEnabledChange: (method: RpcMethodInfo, enabled: boolean) => void;
-  onScenarioStreamSettingsChange: (
-    method: RpcMethodInfo,
-    scenarioId: string,
-    patch: Partial<MockStreamSettings>,
-  ) => void;
-  onEditScenario: (method: RpcMethodInfo, scenarioId: string) => void;
-  onImport: () => void;
-  onExport: () => void;
-  onOpenFolder: () => void;
-  onOpenSettings: () => void;
-}) {
-  const currentRow = selectedMethod
-    ? mappingRows.find((row) => row.methodKey === methodKey(selectedMethod))
-    : undefined;
-  const currentScenarios = currentRow?.scenarios ?? [];
-  const streamBase = streamDefaults ?? createDefaultMockStreamDefaults();
-  const activeStream = currentRow?.activeScenario?.stream;
-  const selectedScenarioId = currentRow?.activeScenarioId || currentScenarios[0]?.id || "";
-  return (
-    <Stack spacing={1.2}>
-      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1} flexWrap="wrap">
-        <Stack spacing={0.2} sx={{ minWidth: 0 }}>
-          <Typography variant="subtitle1">Method mock scenarios</Typography>
-          <Typography variant="caption" color="text.secondary" display="block">
-            {selectedMethod
-              ? `${selectedMethod.serviceName}/${selectedMethod.methodName} - ${safeMockFileBaseName(selectedMethod)}.${currentFile.format === "yaml" ? "yaml" : "json"}`
-              : "Select a method to edit its own mock file"}
-          </Typography>
-        </Stack>
-        <Stack direction="row" spacing={0.6} alignItems="center" flexWrap="wrap">
-          <Chip
-            size="small"
-            label={status.running ? "Running" : "Stopped"}
-            color={status.running ? "success" : "default"}
-          />
-          <Button size="small" variant="outlined" onClick={onOpenSettings}>
-            Mock settings
-          </Button>
-        </Stack>
-      </Stack>
-
-      <Stack direction="row" spacing={0.6} alignItems="center" flexWrap="wrap">
-        <FormControl size="small" sx={{ width: 96 }} disabled={!selectedMethod}>
-          <Select
-            value={currentFile.format}
-            onChange={(event: SelectInputChangeEvent) => onFormatChange(event.target.value as MockFormat)}
-          >
-            <MenuItem value="json">JSON</MenuItem>
-            <MenuItem value="yaml">YAML</MenuItem>
-          </Select>
-        </FormControl>
-        <Button size="small" variant="outlined" onClick={onAddScenario} disabled={!selectedMethod}>
-          Add scenario
-        </Button>
-        <Button size="small" variant="outlined" onClick={onImport} disabled={!selectedMethod}>
-          Import
-        </Button>
-        <Button size="small" variant="outlined" onClick={onExport} disabled={!selectedMethod || !currentParseResult.ok}>
-          Export
-        </Button>
-        <Button size="small" variant="outlined" onClick={onOpenFolder}>
-          Open folder
-        </Button>
-        <Button size="small" variant="outlined" onClick={onFormat} disabled={!selectedMethod}>
-          Format
-        </Button>
-      </Stack>
-
-      <Paper variant="outlined" sx={{ p: 1.2, borderRadius: 2 }}>
-        <Stack spacing={0.8}>
-          <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1} flexWrap="wrap">
-            <Typography variant="body2" fontWeight={560}>
-              Scenario for current method
-            </Typography>
-            {selectedMethod && (
-              <Typography variant="caption" color="text.secondary" display="block">
-                {currentFile.format.toUpperCase()}
-              </Typography>
-            )}
-          </Stack>
-          {!selectedMethod ? (
-            <SmallEmpty body="Select a method to edit that method's mock file." />
-          ) : currentScenarios.length === 0 ? (
-            <SmallEmpty body="No scenario exists for this method yet. Click Add scenario." />
-          ) : (
-            <Stack spacing={0.8}>
-              <Stack direction="row" spacing={0.8} alignItems="center" flexWrap="wrap">
-                <MethodMockSwitch
-                  checked={Boolean(currentRow?.methodEnabled)}
-                  onChange={(checked) => onMethodEnabledChange(selectedMethod, checked)}
-                />
-                <Typography variant="body2" fontWeight={540}>
-                  {currentRow?.methodEnabled ? "Mock enabled" : "Mock disabled"}
-                </Typography>
-                <FormControl size="small" sx={{ minWidth: 240 }}>
-                  <Select
-                    value={selectedScenarioId}
-                    onChange={(event: SelectInputChangeEvent) =>
-                      onScenarioSelectChange(selectedMethod, String(event.target.value))
-                    }
-                  >
-                    {currentScenarios.map((scenario) => (
-                      <MenuItem key={`current-scenario-${scenario.id}`} value={scenario.id}>
-                        {scenario.id}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-                <Tooltip title="Edit scenario">
-                  <span>
-                    <IconButton
-                      size="small"
-                      onClick={() => onEditScenario(selectedMethod, selectedScenarioId)}
-                      disabled={!selectedScenarioId}
-                      sx={iconButtonSx}
-                    >
-                      <Edit sx={{ fontSize: 15 }} />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-                {currentRow?.activeScenario && (
-                  <Chip size="small" label={describeMockMatcher(currentRow.activeScenario.input)} />
-                )}
-              </Stack>
-              {selectedMethod.responseStream && currentRow?.activeScenario ? (
-                <Stack direction="row" spacing={0.7} alignItems="center" flexWrap="wrap">
-                  <TextField
-                    size="small"
-                    type="number"
-                    label="Interval ms"
-                    value={String(activeStream?.intervalMs ?? streamBase.intervalMs ?? 0)}
-                    onChange={(event: TextInputChangeEvent) =>
-                      onScenarioStreamSettingsChange(selectedMethod, selectedScenarioId, {
-                        intervalMs: Math.max(0, Math.floor(Number(event.target.value) || 0)),
-                      })
-                    }
-                    sx={{ width: 130 }}
-                  />
-                  <Stack spacing={0.3}>
-                    <Typography variant="caption" color="text.secondary" display="block">
-                      Loop
-                    </Typography>
-                    <FormControl size="small" sx={{ width: 120 }}>
-                      <Select
-                        value={(activeStream?.loop ?? streamBase.loop) ? "yes" : "no"}
-                        onChange={(event: SelectInputChangeEvent) =>
-                          onScenarioStreamSettingsChange(selectedMethod, selectedScenarioId, {
-                            loop: event.target.value === "yes",
-                          })
-                        }
-                      >
-                        <MenuItem value="no">No</MenuItem>
-                        <MenuItem value="yes">Yes</MenuItem>
-                      </Select>
-                    </FormControl>
-                  </Stack>
-                  <TextField
-                    size="small"
-                    type="number"
-                    label="Max loops"
-                    value={String(activeStream?.maxLoops ?? streamBase.maxLoops ?? 0)}
-                    onChange={(event: TextInputChangeEvent) =>
-                      onScenarioStreamSettingsChange(selectedMethod, selectedScenarioId, {
-                        maxLoops: Math.max(0, Math.floor(Number(event.target.value) || 0)),
-                      })
-                    }
-                    helperText="0 = infinite"
-                    sx={{ width: 130 }}
-                  />
-                  <Chip
-                    size="small"
-                    label={`${currentRow.activeScenario.stream?.responses?.length ?? 0} stream response`}
-                  />
-                </Stack>
-              ) : (
-                <Typography variant="caption" color="text.secondary" display="block">
-                  Unary scenarios use output data only.
-                </Typography>
-              )}
-            </Stack>
-          )}
-        </Stack>
-      </Paper>
-
-      <Stack spacing={0.6}>
-        <Typography variant="body2" fontWeight={560}>
-          Selected scenario JSON/YAML editor
-        </Typography>
-        <FeatureCodeTextField
-          value={editorText}
-          onChange={onScenarioTextChange}
-          minRows={15}
-          maxRows={28}
-          language={currentFile.format}
-        />
-      </Stack>
-    </Stack>
-  );
-}
 
 /**
  * Renders the full examples editor panel.
  */
-function ExamplesPanel({
-  examples,
-  selectedMethod,
-  onSave,
-  onImport,
-  onExport,
-  onLoad,
-  onRun,
-  onDelete,
-}: {
-  examples: SavedExample[];
-  selectedMethod: RpcMethodInfo | null;
-  onSave: () => void;
-  onImport: () => void;
-  onExport: () => void;
-  onLoad: (example: SavedExample) => void;
-  onRun: (example: SavedExample) => void;
-  onDelete: (id: string) => void;
-}) {
-  return (
-    <Stack spacing={1}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
-        <Typography variant="subtitle1">Method examples</Typography>
-        <Stack direction="row" spacing={0.6}>
-          <Button size="small" variant="outlined" onClick={onImport} sx={buttonSx}>
-            Load example
-          </Button>
-          <Button size="small" variant="outlined" onClick={onExport} disabled={examples.length === 0} sx={buttonSx}>
-            Export
-          </Button>
-          <Button
-            size="small"
-            variant="contained"
-            startIcon={<Add />}
-            disabled={!selectedMethod}
-            onClick={onSave}
-            sx={buttonSx}
-          >
-            Save current
-          </Button>
-        </Stack>
-      </Stack>
-      {examples.length === 0 ? (
-        <EmptyState
-          title="No saved examples"
-          body="Save a request from this menu, or load an example JSON for the matching method."
-        />
-      ) : (
-        <Stack spacing={0.8}>
-          {examples.map((example) => (
-            <Paper key={example.id} variant="outlined" sx={compactCardSx}>
-              <Stack direction="row" justifyContent="space-between" spacing={1}>
-                <Box sx={{ minWidth: 0 }}>
-                  <Typography variant="body2" fontWeight={540} noWrap title={example.name}>
-                    {example.name}
-                  </Typography>
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    noWrap
-                    title={`${example.serviceName}/${example.methodName}`}
-                  >
-                    {example.serviceName}/{example.methodName}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {formatTimestampShort(example.createdAt)}
-                  </Typography>
-                </Box>
-                <Stack direction="row" spacing={0.6} alignItems="center" sx={{ flexShrink: 0 }}>
-                  <Button size="small" variant="outlined" onClick={() => onLoad(example)} sx={buttonSx}>
-                    Load
-                  </Button>
-                  <Button
-                    size="small"
-                    variant="contained"
-                    startIcon={<PlayArrow />}
-                    onClick={() => onRun(example)}
-                    sx={buttonSx}
-                  >
-                    Run
-                  </Button>
-                  <IconButton size="small" color="error" onClick={() => onDelete(example.id)} sx={iconButtonSx}>
-                    <Delete sx={{ fontSize: 16 }} />
-                  </IconButton>
-                </Stack>
-              </Stack>
-            </Paper>
-          ))}
-        </Stack>
-      )}
-    </Stack>
-  );
-}
-
-/**
- * Renders request assertion/test results.
- */
-function AssertionResults({ results }: { results: AssertionResult[] }) {
-  if (results.length === 0)
-    return <Alert severity="info">Tests are optional. Leave this empty to skip validation.</Alert>;
-  return (
-    <Stack spacing={0.8}>
-      {results.map((result) => (
-        <Alert
-          key={result.name}
-          severity={result.status === "passed" ? "success" : result.status === "failed" ? "error" : "info"}
-        >
-          <strong>{result.name}</strong>: {result.detail}
-        </Alert>
-      ))}
-    </Stack>
-  );
-}
 
 /**
  * Formats a saved example body as a readable preview while preserving indentation.
  */
-function _formatExamplePreview(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) return "{}";
-  try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2);
-  } catch {
-    return trimmed;
-  }
-}
