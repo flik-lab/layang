@@ -4,38 +4,47 @@
 
 ### Major
 
-- Added the WebSocket workbench beta for creating WebSocket requests, opening live connections, sending messages, and reviewing connection events.
-- Added desktop WebSocket mock server beta with start, stop, and send-once controls for local testing.
-- Added WebSocket documentation beta so saved WebSocket requests can be previewed, published, and exported with the rest of the workspace docs.
+- Added WebSocket workbench beta for requests, live connections, messages, events, mocks, docs, and benchmark export.
+- Fixed gRPC-Web transport for unary and server-streaming calls through APISIX.
+- Added trusted local HTTPS self-signed certificate bypass for Electron.
+- Added Google protobuf import support.
+- Improved gRPC mock server with live scenario reload, health service support, APISIX-friendly targets, and configurable bind IP.
 
 ### Minor
 
-- Improved workspace-first API collections so gRPC and WebSocket requests can live together in the same project.
-- Added WebSocket benchmark export support for early latency checks.
-- Refined mock, docs, examples, and sidebar workflows for larger API workspaces.
+- Improved workspace collections so gRPC, gRPC-Web, and WebSocket requests can live together.
+- Split environment URLs by transport: gRPC-Web, Native gRPC, and WebSocket.
+- Fixed workspace/tab restore so closed tabs stay closed and saved gRPC tabs reopen as runnable method tabs.
+- Deleting a workspace or workset now closes related active tabs.
+- Added empty-state guidance when no tab is open.
+- Improved response search to filter rows and bold matches without changing payloads.
+- Removed unnecessary request `kind` labels and test tabs.
 - Moved the dark mode control to the bottom of the sidebar.
-- Updated minor component view styling.
-- Expanded Electron IPC and service boundaries used by desktop-only mock server features.
+- Changed environment IDs to 8 characters.
+- Refined mock, docs, examples, sidebar, styling, and lint compatibility.
 
-### Beta Notes
+### Accessibility
 
-- WebSocket support is still beta. Expect API and workspace schema details to change before the stable `1.0.0` release.
-- WebSocket mock behavior is intended for local development and early feedback, not production traffic.
-
+- Added tab shortcuts: close active/all tabs, middle-click close, arrow navigation, Home/End, Delete/Backspace.
+- Added accessible labels for tabs, editor actions, window controls, and buttons.
+- Improved all code editors with formatter/fullscreen controls and shortcuts:
+  - `Shift+Alt+F` format
+  - `F11` fullscreen
+  - `Esc` exit fullscreen
+  - `Tab` / `Shift+Tab` indent control
+  - Quote wrapping for selected text
 
 ## 1.0.0-rc.1
 
 ### Added
 
-- Initial release of Layang.
-- Added local-first workspace support with portable workspace folders.
-- Added `.proto` import with service, method, request type, and response type browsing.
-- Added desktop gRPC and gRPC-Web client.
-- Added support for unary and server-streaming calls.
-- Added saved request tabs, metadata, environments, examples, tests, response history, and docs metadata.
-- Added per-method mock scenario editor.
-- Added local mock server support from the desktop app.
-- Added latency benchmark runner with JSON report export.
-- Added Markdown and HTML API documentation generation.
-- Added CLI support for validating workspaces, listing saved requests, checking mock scenarios, and running native gRPC requests.
+- Initial Layang release.
+- Added local-first portable workspaces.
+- Added `.proto` import, service/method browsing, desktop gRPC and gRPC-Web clients.
+- Added unary and server-streaming calls.
+- Added saved tabs, metadata, environments, examples, tests, response history, and docs metadata.
+- Added mock scenario editor and local mock server.
+- Added latency benchmark export.
+- Added Markdown/HTML API docs generation.
+- Added CLI workspace validation, request listing, mock checks, and native gRPC runs.
 - Added Windows desktop build and installer workflow.

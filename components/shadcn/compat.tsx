@@ -164,6 +164,7 @@ export function Stack({
   alignItems,
   justifyContent,
   flexWrap,
+  textAlign,
   useFlexGap: _useFlexGap,
   sx,
   className,
@@ -177,10 +178,11 @@ export function Stack({
     alignItems: alignItems as CSSProperties["alignItems"],
     justifyContent: justifyContent as CSSProperties["justifyContent"],
     flexWrap: flexWrap as CSSProperties["flexWrap"],
+    textAlign: textAlign as CSSProperties["textAlign"],
     gap: toSpacing(spacing) as CSSProperties["gap"],
   };
   const style = mergeStyles(baseStyle, sxToStyle(sx, theme), props.style);
-  const divProps = omit(props, ["useFlexGap"]) as DivProps;
+  const divProps = omit(props, ["useFlexGap", "textAlign"]) as DivProps;
   return (
     <div {...divProps} className={cn(className)} style={style}>
       {children}

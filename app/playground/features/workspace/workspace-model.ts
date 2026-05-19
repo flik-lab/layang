@@ -145,7 +145,9 @@ export function normalizeProjectData(input: Partial<ProjectData> | LegacyWorkspa
     requestTabs: normalizedTabs,
     activeRequestId,
     transportMode:
-      data.transportMode === "native-grpc" || data.transportMode === "websocket" ? data.transportMode : "grpc-web",
+      data.transportMode === "native-grpc" || data.transportMode === "websocket" || data.transportMode === "rest"
+        ? data.transportMode
+        : "grpc-web",
     baseUrl: data.baseUrl ?? defaults.baseUrl,
     nativeTarget: data.nativeTarget ?? defaults.nativeTarget,
     selectedMethodKey: data.selectedMethodKey ?? "",
@@ -312,7 +314,7 @@ export function normalizeRequestSession(session: RequestSession): RequestSession
     ...session,
     metadata: Array.isArray(session.metadata) ? session.metadata : [],
     transportMode:
-      session.transportMode === "native-grpc" || session.transportMode === "websocket"
+      session.transportMode === "native-grpc" || session.transportMode === "websocket" || session.transportMode === "rest"
         ? session.transportMode
         : "grpc-web",
     requestKind:

@@ -96,7 +96,9 @@ import {
   environmentLabel as featureEnvironmentLabel,
   environmentShortLabel as featureEnvironmentShortLabel,
   getEnvironmentTarget as featureGetEnvironmentTarget,
+  getEnvironmentTransportTarget as featureGetEnvironmentTransportTarget,
   mergeEnvironments as featureMergeEnvironments,
+  setEnvironmentTransportTarget as featureSetEnvironmentTransportTarget,
 } from "./features/environments/environment-model";
 import {
   buildEndpointGroups as buildFeatureEndpointGroups,
@@ -165,6 +167,7 @@ import {
   getActiveScenarioForMethod,
   getMockMethodScenarioFile,
   mergeExternalScenarioScenariosIntoProject,
+  normalizeMockBindHost,
   normalizeMockPort,
   normalizeMockStreamSettings,
   normalizeMockServerProject,
@@ -295,6 +298,31 @@ function grpcBaseUrlFallback(candidate: string | undefined, fallback: string | u
   return "http://localhost:9080/grpc/web";
 }
 
+function stripGrpcMethodPathFromUrl(candidate: string | undefined, method: RpcMethodInfo, fallback: string | undefined) {
+  const base = grpcBaseUrlFallback(candidate, fallback).replace(/\/+$/, "");
+  const suffixes = [`/${method.serviceName}/${method.methodName}`];
+  const shortServiceName = method.serviceName.split(".").pop();
+  if (shortServiceName && shortServiceName !== method.serviceName) {
+    suffixes.push(`/${shortServiceName}/${method.methodName}`);
+  }
+
+  for (const suffix of suffixes) {
+    if (base.endsWith(suffix)) {
+      return base.slice(0, -suffix.length) || grpcBaseUrlFallback(undefined, fallback);
+    }
+  }
+
+  return base;
+}
+
+function findCollectionRequestById(collections: ApiCollection[], requestId: string) {
+  for (const collection of collections) {
+    const request = collection.requests.find((item) => item.id === requestId);
+    if (request) return { ...request, collectionName: collection.name };
+  }
+  return null;
+}
+
 function defaultWebSocketMockResponse(name = "WebSocket Request") {
   return JSON.stringify(
     [
@@ -316,6 +344,32 @@ function defaultWebSocketMockResponse(name = "WebSocket Request") {
     null,
     2,
   );
+}
+
+function transportTargetLabel(transport: TransportMode): string {
+  switch (transport) {
+    case "native-grpc":
+      return "Native gRPC target";
+    case "websocket":
+      return "WebSocket URL";
+    case "rest":
+      return "REST base URL";
+    case "grpc-web":
+      return "gRPC-Web base URL";
+  }
+}
+
+function transportTargetPlaceholder(transport: TransportMode): string {
+  switch (transport) {
+    case "native-grpc":
+      return "127.0.0.1:50051";
+    case "websocket":
+      return "ws://localhost:8080";
+    case "rest":
+      return "https://api.example.com";
+    case "grpc-web":
+      return "https://gateway.example.com/grpc/web";
+  }
 }
 
 export default function PlaygroundPage() {
@@ -487,10 +541,28 @@ export default function PlaygroundPage() {
     }
 
     async function loadInitialWorkspace() {
+      const cachedLayout = applyCachedLayout();
+      const cachedProject = readStoredProject();
+
       if (storedWorkspacePath && window.electronWorkspace?.openFolder) {
         try {
           const result = await window.electronWorkspace.openFolder(storedWorkspacePath);
           if (!cancelled && result.ok && result.bundle) {
+            const bundleRecord = result.bundle as { project?: { updatedAt?: string }; updatedAt?: string };
+            const folderUpdatedAt = Date.parse(bundleRecord.project?.updatedAt ?? bundleRecord.updatedAt ?? "");
+            const cachedUpdatedAt = Date.parse(cachedProject.updatedAt ?? "");
+            const localDraftIsNewer =
+              Number.isFinite(cachedUpdatedAt) && Number.isFinite(folderUpdatedAt) && cachedUpdatedAt > folderUpdatedAt;
+
+            if (localDraftIsNewer) {
+              const nextPath = result.directoryPath ?? storedWorkspacePath;
+              setWorkspaceFolderPath(nextPath);
+              window.localStorage.setItem(workspaceFolderStorageKey, nextPath);
+              applyProject(cachedProject);
+              setHydrated(true);
+              return;
+            }
+
             const imported = applyWorkspaceBundle(result.bundle);
             if (imported) {
               const nextPath = result.directoryPath ?? storedWorkspacePath;
@@ -506,8 +578,6 @@ export default function PlaygroundPage() {
       }
 
       if (cancelled) return;
-      const cachedLayout = applyCachedLayout();
-      const cachedProject = readStoredProject();
 
       if (window.electronWorkspace?.ensureDefaultFolder) {
         try {
@@ -565,6 +635,82 @@ export default function PlaygroundPage() {
   useEffect(() => {
     activeRequestIdRef.current = activeRequestId;
   }, [activeRequestId]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+
+    function handleRequestTabShortcut(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.isComposing) return;
+      const key = event.key.toLowerCase();
+      const hasTabModifier = event.ctrlKey || event.metaKey;
+
+      if (hasTabModifier && key === "w") {
+        if (requestSessions.length === 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.shiftKey) closeAllRequestSessions();
+        else if (activeRequestId) closeRequestSession(activeRequestId);
+        return;
+      }
+
+      if (hasTabModifier && (event.key === "PageUp" || event.key === "PageDown") && requestSessions.length > 1) {
+        event.preventDefault();
+        const activeIndex = Math.max(0, requestSessions.findIndex((session) => session.id === activeRequestId));
+        const direction = event.key === "PageUp" ? -1 : 1;
+        const nextIndex = (activeIndex + direction + requestSessions.length) % requestSessions.length;
+        activateRequestSession(requestSessions[nextIndex]);
+      }
+    }
+
+    window.addEventListener("keydown", handleRequestTabShortcut, { capture: true });
+    return () => window.removeEventListener("keydown", handleRequestTabShortcut, { capture: true });
+  }, [hydrated, activeRequestId, requestSessions]);
+
+  useEffect(() => {
+    if (!hydrated || !loaded || !activeRequestId) return;
+    const session = requestSessions.find((item) => item.id === activeRequestId);
+    if (!session) return;
+
+    const collectionGrpcRequest =
+      session.requestKind === "grpc" ? findCollectionRequestById(collections, session.methodKey) : null;
+    const grpcMethodKey = collectionGrpcRequest?.grpcMethodKey ?? (!session.requestKind ? session.methodKey : "");
+    if (!grpcMethodKey) return;
+
+    const grpcMethod = loaded.methods.find((method) => methodKey(method) === grpcMethodKey);
+    if (!grpcMethod) return;
+
+    if (selectedMethodKey !== grpcMethodKey || activeCollectionRequestId) {
+      setSelectedMethodKey(grpcMethodKey);
+      setActiveCollectionRequestId("");
+    }
+
+    if (session.requestKind === "grpc" || session.methodKey !== grpcMethodKey) {
+      const nextSession: RequestSession = {
+        ...session,
+        methodKey: grpcMethodKey,
+        title: grpcMethod.methodName,
+        serviceName: grpcMethod.serviceName,
+        requestKind: undefined,
+        requestUrl: undefined,
+        httpMethod: undefined,
+        requestJson: session.requestJson?.trim() ? session.requestJson : (collectionGrpcRequest?.body ?? "{}"),
+        metadata: session.metadata.length ? session.metadata : (collectionGrpcRequest?.headers ?? []),
+        transportMode: session.transportMode === "native-grpc" ? "native-grpc" : "grpc-web",
+        baseUrl: stripGrpcMethodPathFromUrl(session.baseUrl || collectionGrpcRequest?.url, grpcMethod, baseUrl),
+        updatedAt: new Date().toISOString(),
+      };
+      setRequestSessions((current) => current.map((item) => (item.id === session.id ? nextSession : item)));
+    }
+  }, [
+    hydrated,
+    loaded,
+    activeRequestId,
+    requestSessions,
+    collections,
+    selectedMethodKey,
+    activeCollectionRequestId,
+    baseUrl,
+  ]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -994,10 +1140,11 @@ export default function PlaygroundPage() {
     : grpcBaseUrlFallback(activeSession?.baseUrl, baseUrl);
   const activeNativeTarget = activeSession?.nativeTarget ?? nativeTarget;
   const activeEnvironmentKey = activeSession?.environmentKey ?? environmentKey;
+  const activeTargetTransport: TransportMode = activeTransportMode === "native-grpc" ? "grpc-web" : activeTransportMode;
   const effectiveBaseUrl = featureGetEnvironmentTarget(
     environments,
     activeEnvironmentKey,
-    "grpc-web",
+    activeTargetTransport,
     activeBaseUrl,
     activeNativeTarget,
   );
@@ -1027,9 +1174,9 @@ export default function PlaygroundPage() {
     if (!mockServerStatus.running || !loaded || !window.electronMock?.update) return;
     const timer = window.setTimeout(() => {
       void syncRunningMockServerFromEditor();
-    }, 300);
+    }, 120);
     return () => window.clearTimeout(timer);
-  }, [mockServer, loaded, mockServerStatus.running]);
+  }, [mockServer, loaded, protoFiles, mockServerStatus.running]);
 
   useEffect(() => {
     if (!mockServerStatus.running || !window.electronMock?.status) return;
@@ -1207,6 +1354,9 @@ export default function PlaygroundPage() {
     if (!requestTabItems.some((item) => item.value === requestTab)) setRequestTab("body");
   }, [requestTab, requestTabItems]);
 
+  const hasActiveWorkbenchRequest = Boolean(selectedMethod || activeCollectionRequest);
+  const showEmptyWorkbench = hydrated && requestSessions.length === 0 && !hasActiveWorkbenchRequest;
+
   /**
    * Appends a transport event to the matching request tab without leaking data into another tab.
    */
@@ -1267,16 +1417,71 @@ export default function PlaygroundPage() {
   }
 
   /**
+   * Rehydrates gRPC collection tabs as executable method tabs once the proto registry is available.
+   */
+  function restoreExecutableGrpcTabs(
+    sessions: RequestSession[],
+    nextCollections: ApiCollection[],
+    nextLoaded: LoadedProto | null,
+  ): RequestSession[] {
+    const restored = sessions.map((session) => {
+      if (session.requestKind !== "grpc" || !nextLoaded) return session;
+
+      const collectionRequest =
+        findCollectionRequestById(nextCollections, session.methodKey) ??
+        nextCollections
+          .flatMap((collection) => collection.requests.map((request) => ({ ...request, collectionName: collection.name })))
+          .find((request) => request.kind === "grpc" && request.grpcMethodKey === session.methodKey) ??
+        null;
+      const grpcMethodKey = collectionRequest?.grpcMethodKey ?? session.methodKey;
+      if (!grpcMethodKey) return session;
+
+      const grpcMethod = nextLoaded.methods.find((method) => methodKey(method) === grpcMethodKey);
+      if (!grpcMethod) return session;
+
+      const transportMode: TransportMode = session.transportMode === "native-grpc" ? "native-grpc" : "grpc-web";
+
+      return {
+        ...session,
+        methodKey: grpcMethodKey,
+        title: session.title || grpcMethod.methodName,
+        serviceName: grpcMethod.serviceName,
+        requestKind: undefined,
+        requestUrl: undefined,
+        httpMethod: undefined,
+        requestJson: session.requestJson?.trim() ? session.requestJson : (collectionRequest?.body ?? "{}"),
+        metadata: session.metadata.length ? session.metadata : (collectionRequest?.headers ?? []),
+        transportMode,
+        baseUrl: stripGrpcMethodPathFromUrl(session.baseUrl || collectionRequest?.url, grpcMethod, baseUrl),
+      };
+    });
+
+    const seenKeys = new Set<string>();
+    return restored.filter((session) => {
+      const key = session.methodKey || session.id;
+      if (seenKeys.has(key)) return false;
+      seenKeys.add(key);
+      return true;
+    });
+  }
+
+  /**
    * Hydrates application state from a saved project snapshot.
    */
   function applyProject(project: ProjectData) {
+    const nextCollections = normalizeApiCollections(project.collections);
+    const nextTabs = project.requestTabs ?? [];
+    const nextActiveRequestId = nextTabs.some((session) => session.id === project.activeRequestId)
+      ? (project.activeRequestId ?? "")
+      : (nextTabs[0]?.id ?? "");
+
     setTransportMode(project.transportMode);
     setBaseUrl(project.baseUrl);
     setNativeTarget(project.nativeTarget);
     setEnvironmentKey(project.environmentKey ?? "default");
     setEnvironments(featureMergeEnvironments(project.environments));
     setProtoFiles(project.protoFiles);
-    setCollections(normalizeApiCollections(project.collections));
+    setCollections(nextCollections);
     setMetadata(project.metadata.length ? project.metadata : defaultMetadata);
     setExamples(project.examples ?? []);
     setMethodDocs(project.methodDocs ?? []);
@@ -1284,8 +1489,6 @@ export default function PlaygroundPage() {
     setAssertionJson(project.assertionJson || defaultAssertion);
     setHistory(project.history ?? []);
     setMockServer(normalizeMockServerProject(project.mockServer));
-    setRequestSessions(project.requestTabs ?? []);
-    setActiveRequestId(project.activeRequestId ?? "");
     setEvents([]);
     setLastResult(null);
     setAssertionResults([]);
@@ -1294,8 +1497,9 @@ export default function PlaygroundPage() {
     if (project.protoFiles.length === 0) {
       setLoaded(null);
       setSelectedMethodKey("");
-      const activeSession =
-        project.requestTabs.find((session) => session.id === project.activeRequestId) ?? project.requestTabs[0];
+      setRequestSessions(nextTabs);
+      setActiveRequestId(nextActiveRequestId);
+      const activeSession = nextTabs.find((session) => session.id === nextActiveRequestId) ?? nextTabs[0];
       if (activeSession) activateRequestSession(activeSession);
       else setRequestJson(project.requestJson || "{}");
       return;
@@ -1303,9 +1507,29 @@ export default function PlaygroundPage() {
 
     try {
       const result = loadProtoFiles(project.protoFiles);
+      const restoredTabs = restoreExecutableGrpcTabs(nextTabs, nextCollections, result);
+      const restoredActiveRequestId = restoredTabs.some((session) => session.id === project.activeRequestId)
+        ? (project.activeRequestId ?? "")
+        : (restoredTabs[0]?.id ?? "");
+
       setLoaded(result);
+      setRequestSessions(restoredTabs);
+      setActiveRequestId(restoredActiveRequestId);
+
+      if (restoredTabs.length === 0) {
+        activeRequestIdRef.current = "";
+        setSelectedMethodKey("");
+        setActiveCollectionRequestId("");
+        setRequestJson(project.requestJson || "{}");
+        setEvents([]);
+        setLastResult(null);
+        setAssertionResults([]);
+        setResponseTab("messages");
+        return;
+      }
+
       const activeSession =
-        project.requestTabs.find((session) => session.id === project.activeRequestId) ?? project.requestTabs[0];
+        restoredTabs.find((session) => session.id === restoredActiveRequestId) ?? restoredTabs[0];
       if (activeSession?.requestKind) {
         activateRequestSession(activeSession);
         return;
@@ -1328,6 +1552,8 @@ export default function PlaygroundPage() {
     } catch (err) {
       setLoaded(null);
       setSelectedMethodKey("");
+      setRequestSessions(nextTabs);
+      setActiveRequestId(nextActiveRequestId);
       setRequestJson(project.requestJson || "{}");
       setError(toErrorMessage(err));
     }
@@ -1386,16 +1612,20 @@ export default function PlaygroundPage() {
   /**
    * Builds the portable workspace bundle used to move all local data to another PC.
    */
-  function getWorkspaceExportBundle(): WorkspaceExportBundle {
+  function buildWorkspaceExportBundle(project = getProjectSnapshot()): WorkspaceExportBundle {
     return {
       type: "layang-workspace",
       version: 4,
       exportedAt: new Date().toISOString(),
       app: "Layang",
-      project: getProjectSnapshot(),
+      project,
       layout: getLayoutSnapshot(),
       settings: { themeMode },
     };
+  }
+
+  function getWorkspaceExportBundle(): WorkspaceExportBundle {
+    return buildWorkspaceExportBundle();
   }
 
   /**
@@ -1877,7 +2107,20 @@ export default function PlaygroundPage() {
 
     activeRequestIdRef.current = session.id;
     setActiveRequestId(session.id);
-    if (session.requestKind) {
+    if (session.requestKind === "grpc" && loaded) {
+      const collectionGrpcRequest = findCollectionRequestById(collections, session.methodKey);
+      const grpcMethodKey = collectionGrpcRequest?.grpcMethodKey ?? "";
+      const grpcMethod = grpcMethodKey
+        ? loaded.methods.find((method) => methodKey(method) === grpcMethodKey)
+        : null;
+      if (grpcMethod) {
+        setActiveCollectionRequestId("");
+        setSelectedMethodKey(grpcMethodKey);
+      } else {
+        setActiveCollectionRequestId(session.methodKey);
+        setSelectedMethodKey("");
+      }
+    } else if (session.requestKind) {
       setActiveCollectionRequestId(session.methodKey);
       setSelectedMethodKey("");
     } else {
@@ -1919,22 +2162,58 @@ export default function PlaygroundPage() {
   }
 
   /**
+   * Persists a project snapshot immediately to both local storage and the active workspace folder.
+   */
+  function persistProjectSnapshotNow(project: ProjectData) {
+    window.localStorage.setItem(projectStorageKey, JSON.stringify(project));
+
+    if (!workspaceFolderPath || !window.electronWorkspace?.saveFolder) return;
+    const bundle = buildWorkspaceExportBundle(project);
+    const payload = JSON.stringify({ project: bundle.project, layout: bundle.layout, settings: bundle.settings });
+    const saveState = workspaceAutosaveRef.current;
+    saveState.pendingPayload = payload;
+    saveState.pendingBundle = bundle;
+    saveState.pendingPath = workspaceFolderPath;
+    void window.electronWorkspace.saveFolder(bundle, workspaceFolderPath).then((result) => {
+      if (result?.ok) saveState.lastPayload = payload;
+    });
+  }
+
+  /**
+   * Persists a tab-strip change immediately so closing the last tab is not lost when the app quits quickly.
+   */
+  function persistRequestTabsNow(nextSessions: RequestSession[], nextActiveRequestId: string) {
+    const project: ProjectData = {
+      ...getProjectSnapshot(),
+      updatedAt: new Date().toISOString(),
+      requestTabs: nextSessions.map(compactRequestSessionForStorage),
+      activeRequestId: nextActiveRequestId,
+      selectedMethodKey: nextActiveRequestId ? selectedMethodKey : "",
+      requestJson: nextActiveRequestId ? requestJson : "{}",
+    };
+    persistProjectSnapshotNow(project);
+  }
+
+  /**
    * Closes one request tab and selects the next available tab.
    */
   function closeRequestSession(sessionId: string) {
     requestRunner.cancelRequest(sessionId);
     if (wsClientRef.current?.sessionId === sessionId) closeManualWebSocketClient("Tab closed");
-    setRequestSessions((current) => {
-      const next = current.filter((session) => session.id !== sessionId);
 
-      if (sessionId === activeRequestId) {
-        const replacement = next[0];
-        if (replacement) queueMicrotask(() => activateRequestSession(replacement));
-        else queueMicrotask(clearActiveView);
-      }
+    const closingIndex = requestSessions.findIndex((session) => session.id === sessionId);
+    const next = requestSessions.filter((session) => session.id !== sessionId);
+    const replacementIndex = closingIndex >= 0 ? Math.min(closingIndex, next.length - 1) : 0;
+    const replacement = next[replacementIndex] ?? next[0] ?? null;
+    const nextActiveRequestId = sessionId === activeRequestId ? (replacement?.id ?? "") : activeRequestId;
 
-      return next;
-    });
+    setRequestSessions(next);
+    persistRequestTabsNow(next, nextActiveRequestId);
+
+    if (sessionId === activeRequestId) {
+      if (replacement) queueMicrotask(() => activateRequestSession(replacement));
+      else queueMicrotask(clearActiveView);
+    }
   }
 
   /**
@@ -1945,6 +2224,7 @@ export default function PlaygroundPage() {
       requestRunner.cancelRequest(session.id);
     });
     setRequestSessions([]);
+    persistRequestTabsNow([], "");
     clearActiveView();
   }
 
@@ -1959,8 +2239,11 @@ export default function PlaygroundPage() {
       .forEach((session) => {
         requestRunner.cancelRequest(session.id);
       });
-    setRequestSessions((current) => current.filter((session) => session.id === sessionId));
+    const next = keptSession ? [keptSession] : [];
+    setRequestSessions(next);
+    persistRequestTabsNow(next, keptSession?.id ?? "");
     if (keptSession && sessionId !== activeRequestId) queueMicrotask(() => activateRequestSession(keptSession));
+    if (!keptSession) queueMicrotask(clearActiveView);
   }
 
   /**
@@ -2427,12 +2710,64 @@ export default function PlaygroundPage() {
   }
 
   function removeCollection(collectionId: string) {
-    setCollections((current) => current.filter((collection) => collection.id !== collectionId));
-    const removedRequestIds = new Set(
-      collections.find((collection) => collection.id === collectionId)?.requests.map((request) => request.id) ?? [],
+    const collection = collections.find((item) => item.id === collectionId);
+    if (!collection) return;
+
+    const removedRequestIds = new Set(collection.requests.map((request) => request.id));
+    const removedSessionKeys = new Set<string>();
+    collection.requests.forEach((request) => {
+      removedSessionKeys.add(request.id);
+      if (request.grpcMethodKey) removedSessionKeys.add(request.grpcMethodKey);
+    });
+
+    const nextCollections = collections.filter((item) => item.id !== collectionId);
+    const nextSessions = requestSessions.filter((session) => !removedSessionKeys.has(session.methodKey));
+    const removedSessions = requestSessions.filter((session) => removedSessionKeys.has(session.methodKey));
+    const removedSessionIds = new Set(removedSessions.map((session) => session.id));
+
+    removedSessions.forEach((session) => {
+      requestRunner.cancelRequest(session.id);
+      if (wsClientRef.current?.sessionId === session.id) closeManualWebSocketClient("Collection deleted");
+    });
+
+    const activeSessionWasRemoved = Boolean(
+      activeRequestIdRef.current && removedSessionIds.has(activeRequestIdRef.current),
     );
-    setRequestSessions((current) => current.filter((session) => !removedRequestIds.has(session.methodKey)));
-    if (removedRequestIds.has(activeCollectionRequestId)) clearActiveView();
+    const activeCollectionRequestWasRemoved = Boolean(
+      activeCollectionRequestId && removedRequestIds.has(activeCollectionRequestId),
+    );
+    const activeMethodWasRemoved = Boolean(selectedMethodKey && removedSessionKeys.has(selectedMethodKey));
+    const activeViewWasRemoved = activeSessionWasRemoved || activeCollectionRequestWasRemoved || activeMethodWasRemoved;
+    const replacement = activeViewWasRemoved ? (nextSessions[0] ?? null) : null;
+    const nextActiveRequestId = activeViewWasRemoved ? (replacement?.id ?? "") : activeRequestId;
+
+    setCollections(nextCollections);
+    setRequestSessions(nextSessions);
+    persistProjectSnapshotNow({
+      ...getProjectSnapshot(),
+      updatedAt: new Date().toISOString(),
+      collections: nextCollections,
+      requestTabs: nextSessions.map(compactRequestSessionForStorage),
+      activeRequestId: nextActiveRequestId,
+      selectedMethodKey: replacement?.requestKind
+        ? ""
+        : (replacement?.methodKey ?? (nextActiveRequestId ? selectedMethodKey : "")),
+      requestJson: replacement?.requestJson ?? (nextActiveRequestId ? requestJson : "{}"),
+    });
+
+    if (activeViewWasRemoved) {
+      if (replacement) queueMicrotask(() => activateRequestSession(replacement));
+      else queueMicrotask(clearActiveView);
+    }
+
+    showToast(
+      removedSessions.length
+        ? `${collection.name} deleted. Closed ${removedSessions.length} open tab${
+            removedSessions.length === 1 ? "" : "s"
+          }.`
+        : `${collection.name} deleted.`,
+      "success",
+    );
   }
 
   function createCollectionRequest(
@@ -2573,22 +2908,18 @@ export default function PlaygroundPage() {
    * Commits a URL/target change to the active session or saved environment.
    */
   function handleTargetChange(value: string) {
-    if (activeIsWebSocket) {
-      updateActiveSession({ baseUrl: value, requestUrl: value });
-      patchActiveCollectionRequest({ url: value });
-      return;
-    }
-
     if (activeEnvironmentKey !== "default" && activeEnvironmentKey !== "manual") {
       setEnvironments((current) =>
         current.map((env) =>
-          env.key === activeEnvironmentKey
-            ? activeTransportMode === "native-grpc"
-              ? { ...env, nativeTarget: value }
-              : { ...env, grpcWebBaseUrl: value }
-            : env,
+          env.key === activeEnvironmentKey ? featureSetEnvironmentTransportTarget(env, activeTransportMode, value) : env,
         ),
       );
+      return;
+    }
+
+    if (activeIsWebSocket) {
+      updateActiveSession({ baseUrl: value, requestUrl: value });
+      patchActiveCollectionRequest({ url: value });
       return;
     }
 
@@ -2657,12 +2988,7 @@ export default function PlaygroundPage() {
       setEnvironments((current) =>
         current.map((env) =>
           env.key === envEditingKey
-            ? {
-                ...env,
-                label: name,
-                grpcWebBaseUrl: activeTransportMode === "native-grpc" ? env.grpcWebBaseUrl : url,
-                nativeTarget: activeTransportMode === "native-grpc" ? url : env.nativeTarget,
-              }
+            ? featureSetEnvironmentTransportTarget({ ...env, label: name }, activeTransportMode, url)
             : env,
         ),
       );
@@ -2672,12 +2998,16 @@ export default function PlaygroundPage() {
     }
 
     const key = `custom-${slugify(name)}-${Date.now().toString(36)}`;
-    const env: EnvironmentConfig = {
+    const defaultEnv = defaultEnvironments[0];
+    const baseEnv: EnvironmentConfig = {
       key,
       label: name,
-      grpcWebBaseUrl: activeTransportMode === "native-grpc" ? draftEffectiveBaseUrl : url,
-      nativeTarget: activeTransportMode === "native-grpc" ? url : draftEffectiveNativeTarget,
+      grpcWebBaseUrl: activeTransportMode === "grpc-web" ? url : defaultEnv.grpcWebBaseUrl,
+      nativeTarget: activeTransportMode === "native-grpc" ? url : defaultEnv.nativeTarget,
+      websocketUrl: activeTransportMode === "websocket" ? url : defaultEnv.websocketUrl,
+      restBaseUrl: activeTransportMode === "rest" ? url : defaultEnv.restBaseUrl,
     };
+    const env = featureSetEnvironmentTransportTarget(baseEnv, activeTransportMode, url);
     setEnvironments((current) => featureMergeEnvironments([...current, env]));
     handleEnvironmentKeyChange(key);
     setEnvDialogOpen(false);
@@ -2700,7 +3030,7 @@ export default function PlaygroundPage() {
     setEnvDialogMode("edit");
     setEnvEditingKey(env.key);
     setEnvDraftName(env.label);
-    setEnvDraftUrl(activeTransportMode === "native-grpc" ? env.nativeTarget : env.grpcWebBaseUrl);
+    setEnvDraftUrl(featureGetEnvironmentTransportTarget(env, activeTransportMode));
     setEnvDialogOpen(true);
   }
 
@@ -2806,6 +3136,11 @@ export default function PlaygroundPage() {
   function handleMockPortChange(value: string) {
     const port = clamp(Math.floor(Number(value) || defaultMockPort), 1, 65535);
     setMockServer((current) => ({ ...current, port, updatedAt: new Date().toISOString() }));
+  }
+
+  function handleMockBindHostChange(value: string) {
+    const bindHost = normalizeMockBindHost(value);
+    setMockServer((current) => ({ ...current, bindHost, updatedAt: new Date().toISOString() }));
   }
 
   /**
@@ -3285,10 +3620,15 @@ export default function PlaygroundPage() {
       mockServer.selectedScenarioIds,
     );
     const result = await window.electronMock.update({
+      port: normalizeMockPort(mockServer.port, defaultMockPort),
+      bindHost: normalizeMockBindHost(mockServer.bindHost),
+      protoFiles,
+      methods: loaded.methods,
       scenarios: parsed.bundle.scenarios,
       streamDefaults: mockServer.streamDefaults,
       activeScenarioIds,
       enabledMethods: mockServer.enabledMethods,
+      workspaceDirectory: workspaceFolderPath || undefined,
     });
     if (!result.ok) {
       setMockServerStatus((current) =>
@@ -3304,7 +3644,15 @@ export default function PlaygroundPage() {
             activeScenarioIds: result.activeScenarioIds ?? activeScenarioIds,
             configVersion: result.configVersion ?? current.configVersion,
             updatedAt: result.updatedAt ?? current.updatedAt,
-            message: "Mock config updated.",
+            port: result.port ?? current.port,
+            url: result.url ?? current.url,
+            bindHost: result.bindHost ?? current.bindHost,
+            bindAddress: result.bindAddress ?? current.bindAddress,
+            localTarget: result.localTarget ?? current.localTarget,
+            apisixTarget: result.apisixTarget ?? current.apisixTarget,
+            reachableTargets: result.reachableTargets ?? current.reachableTargets,
+            methodCount: result.methodCount ?? current.methodCount,
+            message: result.message ?? (result.restarted ? "Mock runtime reloaded." : "Mock config updated."),
           }
         : current,
     );
@@ -3340,6 +3688,7 @@ export default function PlaygroundPage() {
       );
       const result = await window.electronMock.start({
         port,
+        bindHost: normalizeMockBindHost(mockServer.bindHost),
         protoFiles,
         methods: loaded.methods,
         scenarios: parsed.bundle.scenarios,
@@ -3352,10 +3701,15 @@ export default function PlaygroundPage() {
         showToast(result.error ?? "Mock server failed to start.", "error");
         return;
       }
+      const localTarget = result.localTarget ?? `127.0.0.1:${result.port ?? port}`;
       setMockServerStatus({
         running: true,
         port: result.port ?? port,
-        url: result.url ?? `grpc://0.0.0.0:${port}`,
+        url: result.url ?? `grpc://${localTarget}`,
+        bindHost: result.bindHost,
+        bindAddress: result.bindAddress,        localTarget,
+        apisixTarget: result.apisixTarget,
+        reachableTargets: result.reachableTargets,
         scenarioCount: result.scenarioCount ?? parsed.bundle.scenarios.length,
         methodCount: result.methodCount ?? loaded.methods.length,
         activeScenarioIds: result.activeScenarioIds ?? activeScenarioIds,
@@ -3363,10 +3717,15 @@ export default function PlaygroundPage() {
         configVersion: result.configVersion,
         updatedAt: new Date().toISOString(),
       });
-      setNativeTarget(`0.0.0.0:${result.port ?? port}`);
+      setNativeTarget(localTarget);
       setTransportMode("native-grpc");
-      updateActiveSession({ transportMode: "native-grpc", nativeTarget: `0.0.0.0:${result.port ?? port}` });
-      showToast(`Mock server running on port ${result.port ?? port}.`, "success");
+      updateActiveSession({ transportMode: "native-grpc", nativeTarget: localTarget });
+      showToast(
+        result.apisixTarget
+          ? `Mock server running. APISIX upstream target: ${result.apisixTarget}.`
+          : `Mock server running on port ${result.port ?? port}.`,
+        "success",
+      );
     } catch (err) {
       showToast(`Mock server failed: ${toErrorMessage(err)}`, "error");
     }
@@ -4618,10 +4977,58 @@ export default function PlaygroundPage() {
           }}
         >
           <Stack spacing={0.8} sx={{ height: "100%", minHeight: 0, overflow: "hidden" }}>
-            <Paper
-              elevation={0}
-              sx={{ ...panelSx, flex: "1 1 auto", minHeight: 220, display: "flex", flexDirection: "column" }}
-            >
+            {showEmptyWorkbench ? (
+              <Paper
+                elevation={0}
+                sx={{
+                  ...panelSx,
+                  flex: "1 1 auto",
+                  minHeight: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  p: 3,
+                }}
+              >
+                <Stack spacing={1.2} alignItems="center" textAlign="center" sx={{ maxWidth: 520 }}>
+                  <Api sx={{ fontSize: 36, color: "text.secondary" }} />
+                  <Typography variant="h6">Please open, import, or select a collection.</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Pick a saved tab, import a proto or workspace, or select a request from the collection sidebar to
+                    start testing.
+                  </Typography>
+                  <Stack direction="row" spacing={1} flexWrap="wrap" justifyContent="center" useFlexGap>
+                    <Button variant="contained" size="small" startIcon={<UploadFile />} onClick={openWorkspaceImporter}>
+                      Import workspace
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      startIcon={<UploadFile />}
+                      onClick={() => protoInputRef.current?.click()}
+                    >
+                      Import proto
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      startIcon={<Storage />}
+                      onClick={() => {
+                        setSideSection("registry");
+                        setSidebarOpen(true);
+                      }}
+                    >
+                      Select collection
+                    </Button>
+                  </Stack>
+                </Stack>
+              </Paper>
+            ) : (
+              <>
+                <Paper
+                  elevation={0}
+                  sx={{ ...panelSx, flex: "1 1 auto", minHeight: 220, display: "flex", flexDirection: "column" }}
+                >
               <Stack
                 direction="row"
                 alignItems="center"
@@ -4699,7 +5106,7 @@ export default function PlaygroundPage() {
                     startIcon={<PlayArrow />}
                     disabled={
                       (!selectedMethod && !activeCollectionRequest) ||
-                      activeCollectionRequest?.kind === "grpc" ||
+                      (activeCollectionRequest?.kind === "grpc" && !selectedMethod) ||
                       (activeTransportMode === "native-grpc" && !isNativeBridgeAvailable)
                     }
                     onClick={() => {
@@ -4744,7 +5151,7 @@ export default function PlaygroundPage() {
                   </MenuItem>
                   <Divider />
                   {environments.map((env) => {
-                    const target = activeTransportMode === "native-grpc" ? env.nativeTarget : env.grpcWebBaseUrl;
+                    const target = featureGetEnvironmentTransportTarget(env, activeTransportMode);
                     return (
                       <MenuItem
                         key={env.key}
@@ -4907,14 +5314,6 @@ export default function PlaygroundPage() {
                           )}
                           <Button
                             size="small"
-                            variant="outlined"
-                            onClick={prettifyRequestJson}
-                            disabled={!requestJson.trim()}
-                          >
-                            Prettier JSON
-                          </Button>
-                          <Button
-                            size="small"
                             variant="contained"
                             startIcon={<PlayArrow />}
                             onClick={handleSendWebSocketMessage}
@@ -4934,6 +5333,10 @@ export default function PlaygroundPage() {
                         minRows={7}
                         maxRows={12}
                         language="json"
+                        onFormat={prettifyRequestJson}
+                        formatDisabled={!requestJson.trim()}
+                        formatAriaLabel="Prettier JSON"
+                        fullscreenTitle="WebSocket send data editor"
                       />
                     </Stack>
                   ) : (
@@ -4973,9 +5376,6 @@ export default function PlaygroundPage() {
                           </Button>
                         </Stack>
                         <Stack direction="row" spacing={0.7} alignItems="center">
-                          <Button size="small" variant="outlined" onClick={prettifyRequestJson}>
-                            Prettier JSON
-                          </Button>
                           <Button
                             size="small"
                             variant="outlined"
@@ -4992,6 +5392,10 @@ export default function PlaygroundPage() {
                         minRows={7}
                         maxRows={12}
                         language="json"
+                        onFormat={prettifyRequestJson}
+                        formatDisabled={!requestJson.trim()}
+                        formatAriaLabel="Prettier JSON"
+                        fullscreenTitle="Request body editor"
                       />
                     </Stack>
                   ))}
@@ -5302,6 +5706,8 @@ export default function PlaygroundPage() {
                 )}
               </Box>
             </Paper>
+              </>
+            )}
           </Stack>
         </Box>
         <MockServerSettingsDialog
@@ -5312,6 +5718,7 @@ export default function PlaygroundPage() {
           parseResult={parsedMockConfig}
           mappingRows={mockMappingRows}
           onPortChange={handleMockPortChange}
+          onBindHostChange={handleMockBindHostChange}
           onScenarioSelectChange={handleMockScenarioSelectChange}
           onMethodEnabledChange={handleMockMethodEnabledChange}
           onScenarioStreamSettingsChange={handleMockScenarioStreamSettingsChange}
@@ -5426,10 +5833,10 @@ export default function PlaygroundPage() {
               />
               <TextField
                 size="small"
-                label={activeTransportMode === "native-grpc" ? "Native gRPC target" : "Request URL / base URL"}
+                label={transportTargetLabel(activeTransportMode)}
                 value={envDraftUrl}
                 onChange={(event: TextInputChangeEvent) => setEnvDraftUrl(event.target.value)}
-                placeholder={activeTransportMode === "native-grpc" ? "127.0.0.1:50051" : "https://api.example.com"}
+                placeholder={transportTargetPlaceholder(activeTransportMode)}
               />
               <Typography variant="caption" color="text.secondary">
                 {envDialogMode === "edit"

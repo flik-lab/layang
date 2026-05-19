@@ -269,7 +269,8 @@ export function renderWorkspaceProtoDocsMarkdown(input: {
   const latestResults = buildSavedDocResultByMethod(input.docResults);
   const latestTabResults = buildLatestResultByMethod(input.requestSessions);
   const envLines = input.environments.map(
-    (env) => `- \`${env.key}\`: ${env.grpcWebBaseUrl || "-"} / ${env.nativeTarget || "-"}`,
+    (env) =>
+      `- \`${env.key}\`: gRPC-Web ${env.grpcWebBaseUrl || "-"} / Native ${env.nativeTarget || "-"} / WS ${env.websocketUrl || "-"} / REST ${env.restBaseUrl || "-"}`,
   );
   const methodDocs = input.methods.map((method) => {
     const key = methodKey(method);

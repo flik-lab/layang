@@ -24,6 +24,13 @@ registerNativeGrpcIpc();
 registerGrpcMockIpc();
 registerWebSocketMockIpc();
 
+// Allow HTTPS endpoints with self-signed or otherwise untrusted certificates.
+// This is intended for the local/trusted desktop API workbench use case.
+app.on("certificate-error", (event, _webContents, _url, _error, _certificate, callback) => {
+  event.preventDefault();
+  callback(true);
+});
+
 app.whenReady().then(() => {
   createWindow();
 

@@ -38,7 +38,7 @@ type SwitchInputChangeEvent = ChangeEvent<HTMLInputElement>;
 export function WebSocketMockSidebar({
   request,
   mockResponseText,
-  latestResult,
+  latestResult: _latestResult,
   status,
   port,
   pathValue,

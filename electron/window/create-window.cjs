@@ -20,6 +20,8 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      webSecurity: false,
+      allowRunningInsecureContent: true,
     },
   });
 
@@ -27,6 +29,7 @@ function createWindow() {
   loadRenderer(win);
   return win;
 }
+
 
 function loadRenderer(win) {
   const isDev = !app.isPackaged;
@@ -49,6 +52,7 @@ function attachRendererDiagnostics(win) {
   win.webContents.on("did-finish-load", () => {
     console.log("[renderer:did-finish-load]", win.webContents.getURL());
   });
+  console.log("[electron:grpc-web] transport browser fetch (CORS disabled for this trusted desktop window)");
 }
 
 module.exports = { createWindow };

@@ -13,6 +13,8 @@ export type EnvironmentConfig = {
   label: string;
   grpcWebBaseUrl: string;
   nativeTarget: string;
+  websocketUrl: string;
+  restBaseUrl: string;
 };
 
 export type UiEvent = {
@@ -116,6 +118,7 @@ export type MockScenarioSelection = Record<string, string>;
 
 export type MockServerProject = {
   port: number;
+  bindHost: string;
   format: MockFormat;
   scenarioText: string;
   streamDefaults: Required<Pick<MockStreamSettings, "intervalMs" | "loop" | "maxLoops">>;
@@ -125,10 +128,21 @@ export type MockServerProject = {
   updatedAt: string;
 };
 
+export type MockReachableTarget = {
+  label: string;
+  host: string;
+  target: string;
+};
+
 export type MockServerStatus = {
   running: boolean;
   port?: number;
   url?: string;
+  bindHost?: string;
+  bindAddress?: string;
+  localTarget?: string;
+  apisixTarget?: string;
+  reachableTargets?: MockReachableTarget[];
   scenarioCount?: number;
   methodCount?: number;
   activeScenarioIds?: MockScenarioSelection;

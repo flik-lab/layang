@@ -207,7 +207,7 @@ export function RegistryPanel({
                       )}
                     </ListItemIcon>
                     <ListItemText
-                      primary={`${requestKindBadge(request)}  ${request.name}`}
+                      primary={request.name}
                       primaryTypographyProps={{
                         fontSize: 11.1,
                         fontWeight: active ? 540 : 450,
@@ -421,14 +421,26 @@ export function ProtoSourceBlock({ file }: { file: ProtoSourceFile }) {
   );
 }
 
-function requestKindBadge(request: ApiCollectionRequest): string {
-  if (request.kind === "grpc") return "RPC";
-  return "WS";
-}
-
 /** Extracts import statements from a proto source file. */
 function parseProtoImports(source: string): string[] {
-  return Array.from(source.matchAll(/^\s*import\s+(?:public\s+|weak\s+)?"([^"]+)"\s*;/gm)).map((match) => match[1]);
+  return Array.from(source.matchAll(/^\s*import\s+(?:public\s+|weak\s+)?"([^"]+)"\s*;/gm))
+    .map((match) => match[1])
+    .filter((fileName) => !isBundledWellKnownProto(fileName));
+}
+
+function isBundledWellKnownProto(fileName: string): boolean {
+  switch (fileName) {
+    case "google/protobuf/any.proto":
+    case "google/protobuf/duration.proto":
+    case "google/protobuf/empty.proto":
+    case "google/protobuf/field_mask.proto":
+    case "google/protobuf/struct.proto":
+    case "google/protobuf/timestamp.proto":
+    case "google/protobuf/wrappers.proto":
+      return true;
+    default:
+      return false;
+  }
 }
 
 /** Renders a compact empty-state card. */

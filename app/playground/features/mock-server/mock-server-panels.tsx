@@ -1,7 +1,6 @@
-import { type ChangeEvent, useState } from "react";
+import type { ChangeEvent } from "react";
 
 import {
-  DesktopWindows,
   Edit,
   PlayArrow,
   StopCircle,
@@ -104,7 +103,7 @@ export function MockServerSidebar({
             />
           </Stack>
           <Typography variant="caption" color="text.secondary" display="block">
-            Port {status.port ?? mockServer.port}
+            Bind {status.bindAddress ?? `${mockServer.bindHost}:${status.port ?? mockServer.port}`}
           </Typography>
           {status.url && (
             <Typography
@@ -112,7 +111,17 @@ export function MockServerSidebar({
               color="text.secondary"
               display="block"
             >
-              {status.url}
+              Local: {status.url}
+            </Typography>
+          )}
+          {status.apisixTarget && (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              display="block"
+              title="Use this host:port as the APISIX upstream target when APISIX runs in Docker Desktop on the same machine."
+            >
+              APISIX upstream: {status.apisixTarget}
             </Typography>
           )}
           {status.message && (
@@ -233,6 +242,7 @@ export function MockServerSettingsDialog({
   parseResult,
   mappingRows,
   onPortChange,
+  onBindHostChange,
   onScenarioSelectChange,
   onMethodEnabledChange,
   onScenarioStreamSettingsChange,
@@ -247,6 +257,7 @@ export function MockServerSettingsDialog({
   parseResult: MockParseResult;
   mappingRows: MockMethodScenarioRow[];
   onPortChange: (value: string) => void;
+  onBindHostChange: (value: string) => void;
   onScenarioSelectChange: (method: RpcMethodInfo, scenarioId: string) => void;
   onMethodEnabledChange: (method: RpcMethodInfo, enabled: boolean) => void;
   onScenarioStreamSettingsChange: (
@@ -283,6 +294,17 @@ export function MockServerSettingsDialog({
                   }
                   sx={{ width: 120 }}
                 />
+                <TextField
+                  size="small"
+                  label="Bind IP"
+                  value={mockServer.bindHost}
+                  onChange={(event: TextInputChangeEvent) =>
+                    onBindHostChange(event.target.value)
+                  }
+                  placeholder="127.0.0.1"
+                  title="IP address where the mock gRPC server listens. Use a LAN IP if APISIX runs on another machine or container that cannot reach localhost."
+                  sx={{ width: 170 }}
+                />
                 {status.running ? (
                   <Button
                     size="small"
@@ -309,7 +331,7 @@ export function MockServerSettingsDialog({
                   color={status.running ? "success" : "default"}
                   label={
                     status.running
-                      ? `Running on ${status.port ?? mockServer.port}`
+                      ? `Running on ${status.bindAddress ?? `${mockServer.bindHost}:${status.port ?? mockServer.port}`}`
                       : "Stopped"
                   }
                 />
@@ -650,7 +672,6 @@ export function MockServerPanel({
   onOpenFolder: () => void;
   onOpenSettings: () => void;
 }) {
-  const [editorFullscreenOpen, setEditorFullscreenOpen] = useState(false);
   const currentRow = selectedMethod
     ? mappingRows.find((row) => row.methodKey === methodKey(selectedMethod))
     : undefined;
@@ -731,14 +752,6 @@ export function MockServerPanel({
         </Button>
         <Button size="small" variant="outlined" onClick={onOpenFolder}>
           Open folder
-        </Button>
-        <Button
-          size="small"
-          variant="outlined"
-          onClick={onFormat}
-          disabled={!selectedMethod}
-        >
-          Format
         </Button>
       </Stack>
 
@@ -924,52 +937,21 @@ export function MockServerPanel({
       </Paper>
 
       <Stack spacing={0.6}>
-        <Stack
-          direction="row"
-          alignItems="center"
-          justifyContent="space-between"
-          spacing={1}
-        >
-          <Typography variant="body2" fontWeight={560}>
-            Selected scenario JSON/YAML editor
-          </Typography>
-          <Button
-            size="small"
-            variant="outlined"
-            startIcon={<DesktopWindows />}
-            onClick={() => setEditorFullscreenOpen(true)}
-          >
-            Full screen editor
-          </Button>
-        </Stack>
+        <Typography variant="body2" fontWeight={560}>
+          Selected scenario JSON/YAML editor
+        </Typography>
         <FeatureCodeTextField
           value={editorText}
           onChange={onScenarioTextChange}
           minRows={15}
           maxRows={28}
           language={currentFile.format}
+          onFormat={onFormat}
+          formatDisabled={!selectedMethod}
+          formatAriaLabel="Format scenario"
+          fullscreenTitle="Mock scenario editor"
         />
       </Stack>
-      <Dialog
-        open={editorFullscreenOpen}
-        onClose={() => setEditorFullscreenOpen(false)}
-        fullWidth
-        maxWidth="calc(100vw - 48px)"
-      >
-        <DialogTitle>Full screen mock scenario editor</DialogTitle>
-        <DialogContent sx={{ height: "calc(100vh - 150px)", overflow: "auto" }}>
-          <FeatureCodeTextField
-            value={editorText}
-            onChange={onScenarioTextChange}
-            minRows={28}
-            maxRows={42}
-            language={currentFile.format}
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setEditorFullscreenOpen(false)}>Done</Button>
-        </DialogActions>
-      </Dialog>
     </Stack>
   );
 }

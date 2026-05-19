@@ -40,6 +40,7 @@ declare global {
       isAvailable: boolean;
       start?: (payload: {
         port: number;
+        bindHost?: string;
         protoFiles: ProtoSourceFile[];
         methods: RpcMethodInfo[];
         scenarios: unknown[];
@@ -51,6 +52,11 @@ declare global {
         ok: boolean;
         port?: number;
         url?: string;
+        bindHost?: string;
+        bindAddress?: string;
+        localTarget?: string;
+        apisixTarget?: string;
+        reachableTargets?: Array<{ label: string; host: string; target: string }>;
         scenarioCount?: number;
         methodCount?: number;
         activeScenarioIds?: Record<string, string>;
@@ -59,17 +65,33 @@ declare global {
         error?: string;
       }>;
       update?: (payload: {
+        port?: number;
+        bindHost?: string;
+        protoFiles?: ProtoSourceFile[];
+        methods?: RpcMethodInfo[];
         scenarios: unknown[];
         streamDefaults?: { intervalMs?: number; loop?: boolean; maxLoops?: number };
         activeScenarioIds?: Record<string, string>;
         enabledMethods?: Record<string, boolean>;
+        workspaceDirectory?: string;
       }) => Promise<{
         ok: boolean;
+        running?: boolean;
+        restarted?: boolean;
+        port?: number;
+        url?: string;
+        bindHost?: string;
+        bindAddress?: string;
+        localTarget?: string;
+        apisixTarget?: string;
+        reachableTargets?: Array<{ label: string; host: string; target: string }>;
         scenarioCount?: number;
+        methodCount?: number;
         activeScenarioIds?: Record<string, string>;
         enabledMethods?: Record<string, boolean>;
         configVersion?: number;
         updatedAt?: string;
+        message?: string;
         error?: string;
       }>;
       stop?: () => Promise<{ ok: boolean; message?: string }>;
@@ -77,6 +99,11 @@ declare global {
         running: boolean;
         port?: number;
         url?: string;
+        bindHost?: string;
+        bindAddress?: string;
+        localTarget?: string;
+        apisixTarget?: string;
+        reachableTargets?: Array<{ label: string; host: string; target: string }>;
         scenarioCount?: number;
         methodCount?: number;
         activeScenarioIds?: Record<string, string>;

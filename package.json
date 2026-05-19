@@ -5,6 +5,8 @@
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "next dev",
+    "dev:next": "next dev",
+    "dev:with-local-grpc-web-proxy": "concurrently -k \"next dev\" \"node scripts/grpc-web-dev-proxy.cjs\"",
     "build": "next build",
     "start": "next start",
     "desktop": "concurrently -k \"pnpm run dev\" \"wait-on http://localhost:3000/playground && electron-forge start\"",

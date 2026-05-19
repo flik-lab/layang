@@ -2,6 +2,7 @@
 
 const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
+const os = require("node:os");
 const path = require("node:path");
 const grpc = require("@grpc/grpc-js");
 const protoLoader = require("@grpc/proto-loader");
@@ -10,9 +11,108 @@ const { safeRelativePath } = require("../utils/path-utils.cjs");
 
 let activeMockServer = null;
 
+function getReachableMockTargets(port, bindHost) {
+  const normalizedPort = normalizeMockServerPort(port);
+  const normalizedBindHost = normalizeMockBindHost(bindHost);
+  const targets = [
+    { label: "Bind IP", host: normalizedBindHost, target: `${normalizedBindHost}:${normalizedPort}` },
+  ];
+  if (normalizedBindHost === "127.0.0.1" || normalizedBindHost === "localhost") {
+    targets.push({ label: "Docker Desktop / APISIX", host: "host.docker.internal", target: `host.docker.internal:${normalizedPort}` });
+  }
+  const interfaces = os.networkInterfaces ? os.networkInterfaces() : {};
+  for (const items of Object.values(interfaces)) {
+    for (const item of items || []) {
+      if (!item || item.family !== "IPv4" || item.internal || !item.address) continue;
+      targets.push({ label: "LAN", host: item.address, target: `${item.address}:${normalizedPort}` });
+    }
+  }
+  const seen = new Set();
+  return targets.filter((item) => {
+    if (seen.has(item.target)) return false;
+    seen.add(item.target);
+    return true;
+  });
+}
+
+function createMockServerStatusPayload(serverState, extra) {
+  const port = normalizeMockServerPort(serverState.port);
+  const bindHost = normalizeMockBindHost(serverState.bindHost);
+  const reachableTargets = getReachableMockTargets(port, bindHost);
+  const localTarget = `${bindHost}:${port}`;
+  const apisixTarget =
+    bindHost === "127.0.0.1" || bindHost === "localhost"
+      ? reachableTargets.find((item) => item.host === "host.docker.internal")?.target || localTarget
+      : localTarget;
+  return {
+    running: true,
+    port,
+    bindHost,
+    bindAddress: `${bindHost}:${port}`,
+    url: `grpc://${localTarget}`,
+    localTarget,
+    apisixTarget,
+    reachableTargets,
+    ...extra,
+  };
+}
+
+function registerGrpcHealthService(server) {
+  const healthServiceDefinition = {
+    Check: {
+      path: "/grpc.health.v1.Health/Check",
+      requestStream: false,
+      responseStream: false,
+      requestSerialize: serializeGrpcHealthRequest,
+      requestDeserialize: deserializeGrpcHealthRequest,
+      responseSerialize: serializeGrpcHealthResponse,
+      responseDeserialize: deserializeGrpcHealthResponse,
+    },
+    Watch: {
+      path: "/grpc.health.v1.Health/Watch",
+      requestStream: false,
+      responseStream: true,
+      requestSerialize: serializeGrpcHealthRequest,
+      requestDeserialize: deserializeGrpcHealthRequest,
+      responseSerialize: serializeGrpcHealthResponse,
+      responseDeserialize: deserializeGrpcHealthResponse,
+    },
+  };
+  server.addService(healthServiceDefinition, {
+    Check: (_call, callback) => callback(null, { status: 1 }),
+    Watch: (call) => {
+      call.write({ status: 1 });
+      call.end();
+    },
+  });
+}
+
+function serializeGrpcHealthRequest(value) {
+  const service = value && typeof value.service === "string" ? Buffer.from(value.service, "utf8") : Buffer.alloc(0);
+  if (!service.length) return Buffer.alloc(0);
+  return Buffer.concat([Buffer.from([0x0a, service.length]), service]);
+}
+
+function deserializeGrpcHealthRequest(buffer) {
+  const bytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || []);
+  if (bytes[0] !== 0x0a || !bytes[1]) return { service: "" };
+  return { service: bytes.slice(2, 2 + bytes[1]).toString("utf8") };
+}
+
+function serializeGrpcHealthResponse(value) {
+  const status = Math.max(0, Math.min(255, Number(value?.status || 1)));
+  return Buffer.from([0x08, status]);
+}
+
+function deserializeGrpcHealthResponse(buffer) {
+  const bytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || []);
+  return { status: bytes[0] === 0x08 ? bytes[1] || 0 : 0 };
+}
+
 async function startMockServer(payload) {
   await stopMockServer();
   const port = normalizeMockServerPort(payload.port || 50055);
+  const bindHost = normalizeMockBindHost(payload.bindHost);
   const protoFiles = Array.isArray(payload.protoFiles) ? payload.protoFiles : [];
   const methods = Array.isArray(payload.methods) ? payload.methods : [];
   const scenarios = Array.isArray(payload.scenarios) ? payload.scenarios : [];
@@ -44,6 +144,7 @@ async function startMockServer(payload) {
     "grpc.max_receive_message_length": 50 * 1024 * 1024,
     "grpc.max_send_message_length": 50 * 1024 * 1024,
   });
+  registerGrpcHealthService(server);
   const timers = new Set();
   const activeCalls = new Set();
   const runtime = createMockRuntimeState(scenarios, streamDefaults, activeScenarioIds, enabledMethods, "start");
@@ -76,7 +177,7 @@ async function startMockServer(payload) {
   }
 
   const boundPort = await new Promise((resolve, reject) => {
-    server.bindAsync(`0.0.0.0:${port}`, grpc.ServerCredentials.createInsecure(), (error, actualPort) => {
+    server.bindAsync(`${bindHost}:${port}`, grpc.ServerCredentials.createInsecure(), (error, actualPort) => {
       if (error) reject(error);
       else resolve(actualPort);
     });
@@ -94,21 +195,23 @@ async function startMockServer(payload) {
     configWatcher: null,
     watcherDebounce: null,
     port: boundPort,
+    bindHost,
     methodCount,
     methods,
+    protoFiles,
+    methodSignature: createMockMethodSignature(methods),
+    protoSignature: createMockProtoSignature(protoFiles),
     startedAt: new Date().toISOString(),
   };
   await startMockScenarioWatcher(workspaceDirectory, activeMockServer);
 
-  return {
-    port: boundPort,
-    url: `grpc://0.0.0.0:${boundPort}`,
+  return createMockServerStatusPayload(activeMockServer, {
     scenarioCount: runtime.scenarioIndex.length,
     activeScenarioIds: runtime.activeScenarioIds,
     enabledMethods: runtime.enabledMethods,
     methodCount,
     configVersion: runtime.configVersion,
-  };
+  });
 }
 
 /**
@@ -173,6 +276,14 @@ async function stopMockServer() {
 /**
  * Normalizes the mock server port.
  */
+function normalizeMockBindHost(value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw || raw === "0.0.0.0" || raw === "::") return "127.0.0.1";
+  const cleaned = raw.replace(/^grpc:\/\//i, "").split(":")[0]?.trim() || "127.0.0.1";
+  if (!cleaned || cleaned === "0.0.0.0" || cleaned === "::") return "127.0.0.1";
+  return cleaned;
+}
+
 function normalizeMockServerPort(value) {
   const numeric = Math.floor(Number(value));
   if (!Number.isFinite(numeric) || numeric <= 0) return 50055;
@@ -222,12 +333,73 @@ function createMockRuntimeState(scenarios, streamDefaults, activeScenarioIds, en
   };
 }
 
+function createMockMethodSignature(methods) {
+  return JSON.stringify(
+    (Array.isArray(methods) ? methods : [])
+      .map((method) => ({
+        serviceName: String(method?.serviceName || ""),
+        methodName: String(method?.methodName || ""),
+        requestStream: Boolean(method?.requestStream),
+        responseStream: Boolean(method?.responseStream),
+        requestType: String(method?.requestType || ""),
+        responseType: String(method?.responseType || ""),
+      }))
+      .sort((a, b) => `${a.serviceName}/${a.methodName}`.localeCompare(`${b.serviceName}/${b.methodName}`)),
+  );
+}
+
+function createMockProtoSignature(protoFiles) {
+  return JSON.stringify(
+    (Array.isArray(protoFiles) ? protoFiles : [])
+      .map((file) => ({ name: safeRelativePath(file?.name || ""), text: String(file?.text || "") }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  );
+}
+
+
 /**
  * Replaces active runtime scenarios without restarting the bound gRPC server or open streams.
  */
-function updateActiveMockServer(payload, source) {
+async function updateActiveMockServer(payload, source) {
   if (!activeMockServer) throw new Error("Mock server is not running.");
-  const runtime = activeMockServer.runtime;
+  const active = activeMockServer;
+  const runtime = active.runtime;
+  const nextMethods = Array.isArray(payload.methods) ? payload.methods : active.methods || [];
+  const nextProtoFiles = Array.isArray(payload.protoFiles) ? payload.protoFiles : active.protoFiles || [];
+  const methodSignature = createMockMethodSignature(nextMethods);
+  const protoSignature = createMockProtoSignature(nextProtoFiles);
+
+  const nextBindHost = normalizeMockBindHost(payload.bindHost || active.bindHost);
+  const nextPort = normalizeMockServerPort(payload.port || active.port || 50055);
+  if (
+    methodSignature !== active.methodSignature ||
+    protoSignature !== active.protoSignature ||
+    nextBindHost !== active.bindHost ||
+    nextPort !== active.port
+  ) {
+    const result = await startMockServer({
+      port: nextPort,
+      bindHost: nextBindHost,
+      protoFiles: nextProtoFiles,
+      methods: nextMethods,
+      scenarios: Array.isArray(payload.scenarios) ? payload.scenarios : runtime.scenarioIndex,
+      streamDefaults: payload.streamDefaults || runtime.streamDefaults,
+      activeScenarioIds: payload.activeScenarioIds || payload.selectedScenarioIds || runtime.activeScenarioIds,
+      enabledMethods: payload.enabledMethods || runtime.enabledMethods,
+      workspaceDirectory:
+        payload.workspaceDirectory && typeof payload.workspaceDirectory === "string"
+          ? payload.workspaceDirectory
+          : active.watchedWorkspaceDir,
+    });
+    return {
+      ...result,
+      running: true,
+      restarted: true,
+      message: "Mock runtime reloaded for updated proto methods.",
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
   const next = createMockRuntimeState(
     Array.isArray(payload.scenarios) ? payload.scenarios : runtime.scenarioIndex,
     payload.streamDefaults || runtime.streamDefaults,
@@ -1096,10 +1268,7 @@ function grpcStatusError(code, message) {
 
 function getMockServerStatus() {
   if (!activeMockServer) return { running: false };
-  return {
-    running: true,
-    port: activeMockServer.port,
-    url: `grpc://0.0.0.0:${activeMockServer.port}`,
+  return createMockServerStatusPayload(activeMockServer, {
     scenarioCount: activeMockServer.runtime.scenarioIndex.length,
     methodCount: activeMockServer.methodCount,
     activeScenarioIds: activeMockServer.runtime.activeScenarioIds,
@@ -1107,11 +1276,12 @@ function getMockServerStatus() {
     startedAt: activeMockServer.startedAt,
     configVersion: activeMockServer.runtime.configVersion,
     updatedAt: activeMockServer.runtime.updatedAt,
-  };
+  });
 }
 
 module.exports = {
   getMockServerStatus,
+  getReachableMockTargets,
   normalizeActiveScenarioIds,
   normalizeEnabledMethods,
   normalizeMockServerPort,
