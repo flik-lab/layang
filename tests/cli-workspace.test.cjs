@@ -166,3 +166,44 @@ test("prefers Git-friendly request item files over aggregate tabs.json", async (
     assert.equal(items[0].target, "localhost:50099");
   });
 });
+
+test("discovers WebSocket collection requests for CLI", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "layang-cli-ws-test-"));
+  try {
+    await fs.mkdir(path.join(dir, "collections"), { recursive: true });
+    await fs.writeFile(path.join(dir, "project.json"), JSON.stringify({ collections: [] }, null, 2));
+    await fs.writeFile(
+      path.join(dir, "collections", "collections.json"),
+      JSON.stringify(
+        [
+          {
+            id: "col-1",
+            name: "Realtime",
+            requests: [
+              {
+                id: "ws-1",
+                collectionId: "col-1",
+                name: "Chat",
+                kind: "websocket",
+                url: "ws://127.0.0.1:8090/mock/ws",
+                body: '{"type":"ping"}',
+                headers: [{ key: "Sec-WebSocket-Protocol", value: "json" }],
+              },
+            ],
+          },
+        ],
+        null,
+        2,
+      ),
+    );
+    const workspace = await readWorkspace(dir);
+    const items = discoverRunItems(workspace, { transport: "websocket", method: "Chat" });
+    assert.equal(items.length, 1);
+    assert.equal(items[0].requestKind, "websocket");
+    assert.equal(items[0].target, "ws://127.0.0.1:8090/mock/ws");
+    const validation = validateWorkspace(workspace);
+    assert.equal(validation.ok, true);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

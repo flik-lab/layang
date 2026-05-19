@@ -44,3 +44,10 @@ test("help text documents run and validate commands", () => {
   assert.match(text, /layang run/);
   assert.match(text, /validate/);
 });
+
+test("normalizes websocket transport options", () => {
+  const parsed = parseCliArgs(["run", "./workspace", "--transport", "websocket", "--ws-wait", "250"]);
+  const options = normalizeRunOptions(parsed);
+  assert.equal(options.transport, "websocket");
+  assert.equal(options.wsWaitMs, 250);
+});

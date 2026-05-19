@@ -194,7 +194,8 @@ export function DocsSidebar({
   onOpen: (doc: MethodDoc) => void;
   onUnpublish: (doc: MethodDoc) => void;
 }) {
-  if (docs.length === 0) return <SmallEmpty body="Publish method docs from the Docs tab to build static API docs." />;
+  if (docs.length === 0)
+    return <SmallEmpty body="Publish gRPC or WebSocket docs from the Docs tab to build static API docs." />;
   return (
     <Stack spacing={designSystem.space.gap}>
       <Button

@@ -164,6 +164,7 @@ export function Stack({
   alignItems,
   justifyContent,
   flexWrap,
+  textAlign,
   useFlexGap: _useFlexGap,
   sx,
   className,
@@ -177,10 +178,11 @@ export function Stack({
     alignItems: alignItems as CSSProperties["alignItems"],
     justifyContent: justifyContent as CSSProperties["justifyContent"],
     flexWrap: flexWrap as CSSProperties["flexWrap"],
+    textAlign: textAlign as CSSProperties["textAlign"],
     gap: toSpacing(spacing) as CSSProperties["gap"],
   };
   const style = mergeStyles(baseStyle, sxToStyle(sx, theme), props.style);
-  const divProps = omit(props, ["useFlexGap"]) as DivProps;
+  const divProps = omit(props, ["useFlexGap", "textAlign"]) as DivProps;
   return (
     <div {...divProps} className={cn(className)} style={style}>
       {children}
@@ -855,7 +857,7 @@ export function Alert({
     info:
       variant === "filled"
         ? { backgroundColor: tokens.primary, borderColor: tokens.primaryStrong, color: "#ffffff" }
-        : { backgroundColor: tokens.surface, borderColor: "rgba(139, 124, 255, 0.55)", color: tokens.primaryStrong },
+        : { backgroundColor: tokens.surface, borderColor: "rgba(59, 130, 246, 0.55)", color: tokens.primaryStrong },
   };
   return (
     <div
@@ -1031,13 +1033,13 @@ export function Switch({ checked, onChange, size: _size, ...props }: AnyProps) {
       aria-checked={checked}
       onClick={(event: React.MouseEvent<HTMLButtonElement>) => onChange?.({ ...event, target: { checked: !checked } })}
       className={cn(
-        "relative inline-flex h-4 w-8 shrink-0 rounded-full border border-border transition-colors",
+        "inline-flex h-4 w-8 shrink-0 items-center rounded-full border border-border p-0.5 transition-colors",
         checked ? "bg-primary" : "bg-muted",
       )}
     >
       <span
         className={cn(
-          "absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-background shadow transition-transform",
+          "block h-3 w-3 rounded-full bg-background shadow transition-transform",
           checked ? "translate-x-4" : "translate-x-0",
         )}
       />

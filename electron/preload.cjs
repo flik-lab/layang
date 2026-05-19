@@ -35,6 +35,8 @@ contextBridge.exposeInMainWorld("electronGrpc", {
   isAvailable: true,
 });
 
+
+
 contextBridge.exposeInMainWorld("electronWorkspace", {
   saveFolder: (bundle, directoryPath) => ipcRenderer.invoke("workspace:save-folder", { bundle, directoryPath }),
   openFolder: (directoryPath) => ipcRenderer.invoke("workspace:open-folder", { directoryPath }),
@@ -50,6 +52,15 @@ contextBridge.exposeInMainWorld("electronMock", {
   stop: () => ipcRenderer.invoke("mock-server:stop"),
   update: (payload) => ipcRenderer.invoke("mock-server:update", payload),
   status: () => ipcRenderer.invoke("mock-server:status"),
+  isAvailable: true,
+});
+
+contextBridge.exposeInMainWorld("electronWsMock", {
+  start: (payload) => ipcRenderer.invoke("ws-mock:start", payload),
+  stop: () => ipcRenderer.invoke("ws-mock:stop"),
+  update: (payload) => ipcRenderer.invoke("ws-mock:update", payload),
+  send: (payload) => ipcRenderer.invoke("ws-mock:send", payload),
+  status: () => ipcRenderer.invoke("ws-mock:status"),
   isAvailable: true,
 });
 

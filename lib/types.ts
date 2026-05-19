@@ -82,5 +82,5 @@ export type GrpcResult = {
   requestUrl: string;
   startedAt?: string;
   completedAt?: string;
-  transport?: "grpc-web" | "native-grpc";
+  transport?: "grpc-web" | "native-grpc" | "websocket" | "rest";
 };

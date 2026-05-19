@@ -37,50 +37,104 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
   const requestPayload = requestType.encode(requestMessage).finish();
   const requestFrame = encodeGrpcFrame(requestPayload, false);
   const requestBody = base64Encode(requestFrame);
-  const requestUrl = buildGrpcWebUrl(params.baseUrl, params.method.serviceName, params.method.methodName);
+  const responseStream = params.method.responseStream;
+  const headers = buildGrpcWebHeaders(params.metadata ?? [], responseStream);
+  const firstResult = await invokeGrpcWebTextAttempt({
+    ...params,
+    method: params.method,
+    emit,
+    requestPayload,
+    requestBody,
+    headers,
+    responseType,
+  });
+
+  if (firstResult.trailers["grpc-status"] !== "12") return firstResult;
+  const shortServiceName = params.method.serviceName.split(".").pop();
+  if (!shortServiceName || shortServiceName === params.method.serviceName) return firstResult;
+
+  emit({
+    type: "log",
+    level: "warn",
+    message: "Retrying gRPC-Web request with short service name for BloomRPC compatibility.",
+    details: {
+      previousService: params.method.serviceName,
+      retryService: shortServiceName,
+      method: params.method.methodName,
+    },
+  });
+
+  return invokeGrpcWebTextAttempt({
+    ...params,
+    method: { ...params.method, serviceName: shortServiceName },
+    emit,
+    requestPayload,
+    requestBody,
+    headers,
+    responseType,
+  });
+}
+
+type InvokeGrpcWebTextAttemptParams = InvokeGrpcWebTextParams & {
+  emit: (event: GrpcEvent) => void;
+  requestPayload: Uint8Array;
+  requestBody: string;
+  headers: Record<string, string>;
+  responseType: protobuf.Type;
+};
+
+async function invokeGrpcWebTextAttempt(params: InvokeGrpcWebTextAttemptParams): Promise<GrpcResult> {
+  const upstreamUrl = buildGrpcWebUrl(params.baseUrl, params.method.serviceName, params.method.methodName);
+  const requestUrl = upstreamUrl;
   const startedTimestamp = new Date();
   const startedAt = performance.now();
 
-  const headers: Record<string, string> = {
-    "content-type": "application/grpc-web-text+proto",
-    accept: "application/grpc-web-text",
-    "x-grpc-web": "1",
-    "x-user-agent": "layang/1.0",
-    ...metadataPairsToRecord(params.metadata ?? []),
-  };
-
-  emit({
+  params.emit({
     type: "log",
     level: "info",
     message: "Request prepared",
     details: {
       requestUrl,
+      upstreamUrl,
       service: params.method.serviceName,
       method: params.method.methodName,
       requestType: params.method.requestType,
       responseType: params.method.responseType,
-      requestBytes: requestPayload.length,
+      requestBytes: params.requestPayload.length,
       mode: params.method.responseStream ? "server-streaming" : "unary",
+      headers: params.headers,
     },
   });
 
-  emit({
+  params.emit({
     type: "log",
     level: "info",
     message: "Opening gRPC-Web request",
-    details: { requestUrl, contentType: headers["content-type"] },
+    details: { requestUrl, upstreamUrl, contentType: params.headers["content-type"], headers: params.headers },
+  });
+
+  params.emit({
+    type: "log",
+    level: "info",
+    message: "Using browser fetch gRPC-Web transport.",
+    details: {
+      requestUrl,
+      upstreamUrl,
+      contentType: params.headers["content-type"],
+      note: "Electron desktop can bypass browser CORS when webSecurity is disabled; regular browsers still require APISIX CORS.",
+    },
   });
 
   let response: Response;
   try {
     response = await fetch(requestUrl, {
       method: "POST",
-      headers,
-      body: requestBody,
+      headers: params.headers,
+      body: params.requestBody,
       signal: params.signal,
     });
   } catch (error) {
-    emit({
+    params.emit({
       type: "error",
       message: "Network request failed before gRPC headers were received.",
       details: errorToPlainObject(error),
@@ -91,14 +145,14 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
   const responseHeaders = headersToRecord(response.headers);
   const contentType = response.headers.get("content-type") ?? "";
 
-  emit({
+  params.emit({
     type: "headers",
     httpStatus: response.status,
     headers: responseHeaders,
     contentType,
   });
 
-  emit({
+  params.emit({
     type: "log",
     level: response.ok ? "info" : "warn",
     message: response.ok ? "HTTP response headers received" : "HTTP response is not OK",
@@ -120,7 +174,7 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
 
   const processBytes = (bytes: Uint8Array) => {
     decodedBinaryBytes += bytes.length;
-    emit({
+    params.emit({
       type: "log",
       level: "debug",
       message: "Decoded gRPC-Web text chunk",
@@ -130,7 +184,7 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
     const frames = frameParser.push(bytes);
 
     if (frames.length === 0) {
-      emit({
+      params.emit({
         type: "log",
         level: "debug",
         message: "Waiting for a complete gRPC frame",
@@ -143,12 +197,12 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
       if (frame.kind === "trailers") {
         trailerFrames += 1;
         trailers = { ...trailers, ...frame.trailers };
-        emit({ type: "trailers", trailers });
+        params.emit({ type: "trailers", trailers });
 
         const status = trailers["grpc-status"];
         const message = trailers["grpc-message"] ?? "";
         const isOk = status === undefined || status === "0";
-        emit({
+        params.emit({
           type: "log",
           level: isOk ? "info" : "error",
           message: isOk ? "gRPC trailers received" : `gRPC error ${status}: ${decodeGrpcMessage(message)}`,
@@ -166,8 +220,8 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
       totalMessages += 1;
 
       try {
-        const decoded = responseType.decode(frame.payload);
-        const value = responseType.toObject(decoded, {
+        const decoded = params.responseType.decode(frame.payload);
+        const value = params.responseType.toObject(decoded, {
           longs: String,
           enums: String,
           bytes: String,
@@ -180,7 +234,7 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
           droppedMessages += 1;
           messages.shift();
           if (droppedMessages === 1) {
-            emit({
+            params.emit({
               type: "log",
               level: "warn",
               message:
@@ -191,12 +245,12 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
         }
 
         messages.push(value);
-        emit({
+        params.emit({
           type: "message",
           index: totalMessages - 1,
           value,
         });
-        emit({
+        params.emit({
           type: "log",
           level: "info",
           message: `Message #${totalMessages} decoded`,
@@ -208,7 +262,7 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
           },
         });
       } catch (error) {
-        emit({
+        params.emit({
           type: "error",
           message: "Failed to decode response message with selected proto response type.",
           details: {
@@ -223,7 +277,7 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
   };
 
   if (!response.body) {
-    emit({
+    params.emit({
       type: "log",
       level: "warn",
       message: "ReadableStream is not available; response will be processed after completion.",
@@ -236,7 +290,7 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
   } else {
     const reader = response.body.getReader();
     const cancelReader = () => {
-      emit({ type: "log", level: "warn", message: "Abort requested; cancelling response reader immediately." });
+      params.emit({ type: "log", level: "warn", message: "Abort requested; cancelling response reader immediately." });
       void reader.cancel("Request cancelled by user").catch(() => undefined);
     };
 
@@ -251,7 +305,7 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
 
         const text = textDecoder.decode(chunk.value, { stream: true });
         rawTextBytes += text.length;
-        emit({
+        params.emit({
           type: "log",
           level: "debug",
           message: "Response stream chunk received",
@@ -270,7 +324,7 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
     const finalText = textDecoder.decode();
     if (finalText) {
       rawTextBytes += finalText.length;
-      emit({
+      params.emit({
         type: "log",
         level: "debug",
         message: "Final response decoder chunk received",
@@ -288,7 +342,28 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
       "grpc-status": "1",
       "grpc-message": "Cancelled by user",
     };
-    emit({ type: "trailers", trailers });
+    params.emit({ type: "trailers", trailers });
+  }
+
+  if (!trailers["grpc-status"]) {
+    const headerGrpcStatus = response.headers.get("grpc-status");
+    const headerGrpcMessage = response.headers.get("grpc-message") ?? "";
+
+    if (headerGrpcStatus) {
+      trailers = {
+        ...trailers,
+        "grpc-status": headerGrpcStatus,
+        "grpc-message": headerGrpcMessage,
+      };
+      params.emit({ type: "trailers", trailers });
+      params.emit({
+        type: "log",
+        level: headerGrpcStatus === "0" ? "info" : "error",
+        message:
+          "No gRPC trailer frame was found. Using grpc-status metadata from response headers instead.",
+        details: { httpStatus: response.status, trailers },
+      });
+    }
   }
 
   if (!trailers["grpc-status"]) {
@@ -297,8 +372,8 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
       "grpc-status": response.ok ? "0" : String(response.status),
       "grpc-message": response.ok ? "" : response.statusText,
     };
-    emit({ type: "trailers", trailers });
-    emit({
+    params.emit({ type: "trailers", trailers });
+    params.emit({
       type: "log",
       level: response.ok ? "warn" : "error",
       message: response.ok
@@ -322,7 +397,7 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
     transport: "grpc-web",
   };
 
-  emit({
+  params.emit({
     type: "log",
     level: trailers["grpc-status"] === "0" ? "info" : "error",
     message: "Request completed",
@@ -337,7 +412,7 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
       grpcMessage: decodeGrpcMessage(trailers["grpc-message"] ?? ""),
     },
   });
-  emit({ type: "end", summary });
+  params.emit({ type: "end", summary });
   return summary;
 }
 
@@ -361,11 +436,22 @@ function ensureObject(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+
 /**
  * Builds the final gRPC-Web URL for a service/method pair.
  */
 export function buildGrpcWebUrl(baseUrl: string, serviceName: string, methodName: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/${serviceName}/${methodName}`;
+}
+
+function buildGrpcWebHeaders(metadata: MetadataPair[], _responseStream: boolean): Record<string, string> {
+  return {
+    "content-type": "application/grpc-web-text+proto",
+    accept: "application/grpc-web-text+proto",
+    "x-grpc-web": "1",
+    "x-user-agent": "grpc-web-javascript/0.1",
+    ...metadataPairsToRecord(metadata),
+  };
 }
 
 /**

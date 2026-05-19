@@ -28,6 +28,7 @@ import type {
 export function createDefaultMockServerProject(): MockServerProject {
   return {
     port: defaultMockPort,
+    bindHost: "127.0.0.1",
     format: "json",
     scenarioText: defaultMockScenarioText,
     streamDefaults: createDefaultMockStreamDefaults(),
@@ -41,11 +42,21 @@ export function createDefaultMockServerProject(): MockServerProject {
 /**
  * Normalizes persisted mock server config so older projects can be opened safely.
  */
+
+export function normalizeMockBindHost(value: unknown, fallback = "127.0.0.1"): string {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw || raw === "0.0.0.0" || raw === "::") return fallback;
+  const cleaned = raw.replace(/^grpc:\/\//i, "").split(":")[0]?.trim() || fallback;
+  if (!cleaned || cleaned === "0.0.0.0" || cleaned === "::") return fallback;
+  return cleaned;
+}
+
 export function normalizeMockServerProject(input: Partial<MockServerProject> | undefined | null): MockServerProject {
   const defaults = createDefaultMockServerProject();
   const rawFormat = input?.format;
   const format: MockFormat = rawFormat === "yaml" ? "yaml" : "json";
   const port = normalizeMockPort(input?.port, defaults.port);
+  const bindHost = normalizeMockBindHost(input?.bindHost, defaults.bindHost);
   const legacyScenarioText =
     typeof input?.scenarioText === "string" && input.scenarioText.trim() ? input.scenarioText : "";
   const legacyParsed = legacyScenarioText ? parseMockScenarioText(legacyScenarioText, format, port) : null;
@@ -65,6 +76,7 @@ export function normalizeMockServerProject(input: Partial<MockServerProject> | u
   );
   return {
     port,
+    bindHost,
     format,
     scenarioText,
     streamDefaults,
