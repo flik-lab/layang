@@ -35,6 +35,8 @@ contextBridge.exposeInMainWorld("electronGrpc", {
   isAvailable: true,
 });
 
+
+
 contextBridge.exposeInMainWorld("electronWorkspace", {
   saveFolder: (bundle, directoryPath) => ipcRenderer.invoke("workspace:save-folder", { bundle, directoryPath }),
   openFolder: (directoryPath) => ipcRenderer.invoke("workspace:open-folder", { directoryPath }),

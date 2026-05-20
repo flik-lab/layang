@@ -46,11 +46,7 @@ export function createDefaultMockServerProject(): MockServerProject {
 export function normalizeMockBindHost(value: unknown, fallback = "127.0.0.1"): string {
   const raw = typeof value === "string" ? value.trim() : "";
   if (!raw || raw === "0.0.0.0" || raw === "::") return fallback;
-  const cleaned =
-    raw
-      .replace(/^grpc:\/\//i, "")
-      .split(":")[0]
-      ?.trim() || fallback;
+  const cleaned = raw.replace(/^grpc:\/\//i, "").split(":")[0]?.trim() || fallback;
   if (!cleaned || cleaned === "0.0.0.0" || cleaned === "::") return fallback;
   return cleaned;
 }

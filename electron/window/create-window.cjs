@@ -30,6 +30,7 @@ function createWindow() {
   return win;
 }
 
+
 function loadRenderer(win) {
   const isDev = !app.isPackaged;
   const staticIndexPath = path.join(__dirname, "..", "..", "out", "playground.html");

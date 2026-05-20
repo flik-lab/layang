@@ -14,13 +14,11 @@ let activeMockServer = null;
 function getReachableMockTargets(port, bindHost) {
   const normalizedPort = normalizeMockServerPort(port);
   const normalizedBindHost = normalizeMockBindHost(bindHost);
-  const targets = [{ label: "Bind IP", host: normalizedBindHost, target: `${normalizedBindHost}:${normalizedPort}` }];
+  const targets = [
+    { label: "Bind IP", host: normalizedBindHost, target: `${normalizedBindHost}:${normalizedPort}` },
+  ];
   if (normalizedBindHost === "127.0.0.1" || normalizedBindHost === "localhost") {
-    targets.push({
-      label: "Docker Desktop / APISIX",
-      host: "host.docker.internal",
-      target: `host.docker.internal:${normalizedPort}`,
-    });
+    targets.push({ label: "Docker Desktop / APISIX", host: "host.docker.internal", target: `host.docker.internal:${normalizedPort}` });
   }
   const interfaces = os.networkInterfaces ? os.networkInterfaces() : {};
   for (const items of Object.values(interfaces)) {
@@ -281,11 +279,7 @@ async function stopMockServer() {
 function normalizeMockBindHost(value) {
   const raw = typeof value === "string" ? value.trim() : "";
   if (!raw || raw === "0.0.0.0" || raw === "::") return "127.0.0.1";
-  const cleaned =
-    raw
-      .replace(/^grpc:\/\//i, "")
-      .split(":")[0]
-      ?.trim() || "127.0.0.1";
+  const cleaned = raw.replace(/^grpc:\/\//i, "").split(":")[0]?.trim() || "127.0.0.1";
   if (!cleaned || cleaned === "0.0.0.0" || cleaned === "::") return "127.0.0.1";
   return cleaned;
 }
@@ -361,6 +355,7 @@ function createMockProtoSignature(protoFiles) {
       .sort((a, b) => a.name.localeCompare(b.name)),
   );
 }
+
 
 /**
  * Replaces active runtime scenarios without restarting the bound gRPC server or open streams.

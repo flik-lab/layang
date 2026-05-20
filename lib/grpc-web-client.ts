@@ -359,7 +359,8 @@ async function invokeGrpcWebTextAttempt(params: InvokeGrpcWebTextAttemptParams):
       params.emit({
         type: "log",
         level: headerGrpcStatus === "0" ? "info" : "error",
-        message: "No gRPC trailer frame was found. Using grpc-status metadata from response headers instead.",
+        message:
+          "No gRPC trailer frame was found. Using grpc-status metadata from response headers instead.",
         details: { httpStatus: response.status, trailers },
       });
     }
@@ -434,6 +435,7 @@ function ensureObject(value: unknown): Record<string, unknown> {
 
   return value as Record<string, unknown>;
 }
+
 
 /**
  * Builds the final gRPC-Web URL for a service/method pair.
