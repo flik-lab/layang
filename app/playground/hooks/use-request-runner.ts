@@ -443,6 +443,7 @@ async function runCollectionRequest(options: CollectionRunOptions) {
           })
         : await invokeRestRequest({
             url: requestUrl,
+            collectionRequest,
             method: collectionRequest.method ?? "GET",
             body: requestToRun,
             metadata: metadataToRun,
@@ -510,6 +511,7 @@ async function runCollectionRequest(options: CollectionRunOptions) {
 
 async function invokeRestRequest(options: {
   url: string;
+  collectionRequest: ActiveCollectionRequest;
   method: string;
   body: string;
   metadata: MetadataPair[];
@@ -519,10 +521,16 @@ async function invokeRestRequest(options: {
   const startedAt = new Date();
   const method = options.method.toUpperCase();
   const headers = metadataPairsToHeaders(options.metadata);
-  const hasBody = method !== "GET" && method !== "HEAD" && options.body.trim().length > 0;
-  if (hasBody && !headers["content-type"]) headers["content-type"] = "application/json";
-  options.onEvent({ type: "log", level: "info", message: `HTTP ${method}`, details: { url: options.url } });
-  const response = await fetch(options.url, {
+  const requestUrl = buildRestFetchUrl({ ...options.collectionRequest, url: options.url }, options.url);
+  applyRestAuth(options.collectionRequest, headers, requestUrl);
+  const bodyType = options.collectionRequest.restBodyType ?? "json";
+  const hasBody = bodyType !== "none" && method !== "GET" && method !== "HEAD" && options.body.trim().length > 0;
+  if (hasBody && !hasHeader(headers, "content-type")) {
+    headers["content-type"] =
+      bodyType === "form-url-encoded" ? "application/x-www-form-urlencoded" : "application/json";
+  }
+  options.onEvent({ type: "log", level: "info", message: `HTTP ${method}`, details: { url: requestUrl.toString() } });
+  const response = await fetch(requestUrl.toString(), {
     method,
     headers,
     body: hasBody ? options.body : undefined,
@@ -551,7 +559,7 @@ async function invokeRestRequest(options: {
     trailers,
     messages: [value],
     durationMs: completedAt.getTime() - startedAt.getTime(),
-    requestUrl: options.url,
+    requestUrl: requestUrl.toString(),
     startedAt: startedAt.toISOString(),
     completedAt: completedAt.toISOString(),
     transport: "rest",
@@ -657,6 +665,45 @@ async function invokeWebSocketRequest(options: {
     };
     socket.onclose = (event) => finish(event.code, event.reason, event.wasClean || messages.length > 0);
   });
+}
+
+function buildRestFetchUrl(request: ActiveCollectionRequest, fallbackUrl: string): URL {
+  let url = (request.url || fallbackUrl || "http://127.0.0.1:3000").trim();
+  for (const param of request.restPathParams ?? []) {
+    const key = param.key.trim();
+    if (!key) continue;
+    const encoded = encodeURIComponent(param.value);
+    url = url.replaceAll(`:${key}`, encoded).replaceAll(`{${key}}`, encoded);
+  }
+  const parsed = new URL(url, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+  for (const param of request.restParams ?? []) {
+    const key = param.key.trim();
+    if (key) parsed.searchParams.set(key, param.value);
+  }
+  return parsed;
+}
+
+function applyRestAuth(request: ActiveCollectionRequest, headers: Record<string, string>, url: URL) {
+  const auth = request.restAuth;
+  if (!auth || auth.type === "none") return;
+  if (auth.type === "bearer" && auth.token.trim()) {
+    headers.authorization = `Bearer ${auth.token.trim()}`;
+    return;
+  }
+  if (auth.type === "basic") {
+    const token = btoa(`${auth.username}:${auth.password}`);
+    headers.authorization = `Basic ${token}`;
+    return;
+  }
+  if (auth.type === "api-key" && auth.key.trim()) {
+    if (auth.in === "query") url.searchParams.set(auth.key.trim(), auth.value);
+    else headers[auth.key.trim()] = auth.value;
+  }
+}
+
+function hasHeader(headers: Record<string, string>, name: string): boolean {
+  const lowerName = name.toLowerCase();
+  return Object.keys(headers).some((key) => key.toLowerCase() === lowerName);
 }
 
 function webSocketProtocolsFromMetadata(metadata: MetadataPair[]): string[] {

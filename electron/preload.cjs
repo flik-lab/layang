@@ -62,6 +62,14 @@ contextBridge.exposeInMainWorld("electronWsMock", {
   isAvailable: true,
 });
 
+contextBridge.exposeInMainWorld("electronRestMock", {
+  start: (payload) => ipcRenderer.invoke("rest-mock:start", payload),
+  stop: () => ipcRenderer.invoke("rest-mock:stop"),
+  update: (payload) => ipcRenderer.invoke("rest-mock:update", payload),
+  status: () => ipcRenderer.invoke("rest-mock:status"),
+  isAvailable: true,
+});
+
 contextBridge.exposeInMainWorld("electronWindow", {
   minimize: () => ipcRenderer.invoke("window:minimize"),
   maximizeToggle: () => ipcRenderer.invoke("window:maximize-toggle"),

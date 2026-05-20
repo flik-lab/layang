@@ -5,6 +5,7 @@ const path = require("node:path");
 const { registerGrpcMockIpc } = require("./ipc/grpc-mock-ipc.cjs");
 const { registerNativeGrpcIpc } = require("./ipc/native-grpc-ipc.cjs");
 const { registerWebSocketMockIpc } = require("./ipc/ws-mock-ipc.cjs");
+const { registerRestMockIpc } = require("./ipc/rest-mock-ipc.cjs");
 const { registerWindowIpc } = require("./ipc/window-ipc.cjs");
 const {
   normalizeActiveScenarioIds,
@@ -14,6 +15,7 @@ const {
   stopMockServer,
 } = require("./services/grpc-mock-server.cjs");
 const { stopWebSocketMockServer } = require("./services/ws-mock-server.cjs");
+const { stopRestMockServer } = require("./services/rest-mock-server.cjs");
 const { createWindow } = require("./window/create-window.cjs");
 const { readJsonIfExists, walkDirectory, writeTextInside } = require("./utils/file-utils.cjs");
 const { windowFromEvent } = require("./utils/ipc-utils.cjs");
@@ -23,6 +25,14 @@ registerWindowIpc();
 registerNativeGrpcIpc();
 registerGrpcMockIpc();
 registerWebSocketMockIpc();
+registerRestMockIpc();
+
+// Allow HTTPS endpoints with self-signed or otherwise untrusted certificates.
+// This is intended for the local/trusted desktop API workbench use case.
+app.on("certificate-error", (event, _webContents, _url, _error, _certificate, callback) => {
+  event.preventDefault();
+  callback(true);
+});
 
 app.whenReady().then(() => {
   createWindow();
@@ -39,6 +49,7 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   void stopMockServer();
   void stopWebSocketMockServer();
+  void stopRestMockServer();
 });
 
 ipcMain.handle("workspace:get-default-folder", async () => {
@@ -174,6 +185,14 @@ async function writeWorkspaceFolder(directoryPath, bundle) {
     ),
     enabledMethods: normalizeEnabledMethods(mockServerProject.enabledMethods || {}),
   });
+  await writeJson(
+    path.join(directoryPath, "mocks", "rest-mock-server.json"),
+    project.restMockServer || {
+      port: 3007,
+      bindHost: "127.0.0.1",
+      scenarios: [],
+    },
+  );
   const mockMethodFiles =
     mockServerProject.methodFiles && typeof mockServerProject.methodFiles === "object"
       ? mockServerProject.methodFiles
@@ -244,6 +263,7 @@ async function readWorkspaceFolder(directoryPath) {
   const snapshot = await readJsonIfExists(snapshotPath);
   if (snapshot && typeof snapshot === "object") {
     const splitMockServer = await readMockServerFromFolder(path.join(directoryPath, "mocks"));
+    const splitRestMockServer = await readJsonIfExists(path.join(directoryPath, "mocks", "rest-mock-server.json"));
     const splitRequestTabs = await readRequestSessionFiles(path.join(directoryPath, "requests"));
     const splitCollections = await readJsonIfExists(path.join(directoryPath, "collections", "collections.json"));
     if (splitMockServer) {
@@ -254,6 +274,10 @@ async function readWorkspaceFolder(directoryPath) {
         ...splitMockServer,
         methodFiles: { ...(currentMockServer.methodFiles || {}), ...(splitMockServer.methodFiles || {}) },
       };
+    }
+    if (splitRestMockServer && typeof splitRestMockServer === "object") {
+      snapshot.project = snapshot.project || {};
+      snapshot.project.restMockServer = splitRestMockServer;
     }
     if (splitRequestTabs.length) {
       snapshot.project = snapshot.project || {};
@@ -286,6 +310,10 @@ async function readWorkspaceFolder(directoryPath) {
     : (await readJsonIfExists(path.join(directoryPath, "requests", "tabs.json"))) || project.requestTabs || [];
   project.history =
     (await readJsonIfExists(path.join(directoryPath, "history", "history.json"))) || project.history || [];
+  project.restMockServer =
+    (await readJsonIfExists(path.join(directoryPath, "mocks", "rest-mock-server.json"))) ||
+    project.restMockServer ||
+    {};
   const mockSettings =
     (await readJsonIfExists(path.join(directoryPath, "mocks", "mock-server.json"))) || project.mockServer || {};
   const splitMockServer = await readMockServerFromFolder(path.join(directoryPath, "mocks"));

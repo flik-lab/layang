@@ -50,7 +50,7 @@ pnpm run build
 - Runtime and package manager: Node.js 20 or newer with pnpm 10 or newer.
 - App framework: TypeScript, React 19, Next.js 16, and Tailwind CSS.
 - Desktop shell: Electron 42 with preload bridges for native-only features.
-- API transports: browser gRPC-Web, Electron native gRPC through `@grpc/grpc-js`, protobuf loading through `@grpc/proto-loader` and `protobufjs`, plus beta WebSocket workflows.
+- API transports: browser gRPC-Web, Electron native gRPC through `@grpc/grpc-js`, protobuf loading through `@grpc/proto-loader` and `protobufjs`, plus WebSocket workflows.
 - Tooling: Biome for linting/formatting, Node.js test runner for unit tests, and GitHub Pages static assets for the public website.
 
 ## Commit style

@@ -1,13 +1,13 @@
 # Layang
 
 [![Website](https://img.shields.io/badge/website-open-blue)](https://flik-lab.github.io/layang/)
-[![Version](https://img.shields.io/badge/version-1.0.0--rc.2-orange)](https://github.com/flik-lab/layang/releases)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/flik-lab/layang/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 
-Layang is a workspace-based API workbench for testing, mocking, benchmarking, documenting, and automating APIs.
+Layang is a workspace-based API workbench for testing, mocking, benchmarking, documenting, and automating APIs across gRPC, gRPC-Web, WebSocket, and REST.
 
-The current release candidate focuses on protobuf and gRPC, with support for `.proto` browsing, gRPC/gRPC-Web calls, mock scenarios, streaming controls, benchmark reports, generated docs, and CLI automation. RC 2 also includes the first beta of WebSocket requests, mocks, benchmarks, and docs.
+Layang `1.0.0` is the first official stable release. It includes the full workspace workflow for REST, WebSocket, and gRPC APIs, with local mocks, scenario matching, response templates, request logs, generated docs, benchmarking, and CLI automation.
 
 ![Layang workbench](github-pages/assets/layang-app-screenshot.png)
 
@@ -21,11 +21,12 @@ The current release candidate focuses on protobuf and gRPC, with support for `.p
 - Run latency benchmarks and export benchmark JSON reports.
 - Generate Markdown or HTML API docs from proto files, saved examples, mocks, and latest responses.
 - Use the CLI in CI to validate workspaces, list saved requests, check mock scenarios, and run native gRPC requests.
-- Try the beta WebSocket workbench for live connections, message sending, local mock responses, benchmark exports, and generated docs.
+- Use the WebSocket workbench for live connections, message sending, local mock responses, benchmark exports, and generated docs.
+- Use the REST workbench for params, headers, auth, bodies, docs, examples, local mocks, scenario matching, and templates.
 
-## Release Candidate 2
+## Release 1.0.0
 
-Layang `1.0.0-rc.2` adds the first beta WebSocket workflow alongside the existing gRPC and gRPC-Web toolset. WebSocket support is available for early testing and feedback, but API details and workspace schema may still change before the stable `1.0.0` release.
+The official `1.0.0` release brings REST, WebSocket, gRPC, and gRPC-Web into one stable workspace experience. REST support includes richer mock scenarios, query/header/body matching, response templates, request logs, and guide files for REST, gRPC, and WebSocket mocking.
 
 ## Mocking And Streaming
 
@@ -83,7 +84,7 @@ pnpm run desktop:rpm
 - TypeScript, React 19, Next.js 16, and Tailwind CSS for the workbench UI.
 - Electron 42 for the desktop app, native bridges, and local mock server workflows.
 - `@grpc/grpc-js`, `@grpc/proto-loader`, and `protobufjs` for protobuf and native gRPC support.
-- Browser gRPC-Web plus beta WebSocket support for transport testing.
+- Browser gRPC-Web plus WebSocket support for transport testing.
 - Biome, Node.js test runner, and pnpm for formatting, linting, testing, and package management.
 
 ## CLI
@@ -120,3 +121,10 @@ pnpm run docs:build
 ## License
 
 MIT
+
+
+## Mock Guides
+
+- [gRPC mock scenarios](guide-scenario-mock-grpc.md)
+- [REST mock scenarios](guide-scenario-mock-rest.md)
+- [WebSocket mock scenarios](guide-scenario-mock-websocket.md)

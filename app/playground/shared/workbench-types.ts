@@ -6,13 +6,73 @@ export type EnvironmentKey = string;
 export type RequestTab = "body" | "metadata" | "schema" | "docs" | "benchmark" | "examples" | "mock" | "history";
 export type ResponseTab = "messages" | "trailers" | "headers" | "raw" | "history" | "report";
 export type ApiRequestKind = "rest" | "grpc" | "websocket";
-export type SideSection = "registry" | "examples" | "history" | "docs" | "mocks" | "ws-mocks";
+export type SideSection = "registry" | "examples" | "history" | "docs" | "mocks" | "ws-mocks" | "rest-mocks";
+
+export type RestBodyType = "none" | "json" | "text" | "form-url-encoded";
+
+export type RestAuthConfig =
+  | { type: "none" }
+  | { type: "bearer"; token: string }
+  | { type: "basic"; username: string; password: string }
+  | { type: "api-key"; key: string; value: string; in: "header" | "query" };
+
+export type RestMockScenario = {
+  id: string;
+  requestId?: string;
+  name: string;
+  enabled: boolean;
+  method: string;
+  path: string;
+  priority?: number;
+  status: number;
+  headers: MetadataPair[];
+  body: string;
+  delayMs?: number;
+  matchQuery?: MetadataPair[];
+  matchHeaders?: MetadataPair[];
+  matchBodyContains?: string;
+  matchJsonPath?: string;
+  matchJsonEquals?: string;
+};
+
+export type RestMockProject = {
+  port: number;
+  bindHost: string;
+  scenarios: RestMockScenario[];
+  updatedAt: string;
+};
+
+export type RestMockRequestLog = {
+  id: string;
+  method: string;
+  path: string;
+  status: number;
+  scenarioId?: string;
+  matched: boolean;
+  durationMs: number;
+  timestamp: string;
+};
+
+export type RestMockStatus = {
+  running: boolean;
+  port?: number;
+  bindHost?: string;
+  url?: string;
+  scenarioCount?: number;
+  requestCount?: number;
+  requestLog?: RestMockRequestLog[];
+  message?: string;
+  startedAt?: string;
+  updatedAt?: string;
+};
 
 export type EnvironmentConfig = {
   key: string;
   label: string;
   grpcWebBaseUrl: string;
   nativeTarget: string;
+  websocketUrl: string;
+  restBaseUrl: string;
 };
 
 export type UiEvent = {
@@ -55,6 +115,10 @@ export type ApiCollectionRequest = {
   grpcMethodKey?: string;
   body: string;
   headers: MetadataPair[];
+  restParams?: MetadataPair[];
+  restPathParams?: MetadataPair[];
+  restAuth?: RestAuthConfig;
+  restBodyType?: RestBodyType;
   mockResponse?: string;
   createdAt: string;
   updatedAt: string;
@@ -116,6 +180,7 @@ export type MockScenarioSelection = Record<string, string>;
 
 export type MockServerProject = {
   port: number;
+  bindHost: string;
   format: MockFormat;
   scenarioText: string;
   streamDefaults: Required<Pick<MockStreamSettings, "intervalMs" | "loop" | "maxLoops">>;
@@ -125,10 +190,21 @@ export type MockServerProject = {
   updatedAt: string;
 };
 
+export type MockReachableTarget = {
+  label: string;
+  host: string;
+  target: string;
+};
+
 export type MockServerStatus = {
   running: boolean;
   port?: number;
   url?: string;
+  bindHost?: string;
+  bindAddress?: string;
+  localTarget?: string;
+  apisixTarget?: string;
+  reachableTargets?: MockReachableTarget[];
   scenarioCount?: number;
   methodCount?: number;
   activeScenarioIds?: MockScenarioSelection;
@@ -137,6 +213,42 @@ export type MockServerStatus = {
   startedAt?: string;
   updatedAt?: string;
   configVersion?: number;
+};
+
+export type WebSocketMockMatchMode = "always" | "contains" | "regex" | "jsonPath";
+
+export type WebSocketMockScenario = {
+  id: string;
+  requestId?: string;
+  name: string;
+  enabled: boolean;
+  path: string;
+  responseText: string;
+  intervalMs: number;
+  loop: boolean;
+  maxLoops: number;
+  streamOnConnect: boolean;
+  sendOnMessage?: boolean;
+  matchMode?: WebSocketMockMatchMode;
+  matchValue?: string;
+  matchJsonPath?: string;
+};
+
+export type WebSocketMockProject = {
+  port: number;
+  scenarios: WebSocketMockScenario[];
+  selectedScenarioIds: Record<string, string>;
+  updatedAt: string;
+};
+
+export type WebSocketMockLog = {
+  id: string;
+  type: "server" | "connect" | "disconnect" | "incoming" | "match" | "send" | "skip" | "error";
+  message: string;
+  scenarioId?: string;
+  requestId?: string;
+  path?: string;
+  timestamp: string;
 };
 
 export type WebSocketMockStatus = {
@@ -151,6 +263,8 @@ export type WebSocketMockStatus = {
   maxLoops?: number;
   streamOnConnect?: boolean;
   sendOnMessage?: boolean;
+  requestPaths?: Array<{ id: string; requestId?: string; name: string; path: string; enabled: boolean; url: string }>;
+  logs?: WebSocketMockLog[];
   message?: string;
   startedAt?: string;
   updatedAt?: string;
@@ -268,6 +382,8 @@ export type ProjectData = {
   assertionJson: string;
   history: HistoryItem[];
   mockServer: MockServerProject;
+  restMockServer: RestMockProject;
+  wsMockServer: WebSocketMockProject;
   requestTabs: RequestSession[];
   activeRequestId: string;
 };

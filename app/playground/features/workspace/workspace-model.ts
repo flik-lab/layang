@@ -38,7 +38,166 @@ import type {
   SavedExample,
   UiEvent,
   WorkspaceLayoutSnapshot,
+  RestAuthConfig,
+  RestMockProject,
+  RestMockScenario,
+  RestBodyType,
+  WebSocketMockProject,
+  WebSocketMockScenario,
 } from "../../shared/workbench-types";
+
+export function createDefaultRestMockProject(): RestMockProject {
+  return {
+    port: 3007,
+    bindHost: "127.0.0.1",
+    scenarios: [],
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export function normalizeRestMockProject(input: unknown): RestMockProject {
+  const defaults = createDefaultRestMockProject();
+  if (!input || typeof input !== "object") return defaults;
+  const data = input as Partial<RestMockProject>;
+  return {
+    port: normalizeRestMockPort(data.port),
+    bindHost: normalizeRestMockBindHost(data.bindHost),
+    scenarios: normalizeRestMockScenarios(data.scenarios),
+    updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : new Date().toISOString(),
+  };
+}
+
+export function createDefaultWebSocketMockProject(): WebSocketMockProject {
+  return {
+    port: 8090,
+    scenarios: [],
+    selectedScenarioIds: {},
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export function normalizeWebSocketMockProject(input: unknown): WebSocketMockProject {
+  const defaults = createDefaultWebSocketMockProject();
+  if (!input || typeof input !== "object") return defaults;
+  const data = input as Partial<WebSocketMockProject>;
+  return {
+    port: normalizeWebSocketMockPort(data.port),
+    scenarios: normalizeWebSocketMockScenarios(data.scenarios),
+    selectedScenarioIds: normalizeStringRecord(data.selectedScenarioIds),
+    updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : new Date().toISOString(),
+  };
+}
+
+export function normalizeWebSocketMockPort(value: unknown): number {
+  const port = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(port)) return 8090;
+  return Math.min(65535, Math.max(1, Math.trunc(port)));
+}
+
+function normalizeWebSocketMockPath(value: unknown): string {
+  const path = typeof value === "string" && value.trim() ? value.trim().split(/[?#]/)[0] : "/mock/ws";
+  return path.startsWith("/") ? path : `/${path}`;
+}
+
+function normalizeWebSocketMockScenarios(input: unknown): WebSocketMockScenario[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((scenario): scenario is Partial<WebSocketMockScenario> => Boolean(scenario && typeof scenario === "object"))
+    .map((scenario) => ({
+      id: typeof scenario.id === "string" && scenario.id ? scenario.id : createId(),
+      requestId: typeof scenario.requestId === "string" && scenario.requestId ? scenario.requestId : undefined,
+      name: typeof scenario.name === "string" && scenario.name ? scenario.name : "WebSocket scenario",
+      enabled: scenario.enabled !== false,
+      path: normalizeWebSocketMockPath(scenario.path),
+      responseText: typeof scenario.responseText === "string" ? scenario.responseText : "[]",
+      intervalMs: Math.min(120_000, Math.max(1, Math.trunc(Number(scenario.intervalMs) || 1000))),
+      loop: Boolean(scenario.loop),
+      maxLoops: Math.max(0, Math.trunc(Number(scenario.maxLoops) || 0)),
+      streamOnConnect: Boolean(scenario.streamOnConnect),
+      sendOnMessage: Boolean(scenario.sendOnMessage),
+      matchMode:
+        scenario.matchMode === "contains" || scenario.matchMode === "regex" || scenario.matchMode === "jsonPath"
+          ? scenario.matchMode
+          : "always",
+      matchValue: typeof scenario.matchValue === "string" ? scenario.matchValue : "",
+      matchJsonPath: typeof scenario.matchJsonPath === "string" ? scenario.matchJsonPath : "",
+    }));
+}
+
+function normalizeStringRecord(input: unknown): Record<string, string> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+  return Object.fromEntries(
+    Object.entries(input as Record<string, unknown>)
+      .filter(([key, value]) => key && typeof value === "string" && value)
+      .map(([key, value]) => [key, String(value)]),
+  );
+}
+
+export function normalizeRestMockPort(value: unknown): number {
+  const port = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(port)) return 3007;
+  return Math.min(65535, Math.max(1, Math.trunc(port)));
+}
+
+export function normalizeRestMockBindHost(value: unknown): string {
+  const host = typeof value === "string" ? value.trim() : "";
+  if (!host || host === "0.0.0.0") return "127.0.0.1";
+  return host;
+}
+
+export function normalizeRestAuth(input: unknown): RestAuthConfig {
+  if (!input || typeof input !== "object") return { type: "none" };
+  const auth = input as Record<string, unknown>;
+  switch (auth.type) {
+    case "bearer":
+      return { type: "bearer", token: typeof auth.token === "string" ? auth.token : "" };
+    case "basic":
+      return {
+        type: "basic",
+        username: typeof auth.username === "string" ? auth.username : "",
+        password: typeof auth.password === "string" ? auth.password : "",
+      };
+    case "api-key":
+      return {
+        type: "api-key",
+        key: typeof auth.key === "string" ? auth.key : "x-api-key",
+        value: typeof auth.value === "string" ? auth.value : "",
+        in: auth.in === "query" ? "query" : "header",
+      };
+    default:
+      return { type: "none" };
+  }
+}
+
+function normalizeRestBodyType(value: unknown): RestBodyType {
+  return value === "none" || value === "text" || value === "form-url-encoded" ? value : "json";
+}
+
+function normalizeRestMockScenarios(input: unknown): RestMockScenario[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((scenario): scenario is Partial<RestMockScenario> => Boolean(scenario && typeof scenario === "object"))
+    .map((scenario) => ({
+      id: typeof scenario.id === "string" && scenario.id ? scenario.id : createId(),
+      requestId: typeof scenario.requestId === "string" && scenario.requestId ? scenario.requestId : undefined,
+      name: typeof scenario.name === "string" && scenario.name ? scenario.name : "REST scenario",
+      enabled: scenario.enabled !== false,
+      method: typeof scenario.method === "string" && scenario.method ? scenario.method.toUpperCase() : "GET",
+      path: typeof scenario.path === "string" && scenario.path ? scenario.path : "/",
+      priority: typeof scenario.priority === "number" ? Math.trunc(scenario.priority) : 0,
+      status: typeof scenario.status === "number" ? scenario.status : 200,
+      headers: Array.isArray(scenario.headers)
+        ? scenario.headers
+        : [{ key: "content-type", value: "application/json" }],
+      body: typeof scenario.body === "string" ? scenario.body : "{}",
+      delayMs: typeof scenario.delayMs === "number" ? Math.max(0, Math.trunc(scenario.delayMs)) : 0,
+      matchQuery: Array.isArray(scenario.matchQuery) ? scenario.matchQuery : [],
+      matchHeaders: Array.isArray(scenario.matchHeaders) ? scenario.matchHeaders : [],
+      matchBodyContains: typeof scenario.matchBodyContains === "string" ? scenario.matchBodyContains : "",
+      matchJsonPath: typeof scenario.matchJsonPath === "string" ? scenario.matchJsonPath : "",
+      matchJsonEquals: typeof scenario.matchJsonEquals === "string" ? scenario.matchJsonEquals : "",
+    }));
+}
 
 export function defaultProjectData(): ProjectData {
   return {
@@ -60,6 +219,8 @@ export function defaultProjectData(): ProjectData {
     assertionJson: defaultAssertion,
     history: [],
     mockServer: createDefaultMockServerProject(),
+    restMockServer: createDefaultRestMockProject(),
+    wsMockServer: createDefaultWebSocketMockProject(),
     requestTabs: [],
     activeRequestId: "",
   };
@@ -142,10 +303,14 @@ export function normalizeProjectData(input: Partial<ProjectData> | LegacyWorkspa
       : [],
     history: Array.isArray(data.history) ? data.history : [],
     mockServer: normalizeMockServerProject((data as ProjectData).mockServer),
+    restMockServer: normalizeRestMockProject((data as ProjectData).restMockServer),
+    wsMockServer: normalizeWebSocketMockProject((data as ProjectData).wsMockServer),
     requestTabs: normalizedTabs,
     activeRequestId,
     transportMode:
-      data.transportMode === "native-grpc" || data.transportMode === "websocket" ? data.transportMode : "grpc-web",
+      data.transportMode === "native-grpc" || data.transportMode === "websocket" || data.transportMode === "rest"
+        ? data.transportMode
+        : "grpc-web",
     baseUrl: data.baseUrl ?? defaults.baseUrl,
     nativeTarget: data.nativeTarget ?? defaults.nativeTarget,
     selectedMethodKey: data.selectedMethodKey ?? "",
@@ -168,6 +333,8 @@ export function looksLikeProjectData(value: unknown): value is Partial<ProjectDa
     Array.isArray(record.examples) ||
     Array.isArray(record.methodDocs) ||
     typeof record.mockServer === "object" ||
+    typeof (record as ProjectData).restMockServer === "object" ||
+    typeof (record as ProjectData).wsMockServer === "object" ||
     typeof record.baseUrl === "string" ||
     typeof record.nativeTarget === "string"
   );
@@ -199,7 +366,8 @@ function normalizeApiCollectionRequests(input: unknown, collectionId: string): A
     .filter((request): request is Partial<ApiCollectionRequest> => Boolean(request && typeof request === "object"))
     .map((request) => {
       const now = new Date().toISOString();
-      const kind = request.kind === "grpc" ? "grpc" : "websocket";
+      const kind: ApiCollectionRequest["kind"] =
+        request.kind === "grpc" || request.kind === "rest" || request.kind === "websocket" ? request.kind : "websocket";
       return {
         id: typeof request.id === "string" && request.id ? request.id : createId(),
         collectionId,
@@ -207,14 +375,21 @@ function normalizeApiCollectionRequests(input: unknown, collectionId: string): A
           typeof request.name === "string" && request.name.trim() ? request.name : defaultCollectionRequestName(kind),
         kind,
         method:
-          typeof request.method === "string" && request.method && kind === "grpc"
+          typeof request.method === "string" && request.method
             ? request.method.toUpperCase()
-            : undefined,
+            : kind === "rest"
+              ? "GET"
+              : undefined,
         url: typeof request.url === "string" ? request.url : defaultCollectionRequestUrl(kind),
         grpcMethodKey: typeof request.grpcMethodKey === "string" ? request.grpcMethodKey : undefined,
-        body: typeof request.body === "string" ? request.body : kind === "websocket" ? "" : "{}",
+        body: typeof request.body === "string" ? request.body : kind === "websocket" || kind === "rest" ? "" : "{}",
         headers: Array.isArray(request.headers) ? request.headers : [],
-        mockResponse: typeof request.mockResponse === "string" ? request.mockResponse : undefined,
+        restParams: Array.isArray(request.restParams) ? request.restParams : [],
+        restPathParams: Array.isArray(request.restPathParams) ? request.restPathParams : [],
+        restAuth: normalizeRestAuth(request.restAuth),
+        restBodyType: normalizeRestBodyType(request.restBodyType),
+        mockResponse:
+          typeof request.mockResponse === "string" ? request.mockResponse : kind === "rest" ? "{}" : undefined,
         createdAt: typeof request.createdAt === "string" ? request.createdAt : now,
         updatedAt: typeof request.updatedAt === "string" ? request.updatedAt : now,
       };
@@ -223,14 +398,16 @@ function normalizeApiCollectionRequests(input: unknown, collectionId: string): A
 
 function defaultCollectionRequestName(kind: ApiCollectionRequest["kind"]): string {
   if (kind === "websocket") return "WebSocket Request";
+  if (kind === "rest") return "REST Request";
   if (kind === "grpc") return "gRPC Request";
-  return "WebSocket Request";
+  return "Request";
 }
 
 function defaultCollectionRequestUrl(kind: ApiCollectionRequest["kind"]): string {
   if (kind === "websocket") return "ws://localhost:8080";
+  if (kind === "rest") return "http://127.0.0.1:3000";
   if (kind === "grpc") return "http://localhost:9080/grpc/web";
-  return "ws://localhost:8080";
+  return "http://127.0.0.1:3000";
 }
 
 /**
@@ -312,11 +489,15 @@ export function normalizeRequestSession(session: RequestSession): RequestSession
     ...session,
     metadata: Array.isArray(session.metadata) ? session.metadata : [],
     transportMode:
-      session.transportMode === "native-grpc" || session.transportMode === "websocket"
+      session.transportMode === "native-grpc" ||
+      session.transportMode === "websocket" ||
+      session.transportMode === "rest"
         ? session.transportMode
         : "grpc-web",
     requestKind:
-      session.requestKind === "grpc" || session.requestKind === "websocket" ? session.requestKind : undefined,
+      session.requestKind === "grpc" || session.requestKind === "websocket" || session.requestKind === "rest"
+        ? session.requestKind
+        : undefined,
     requestUrl: session.requestUrl ?? "",
     httpMethod: session.httpMethod ?? "GET",
     baseUrl: session.baseUrl ?? "http://localhost:9080/grpc/web",

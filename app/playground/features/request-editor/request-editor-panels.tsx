@@ -1,12 +1,19 @@
 "use client";
 
-import { type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent, useId, useMemo, useState } from "react";
+
+import { Close, DesktopWindows, Edit } from "@/components/shadcn/icons";
 
 import {
   Box,
   Chip,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  IconButton,
   Paper,
   Stack,
+  Tooltip,
   Table,
   TableBody,
   TableCell,
@@ -24,16 +31,40 @@ type CodeTextFieldProps = {
   minRows: number;
   maxRows?: number;
   language?: string;
+  onFormat?: () => void;
+  formatDisabled?: boolean;
+  formatAriaLabel?: string;
+  fullscreenTitle?: string;
 };
 
 const editorIndent = "  ";
 const editorLineHeightPx = 21;
 const editorPaddingYPx = 10;
+const formatShortcutLabel = "Shift+Alt+F";
+const fullscreenShortcutLabel = "F11";
+const quoteWrapShortcutLabel = "' or \" with selected text";
+const exitFullscreenShortcutLabel = "Esc";
 
 /** Renders a lightweight code editor with line numbers, current-line highlight, and undoable Tab indentation. */
-export function CodeTextField({ value, onChange, minRows, maxRows, language = "json" }: CodeTextFieldProps) {
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+export function CodeTextField({
+  value,
+  onChange,
+  minRows,
+  maxRows,
+  language = "json",
+  onFormat,
+  formatDisabled = false,
+  formatAriaLabel = "Format code",
+  fullscreenTitle,
+}: CodeTextFieldProps) {
   const [activeLine, setActiveLine] = useState(0);
+  const [fullscreenOpen, setFullscreenOpen] = useState(false);
+  const helpTextId = useId();
+  const formatTooltip = `${formatAriaLabel} (${formatShortcutLabel})`;
+  const fullscreenTooltip = fullscreenOpen
+    ? `Exit full screen editor (${fullscreenShortcutLabel})`
+    : `Open full screen editor (${fullscreenShortcutLabel})`;
+  const codeEditorAriaLabel = `${language} code editor. Press Tab to insert 2 spaces, Shift+Tab to unindent, ${formatShortcutLabel} to format, ${fullscreenShortcutLabel} to toggle full screen, ${exitFullscreenShortcutLabel} to close full screen, and ${quoteWrapShortcutLabel} to wrap a selection.`;
   const lineCount = Math.max(1, value.split("\n").length);
   const visualRows = Math.max(minRows, lineCount);
   const maxHeight = maxRows ? maxRows * editorLineHeightPx + editorPaddingYPx * 2 : undefined;
@@ -50,151 +81,297 @@ export function CodeTextField({ value, onChange, minRows, maxRows, language = "j
     setActiveLine(Math.max(0, nextLine));
   }
 
-  function restoreSelection(start: number, end: number) {
+  function restoreSelection(textarea: HTMLTextAreaElement, start: number, end: number) {
     window.requestAnimationFrame(() => {
-      const textarea = textareaRef.current;
-      if (!textarea) return;
       textarea.focus();
       textarea.setSelectionRange(start, end);
     });
   }
 
+  function handleFormat() {
+    if (formatDisabled) return;
+    if (onFormat) {
+      onFormat();
+      return;
+    }
+
+    const nextValue = formatEditorValue(value, language);
+    if (nextValue !== value) onChange(nextValue);
+  }
+
   function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key !== "Tab") return;
-    event.preventDefault();
+    const key = event.key.toLowerCase();
+    if (event.shiftKey && event.altKey && !event.ctrlKey && !event.metaKey && key === "f") {
+      event.preventDefault();
+      event.stopPropagation();
+      handleFormat();
+      return;
+    }
+
+    if (event.key === fullscreenShortcutLabel) {
+      event.preventDefault();
+      event.stopPropagation();
+      setFullscreenOpen((current) => !current);
+      return;
+    }
+
+    if (fullscreenOpen && event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setFullscreenOpen(false);
+      return;
+    }
 
     const textarea = event.currentTarget;
     const start = textarea.selectionStart ?? 0;
     const end = textarea.selectionEnd ?? start;
+
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && start !== end && isEditorQuoteKey(event.key)) {
+      event.preventDefault();
+      const edit = wrapEditorSelection(value, start, end, event.key);
+      applyUndoableTextareaEdit(textarea, edit, onChange);
+      updateActiveLine(textarea, textarea.value);
+      restoreSelection(textarea, edit.selectionStart, edit.selectionEnd);
+      return;
+    }
+
+    if (event.key !== "Tab") return;
+    event.preventDefault();
+
     const edit = event.shiftKey ? unindentEditorSelection(value, start, end) : indentEditorSelection(value, start, end);
     if (!edit) return;
     applyUndoableTextareaEdit(textarea, edit, onChange);
     updateActiveLine(textarea, textarea.value);
-    restoreSelection(edit.selectionStart, edit.selectionEnd);
+    restoreSelection(textarea, edit.selectionStart, edit.selectionEnd);
   }
 
-  return (
-    <Box
-      className="code-editor-selectable code-editor"
-      sx={{
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: 0,
-        overflow: "hidden",
-        bgcolor: "background.default",
-        boxShadow: "inset 0 1px 0 rgba(148, 163, 184, 0.08)",
-      }}
-    >
-      <Stack
-        direction="row"
-        alignItems="center"
-        justifyContent="space-between"
+  function renderEditor({ fullscreen = false }: { fullscreen?: boolean } = {}) {
+    const describedById = fullscreen ? `${helpTextId}-fullscreen` : helpTextId;
+    const editorMaxHeight = fullscreen ? undefined : maxHeight;
+    const editorMinHeight = fullscreen ? Math.max(minHeight, 420) : minHeight;
+    const editorHeight = fullscreen ? "calc(100vh - 160px)" : maxRows ? undefined : contentHeight;
+    return (
+      <Box
+        className="code-editor-selectable code-editor"
         sx={{
-          px: 1,
-          py: 0.45,
-          borderBottom: "1px solid",
+          border: "1px solid",
           borderColor: "divider",
-          bgcolor: "background.paper",
+          borderRadius: 0,
+          overflow: "hidden",
+          bgcolor: "background.default",
+          boxShadow: "inset 0 1px 0 rgba(148, 163, 184, 0.08)",
         }}
       >
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.08em" }}
-        >
-          {language}
-        </Typography>
-        <Typography variant="caption" color="text.secondary" sx={{ fontFamily: "monospace" }}>
-          Tab = 2 spaces
-        </Typography>
-      </Stack>
-      <div
-        className="response-selectable code-editor__body"
-        style={{
-          display: "flex",
-          minHeight,
-          maxHeight,
-          height: maxRows ? undefined : contentHeight,
-          overflow: "auto",
-          resize: "vertical",
-          background: "var(--background)",
-        }}
-      >
-        <pre
-          aria-hidden="true"
-          className="code-editor__gutter"
-          style={{
-            minHeight: contentHeight,
-            margin: 0,
-            padding: `${editorPaddingYPx}px 9px ${editorPaddingYPx}px 10px`,
-            borderRight: "1px solid var(--border)",
-            background: "var(--muted)",
-            color: "var(--muted-foreground)",
-            fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
-            fontSize: designSystem.font.mono,
-            lineHeight: `${editorLineHeightPx}px`,
-            textAlign: "right",
-            userSelect: "none",
+        <Stack
+          direction="row"
+          alignItems="center"
+          justifyContent="space-between"
+          sx={{
+            px: 1,
+            py: 0.45,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            bgcolor: "background.paper",
+            gap: 0.75,
           }}
         >
-          {lineNumbers}
-        </pre>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.08em" }}
+          >
+            {language}
+          </Typography>
+          <Stack direction="row" alignItems="center" spacing={0.35} sx={{ flexShrink: 0 }}>
+            <Typography variant="caption" color="text.secondary" sx={{ fontFamily: "monospace" }}>
+              Tab = 2 spaces
+            </Typography>
+            <Tooltip title={formatTooltip}>
+              <span>
+                <IconButton
+                  size="small"
+                  aria-label={formatTooltip}
+                  aria-keyshortcuts="Alt+Shift+F"
+                  title={formatTooltip}
+                  onClick={handleFormat}
+                  disabled={formatDisabled}
+                  sx={{ width: 26, height: 26 }}
+                >
+                  <Edit sx={{ fontSize: 14 }} />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title={fullscreenTooltip}>
+              <IconButton
+                size="small"
+                aria-label={fullscreenTooltip}
+                aria-keyshortcuts="F11"
+                title={fullscreenTooltip}
+                onClick={() => setFullscreenOpen((current) => !current)}
+                sx={{ width: 26, height: 26 }}
+              >
+                <DesktopWindows sx={{ fontSize: 14 }} />
+              </IconButton>
+            </Tooltip>
+          </Stack>
+        </Stack>
+        <span
+          id={describedById}
+          style={{
+            position: "absolute",
+            width: 1,
+            height: 1,
+            padding: 0,
+            margin: -1,
+            overflow: "hidden",
+            clip: "rect(0, 0, 0, 0)",
+            whiteSpace: "nowrap",
+            border: 0,
+          }}
+        >
+          Press Tab for 2 spaces, Shift+Tab to unindent, Shift+Alt+F to format, F11 to toggle full screen, Esc to close
+          full screen, and quote keys to wrap selected text.
+        </span>
         <div
-          className="code-editor__code-pane"
+          className="response-selectable code-editor__body"
           style={{
-            flex: "1 1 auto",
-            minWidth: 0,
-            minHeight: contentHeight,
-            position: "relative",
+            display: "flex",
+            minHeight: editorMinHeight,
+            maxHeight: editorMaxHeight,
+            height: editorHeight,
+            overflow: "auto",
+            resize: fullscreen ? "none" : "vertical",
+            background: "var(--background)",
           }}
         >
-          <div
+          <pre
             aria-hidden="true"
-            className="code-editor__active-line"
+            className="code-editor__gutter"
             style={{
-              top: editorPaddingYPx + Math.min(activeLine, visualRows - 1) * editorLineHeightPx,
-              height: editorLineHeightPx,
-            }}
-          />
-          <textarea
-            ref={textareaRef}
-            value={value}
-            onChange={(event: ChangeEvent<HTMLTextAreaElement>) => {
-              onChange(event.target.value);
-              updateActiveLine(event.target, event.target.value);
-            }}
-            onClick={(event) => updateActiveLine(event.currentTarget)}
-            onKeyUp={(event) => updateActiveLine(event.currentTarget)}
-            onSelect={(event) => updateActiveLine(event.currentTarget)}
-            onKeyDown={handleKeyDown}
-            spellCheck={false}
-            rows={visualRows}
-            className="code-editor__textarea"
-            style={{
-              width: "100%",
-              minWidth: 0,
-              minHeight: contentHeight,
+              minHeight: fullscreen ? "100%" : contentHeight,
               margin: 0,
-              padding: `${editorPaddingYPx}px 12px`,
-              border: 0,
-              outline: 0,
-              resize: "none",
-              overflow: "hidden",
-              background: "transparent",
-              color: "var(--foreground)",
+              padding: `${editorPaddingYPx}px 9px ${editorPaddingYPx}px 10px`,
+              borderRight: "1px solid var(--border)",
+              background: "var(--muted)",
+              color: "var(--muted-foreground)",
               fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
               fontSize: designSystem.font.mono,
               lineHeight: `${editorLineHeightPx}px`,
-              tabSize: 2,
-              whiteSpace: "pre",
-              position: "relative",
-              zIndex: 1,
+              textAlign: "right",
+              userSelect: "none",
             }}
-          />
+          >
+            {lineNumbers}
+          </pre>
+          <div
+            className="code-editor__code-pane"
+            style={{
+              flex: "1 1 auto",
+              minWidth: 0,
+              minHeight: fullscreen ? "100%" : contentHeight,
+              position: "relative",
+            }}
+          >
+            <div
+              aria-hidden="true"
+              className="code-editor__active-line"
+              style={{
+                top: editorPaddingYPx + Math.min(activeLine, visualRows - 1) * editorLineHeightPx,
+                height: editorLineHeightPx,
+              }}
+            />
+            <textarea
+              value={value}
+              onChange={(event: ChangeEvent<HTMLTextAreaElement>) => {
+                onChange(event.target.value);
+                updateActiveLine(event.target, event.target.value);
+              }}
+              onClick={(event) => updateActiveLine(event.currentTarget)}
+              onKeyUp={(event) => updateActiveLine(event.currentTarget)}
+              onSelect={(event) => updateActiveLine(event.currentTarget)}
+              onKeyDown={handleKeyDown}
+              aria-label={codeEditorAriaLabel}
+              aria-describedby={describedById}
+              aria-keyshortcuts="Tab Shift+Tab Alt+Shift+F F11 Escape ' &quot;"
+              title={codeEditorAriaLabel}
+              spellCheck={false}
+              rows={visualRows}
+              className="code-editor__textarea"
+              style={{
+                width: "100%",
+                minWidth: 0,
+                minHeight: fullscreen ? "100%" : contentHeight,
+                margin: 0,
+                padding: `${editorPaddingYPx}px 12px`,
+                border: 0,
+                outline: 0,
+                resize: "none",
+                overflow: fullscreen ? "auto" : "hidden",
+                background: "transparent",
+                color: "var(--foreground)",
+                fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
+                fontSize: designSystem.font.mono,
+                lineHeight: `${editorLineHeightPx}px`,
+                tabSize: 2,
+                whiteSpace: "pre",
+                position: "relative",
+                zIndex: 1,
+              }}
+            />
+          </div>
         </div>
-      </div>
-    </Box>
+      </Box>
+    );
+  }
+
+  return (
+    <>
+      {renderEditor()}
+      <Dialog open={fullscreenOpen} onClose={() => setFullscreenOpen(false)} fullWidth maxWidth="calc(100vw - 32px)">
+        <DialogTitle
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 1,
+          }}
+        >
+          <span>{fullscreenTitle ?? `${language.toUpperCase()} editor`}</span>
+          <Tooltip title="Close full screen editor (Esc or F11)">
+            <IconButton
+              size="small"
+              aria-label="Close full screen editor (Esc or F11)"
+              title="Close full screen editor (Esc or F11)"
+              onClick={() => setFullscreenOpen(false)}
+            >
+              <Close sx={{ fontSize: 16 }} />
+            </IconButton>
+          </Tooltip>
+        </DialogTitle>
+        <DialogContent sx={{ p: 1.2 }}>{renderEditor({ fullscreen: true })}</DialogContent>
+      </Dialog>
+    </>
   );
+}
+
+function formatEditorValue(value: string, language: string) {
+  const normalizedLanguage = language.toLowerCase();
+  if (normalizedLanguage === "json" || normalizedLanguage === "jsonc") {
+    try {
+      return JSON.stringify(JSON.parse(value), null, 2);
+    } catch {
+      return stripTrailingEditorWhitespace(value);
+    }
+  }
+
+  return stripTrailingEditorWhitespace(value);
+}
+
+function stripTrailingEditorWhitespace(value: string) {
+  return value
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+$/u, ""))
+    .join("\n");
 }
 
 type TextareaEdit = {
@@ -204,6 +381,21 @@ type TextareaEdit = {
   selectionStart: number;
   selectionEnd: number;
 };
+
+function isEditorQuoteKey(key: string): key is "'" | '"' {
+  return key === "'" || key === '"';
+}
+
+function wrapEditorSelection(value: string, start: number, end: number, quote: "'" | '"'): TextareaEdit {
+  const selectedText = value.slice(start, end);
+  return {
+    replaceStart: start,
+    replaceEnd: end,
+    text: `${quote}${selectedText}${quote}`,
+    selectionStart: start + quote.length,
+    selectionEnd: end + quote.length,
+  };
+}
 
 function indentEditorSelection(value: string, start: number, end: number): TextareaEdit {
   if (start === end) {

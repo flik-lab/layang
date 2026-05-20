@@ -626,23 +626,23 @@ button:disabled {
 }
 
 .collection-request-list {
-  gap: 1px;
+  gap: 2px;
 }
 
 .collection-request-list .shadcn-list-button {
-  min-height: 22px;
-  padding: 1px 4px;
-  gap: 4px;
+  min-height: 28px;
+  padding: 3px 5px;
+  gap: 5px;
   border-radius: 6px;
+  line-height: 16px;
 }
 
 .collection-request-list .shadcn-list-button > span:first-child {
-  min-width: 24px;
+  min-width: 22px;
 }
 
 .collection-request-list .shadcn-list-button > span:last-child > span:first-child {
-  font-size: 10.9px;
-  line-height: 1.25;
+  line-height: 16px;
 }
 
 /* Keep the titlebar draggable across the tab strip while preserving clicks on tab labels/actions. */

@@ -25,7 +25,7 @@ function registerGrpcMockIpc() {
 
   ipcMain.handle("mock-server:update", async (_event, payload) => {
     try {
-      return okResponse(updateActiveMockServer(payload || {}, "ui"));
+      return okResponse(await updateActiveMockServer(payload || {}, "ui"));
     } catch (error) {
       return errorResponse(error);
     }

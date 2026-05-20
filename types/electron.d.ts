@@ -1,4 +1,5 @@
 import type { GrpcEvent, GrpcResult, MetadataPair, ProtoSourceFile, RpcMethodInfo } from "@/lib/types";
+import type { WebSocketMockLog } from "@/app/playground/shared/workbench-types";
 
 declare global {
   interface Window {
@@ -40,6 +41,7 @@ declare global {
       isAvailable: boolean;
       start?: (payload: {
         port: number;
+        bindHost?: string;
         protoFiles: ProtoSourceFile[];
         methods: RpcMethodInfo[];
         scenarios: unknown[];
@@ -51,6 +53,11 @@ declare global {
         ok: boolean;
         port?: number;
         url?: string;
+        bindHost?: string;
+        bindAddress?: string;
+        localTarget?: string;
+        apisixTarget?: string;
+        reachableTargets?: Array<{ label: string; host: string; target: string }>;
         scenarioCount?: number;
         methodCount?: number;
         activeScenarioIds?: Record<string, string>;
@@ -59,17 +66,33 @@ declare global {
         error?: string;
       }>;
       update?: (payload: {
+        port?: number;
+        bindHost?: string;
+        protoFiles?: ProtoSourceFile[];
+        methods?: RpcMethodInfo[];
         scenarios: unknown[];
         streamDefaults?: { intervalMs?: number; loop?: boolean; maxLoops?: number };
         activeScenarioIds?: Record<string, string>;
         enabledMethods?: Record<string, boolean>;
+        workspaceDirectory?: string;
       }) => Promise<{
         ok: boolean;
+        running?: boolean;
+        restarted?: boolean;
+        port?: number;
+        url?: string;
+        bindHost?: string;
+        bindAddress?: string;
+        localTarget?: string;
+        apisixTarget?: string;
+        reachableTargets?: Array<{ label: string; host: string; target: string }>;
         scenarioCount?: number;
+        methodCount?: number;
         activeScenarioIds?: Record<string, string>;
         enabledMethods?: Record<string, boolean>;
         configVersion?: number;
         updatedAt?: string;
+        message?: string;
         error?: string;
       }>;
       stop?: () => Promise<{ ok: boolean; message?: string }>;
@@ -77,6 +100,11 @@ declare global {
         running: boolean;
         port?: number;
         url?: string;
+        bindHost?: string;
+        bindAddress?: string;
+        localTarget?: string;
+        apisixTarget?: string;
+        reachableTargets?: Array<{ label: string; host: string; target: string }>;
         scenarioCount?: number;
         methodCount?: number;
         activeScenarioIds?: Record<string, string>;
@@ -91,12 +119,28 @@ declare global {
       start?: (payload: {
         port: number;
         path?: string;
-        responseText: string;
+        responseText?: string;
         intervalMs?: number;
         loop?: boolean;
         maxLoops?: number;
         streamOnConnect?: boolean;
         sendOnMessage?: boolean;
+        scenarios?: Array<{
+          id: string;
+          requestId?: string;
+          name?: string;
+          enabled?: boolean;
+          path: string;
+          responseText: string;
+          intervalMs?: number;
+          loop?: boolean;
+          maxLoops?: number;
+          streamOnConnect?: boolean;
+          sendOnMessage?: boolean;
+          matchMode?: "always" | "contains" | "regex" | "jsonPath";
+          matchValue?: string;
+          matchJsonPath?: string;
+        }>;
       }) => Promise<{
         ok: boolean;
         running?: boolean;
@@ -110,6 +154,16 @@ declare global {
         maxLoops?: number;
         streamOnConnect?: boolean;
         sendOnMessage?: boolean;
+        scenarioCount?: number;
+        requestPaths?: Array<{
+          id: string;
+          requestId?: string;
+          name: string;
+          path: string;
+          enabled: boolean;
+          url: string;
+        }>;
+        logs?: WebSocketMockLog[];
         startedAt?: string;
         updatedAt?: string;
         error?: string;
@@ -123,6 +177,22 @@ declare global {
         maxLoops?: number;
         streamOnConnect?: boolean;
         sendOnMessage?: boolean;
+        scenarios?: Array<{
+          id: string;
+          requestId?: string;
+          name?: string;
+          enabled?: boolean;
+          path: string;
+          responseText: string;
+          intervalMs?: number;
+          loop?: boolean;
+          maxLoops?: number;
+          streamOnConnect?: boolean;
+          sendOnMessage?: boolean;
+          matchMode?: "always" | "contains" | "regex" | "jsonPath";
+          matchValue?: string;
+          matchJsonPath?: string;
+        }>;
       }) => Promise<{
         ok: boolean;
         running?: boolean;
@@ -131,7 +201,27 @@ declare global {
         messageCount?: number;
         error?: string;
       }>;
-      send?: (payload?: { responseText?: string }) => Promise<{
+      send?: (payload?: {
+        responseText?: string;
+        scenarioId?: string;
+        path?: string;
+        scenarios?: Array<{
+          id: string;
+          requestId?: string;
+          name?: string;
+          enabled?: boolean;
+          path: string;
+          responseText: string;
+          intervalMs?: number;
+          loop?: boolean;
+          maxLoops?: number;
+          streamOnConnect?: boolean;
+          sendOnMessage?: boolean;
+          matchMode?: "always" | "contains" | "regex" | "jsonPath";
+          matchValue?: string;
+          matchJsonPath?: string;
+        }>;
+      }) => Promise<{
         ok: boolean;
         sent?: number;
         running?: boolean;
@@ -152,10 +242,110 @@ declare global {
         maxLoops?: number;
         streamOnConnect?: boolean;
         sendOnMessage?: boolean;
+        scenarioCount?: number;
+        requestPaths?: Array<{
+          id: string;
+          requestId?: string;
+          name: string;
+          path: string;
+          enabled: boolean;
+          url: string;
+        }>;
+        logs?: WebSocketMockLog[];
         startedAt?: string;
         updatedAt?: string;
       }>;
     };
+
+    electronRestMock?: {
+      isAvailable: boolean;
+      start?: (payload: {
+        port: number;
+        bindHost?: string;
+        scenarios?: Array<{
+          id: string;
+          requestId?: string;
+          name: string;
+          enabled: boolean;
+          method: string;
+          path: string;
+          priority?: number;
+          status: number;
+          headers?: MetadataPair[];
+          body?: string;
+          delayMs?: number;
+          matchQuery?: MetadataPair[];
+          matchHeaders?: MetadataPair[];
+          matchBodyContains?: string;
+          matchJsonPath?: string;
+          matchJsonEquals?: string;
+        }>;
+      }) => Promise<{
+        ok: boolean;
+        running?: boolean;
+        port?: number;
+        bindHost?: string;
+        url?: string;
+        scenarioCount?: number;
+        requestCount?: number;
+        requestLog?: Array<{
+          id: string;
+          method: string;
+          path: string;
+          status: number;
+          scenarioId?: string;
+          matched: boolean;
+          durationMs: number;
+          timestamp: string;
+        }>;
+        message?: string;
+        error?: string;
+      }>;
+      update?: (payload: { port?: number; bindHost?: string; scenarios?: unknown[] }) => Promise<{
+        ok: boolean;
+        running?: boolean;
+        port?: number;
+        bindHost?: string;
+        url?: string;
+        scenarioCount?: number;
+        requestCount?: number;
+        requestLog?: Array<{
+          id: string;
+          method: string;
+          path: string;
+          status: number;
+          scenarioId?: string;
+          matched: boolean;
+          durationMs: number;
+          timestamp: string;
+        }>;
+        message?: string;
+        error?: string;
+      }>;
+      stop?: () => Promise<{ ok: boolean; running?: boolean; message?: string; error?: string }>;
+      status?: () => Promise<{
+        ok?: boolean;
+        running: boolean;
+        port?: number;
+        bindHost?: string;
+        url?: string;
+        scenarioCount?: number;
+        requestCount?: number;
+        requestLog?: Array<{
+          id: string;
+          method: string;
+          path: string;
+          status: number;
+          scenarioId?: string;
+          matched: boolean;
+          durationMs: number;
+          timestamp: string;
+        }>;
+        message?: string;
+        updatedAt?: string;
+      }>;
+    };
+
     electronWindow?: {
       isAvailable: boolean;
       minimize?: () => Promise<{ ok: boolean }>;

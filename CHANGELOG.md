@@ -1,41 +1,25 @@
 # Changelog
 
-## 1.0.0-rc.2
+## 1.0.0
 
 ### Major
 
-- Added the WebSocket workbench beta for creating WebSocket requests, opening live connections, sending messages, and reviewing connection events.
-- Added desktop WebSocket mock server beta with start, stop, and send-once controls for local testing.
-- Added WebSocket documentation beta so saved WebSocket requests can be previewed, published, and exported with the rest of the workspace docs.
+- Released Layang `1.0.0` as the first official stable version.
+- Added the full REST API workbench with method, URL, params, headers, auth, body editing, request execution, response history, docs, examples, and workspace persistence.
+- Added REST local mock scenarios with priority, delay, query/header/body matching, JSON path matching, response templates, request logs, common presets, and live reload.
+- Added the WebSocket workbench for saved WebSocket requests, live ws/wss connections, message sending, event review, benchmark exports, generated docs, and desktop-managed mock responses.
+- Included the complete gRPC and gRPC-Web workflow with proto import, service/method browsing, unary and server-streaming calls, metadata, response history, docs, tests, benchmarks, and local mock scenarios.
 
 ### Minor
 
-- Improved workspace-first API collections so gRPC and WebSocket requests can live together in the same project.
-- Added WebSocket benchmark export support for early latency checks.
-- Refined mock, docs, examples, and sidebar workflows for larger API workspaces.
-- Moved the dark mode control to the bottom of the sidebar.
-- Updated minor component view styling.
+- Added guide files for REST, WebSocket, and gRPC mock scenarios.
+- Improved APISIX/local network mock workflows with configurable bind IP support.
+- Improved workspace-first API collections so REST, WebSocket, gRPC, and gRPC-Web requests can live together in the same project.
 - Expanded Electron IPC and service boundaries used by desktop-only mock server features.
+- Updated project version to `1.0.0`.
 
-### Beta Notes
+### Notes
 
-- WebSocket support is still beta. Expect API and workspace schema details to change before the stable `1.0.0` release.
-- WebSocket mock behavior is intended for local development and early feedback, not production traffic.
-
-
-## 1.0.0-rc.1
-
-### Added
-
-- Initial release of Layang.
-- Added local-first workspace support with portable workspace folders.
-- Added `.proto` import with service, method, request type, and response type browsing.
-- Added desktop gRPC and gRPC-Web client.
-- Added support for unary and server-streaming calls.
-- Added saved request tabs, metadata, environments, examples, tests, response history, and docs metadata.
-- Added per-method mock scenario editor.
-- Added local mock server support from the desktop app.
-- Added latency benchmark runner with JSON report export.
-- Added Markdown and HTML API documentation generation.
-- Added CLI support for validating workspaces, listing saved requests, checking mock scenarios, and running native gRPC requests.
-- Added Windows desktop build and installer workflow.
+- REST, WebSocket, gRPC, and gRPC-Web workflows are now part of the official `1.0.0` release.
+- Local mock behavior is intended for local and internal development.
+- Bruno import/export is not included in this release.
