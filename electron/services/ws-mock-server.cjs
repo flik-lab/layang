@@ -69,6 +69,7 @@ async function startWebSocketMockServer(payload) {
       buffer: Buffer.alloc(0),
       timer: null,
       sentCount: 0,
+      streamSentCount: 0,
       sentByScenario: new Map(),
       manualSentByScenario: new Map(),
       lastIncoming: "",
@@ -140,7 +141,7 @@ function updateWebSocketMockServer(payload) {
     `Server config updated (${activeWsMockServer.config.scenarios.length} scenario(s)).`,
   );
   for (const client of activeWsMockServer.clients) {
-    const scenario = getClientWebSocketMockScenario(activeWsMockServer, client);
+    const scenario = getLiveWebSocketMockStreamScenario(activeWsMockServer, client);
     if (!scenario) {
       cleanupWebSocketMockClient(activeWsMockServer, client);
       try {
@@ -151,9 +152,13 @@ function updateWebSocketMockServer(payload) {
       }
       continue;
     }
-    if (scenario.streamOnConnect && !client.timer)
+    if (scenario.streamOnConnect) {
+      if (client.timer) {
+        clearTimeout(client.timer);
+        client.timer = null;
+      }
       startWebSocketMockPeriodicStream(activeWsMockServer, client, scenario);
-    if (!scenario.streamOnConnect && client.timer) {
+    } else if (client.timer) {
       clearTimeout(client.timer);
       client.timer = null;
       appendWebSocketMockLog(activeWsMockServer, "skip", `Periodic stopped for ${scenario.name}.`, {
@@ -395,6 +400,15 @@ function getClientWebSocketMockScenario(state, client) {
   );
 }
 
+function getLiveWebSocketMockStreamScenario(state, client) {
+  const liveScenario = findWebSocketMockScenario(state.config, client.path, { preferPeriodic: true });
+  if (liveScenario) {
+    client.scenarioId = liveScenario.id;
+    return liveScenario;
+  }
+  return getClientWebSocketMockScenario(state, client);
+}
+
 function cleanupWebSocketMockClient(state, client) {
   if (client.closed) return;
   client.closed = true;
@@ -483,28 +497,18 @@ function readWebSocketFrame(buffer) {
 
 function startWebSocketMockPeriodicStream(state, client, scenarioOverride) {
   if (client.closed || client.timer) return;
-  const initialScenario = scenarioOverride || getClientWebSocketMockScenario(state, client);
+  const initialScenario = scenarioOverride || getLiveWebSocketMockStreamScenario(state, client);
   if (initialScenario) client.scenarioId = initialScenario.id;
   const tick = () => {
     if (client.closed) return;
-    const scenario = getClientWebSocketMockScenario(state, client);
-    if (!scenario) {
+    const scenario = getLiveWebSocketMockStreamScenario(state, client);
+    if (!scenario || !scenario.streamOnConnect) {
       client.timer = null;
       return;
     }
-    const scenarioSentCount = getScenarioSentCount(client, scenario.id);
-    const maxLoops = scenario.maxLoops;
     const sequenceLength = getWebSocketMockMessageSequence(scenario.responseText).length;
-    if (maxLoops > 0 && scenarioSentCount >= maxLoops) {
-      client.timer = null;
-      appendWebSocketMockLog(state, "skip", `Periodic completed max loop for ${scenario.name}.`, {
-        path: scenario.path,
-        scenarioId: scenario.id,
-        requestId: scenario.requestId,
-      });
-      return;
-    }
-    if (!scenario.loop && scenarioSentCount >= sequenceLength) {
+    const sentCount = getStreamSentCount(client);
+    if (!canSendWebSocketStreamMessage(scenario, sentCount, sequenceLength)) {
       client.timer = null;
       appendWebSocketMockLog(state, "skip", `Periodic completed sequence for ${scenario.name}.`, {
         path: scenario.path,
@@ -514,19 +518,28 @@ function startWebSocketMockPeriodicStream(state, client, scenarioOverride) {
       return;
     }
     const sent = sendWebSocketMockResponse(state, client, "stream", scenario);
-    const latestCount = getScenarioSentCount(client, scenario.id);
-    if (
-      sent &&
-      scenario.streamOnConnect &&
-      (scenario.loop || (maxLoops > 0 ? latestCount < maxLoops : latestCount < sequenceLength))
-    ) {
+    const latestCount = getStreamSentCount(client);
+    if (sent && canScheduleNextWebSocketStreamTick(scenario, latestCount, sequenceLength)) {
       client.timer = setTimeout(tick, Math.max(1, scenario.intervalMs || 1000));
     } else {
       client.timer = null;
     }
   };
-  const scenario = initialScenario || getClientWebSocketMockScenario(state, client);
+  const scenario = initialScenario || getLiveWebSocketMockStreamScenario(state, client);
   client.timer = setTimeout(tick, Math.max(1, scenario?.intervalMs || 1000));
+}
+
+function canSendWebSocketStreamMessage(scenario, sentCount, sequenceLength) {
+  if (!sequenceLength) return false;
+  if (!scenario.loop) return sentCount < sequenceLength;
+  const maxLoops = Math.max(0, Math.floor(Number(scenario.maxLoops || 0)));
+  if (maxLoops <= 0) return true;
+  return sentCount < sequenceLength * (maxLoops + 1);
+}
+
+function canScheduleNextWebSocketStreamTick(scenario, sentCount, sequenceLength) {
+  if (!scenario.streamOnConnect) return false;
+  return canSendWebSocketStreamMessage(scenario, sentCount, sequenceLength);
 }
 
 function sendWebSocketMockResponse(state, client, source, scenarioOverride) {
@@ -535,6 +548,7 @@ function sendWebSocketMockResponse(state, client, source, scenarioOverride) {
   const payload = resolveWebSocketMockPayload(state, client, source, scenario);
   if (payload === null) return false;
   if (source === "manual") incrementManualScenarioSentCount(client, scenario.id);
+  else if (source === "stream") incrementStreamSentCount(client);
   else incrementScenarioSentCount(client, scenario.id);
   client.sentCount += 1;
   state.messageCount += 1;
@@ -563,11 +577,15 @@ function resolveWebSocketMockPayload(state, client, source, scenarioOverride) {
   const messages = getWebSocketMockMessageSequence(scenario.responseText);
   if (!messages.length) return null;
   const isManualSend = source === "manual";
+  const isStreamSend = source === "stream";
   const sentCount = isManualSend
     ? getManualScenarioSentCount(client, scenario.id)
-    : getScenarioSentCount(client, scenario.id);
-  if (!isManualSend && scenario.maxLoops > 0 && sentCount >= scenario.maxLoops) return null;
-  if (!isManualSend && !scenario.loop && sentCount >= messages.length) return null;
+    : isStreamSend
+      ? getStreamSentCount(client)
+      : getScenarioSentCount(client, scenario.id);
+  if (isStreamSend && !canSendWebSocketStreamMessage(scenario, sentCount, messages.length)) return null;
+  if (!isManualSend && !isStreamSend && scenario.maxLoops > 0 && sentCount >= scenario.maxLoops) return null;
+  if (!isManualSend && !isStreamSend && !scenario.loop && sentCount >= messages.length) return null;
   const index = scenario.loop || isManualSend ? sentCount % messages.length : sentCount;
   return renderWebSocketMockTemplate(messages[index] ?? messages[messages.length - 1], {
     count: sentCount + 1,
@@ -693,6 +711,14 @@ function parseJsonSafe(value) {
   } catch {
     return null;
   }
+}
+
+function getStreamSentCount(client) {
+  return Math.max(0, Math.floor(Number(client.streamSentCount || 0)));
+}
+
+function incrementStreamSentCount(client) {
+  client.streamSentCount = getStreamSentCount(client) + 1;
 }
 
 function getScenarioSentCount(client, scenarioId) {

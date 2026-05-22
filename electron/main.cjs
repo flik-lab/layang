@@ -183,7 +183,7 @@ async function writeWorkspaceFolder(directoryPath, bundle) {
     port: normalizeMockServerPort(mockServerProject.port || 50055),
     format: mockServerProject.format === "yaml" ? "yaml" : "json",
     streamDefaults: normalizeRuntimeStreamSettings(mockServerProject.streamDefaults || {}, {
-      intervalMs: 500,
+      intervalMs: 1000,
       loop: false,
       maxLoops: 0,
     }),
@@ -490,7 +490,7 @@ async function readMockServerFromFolder(mocksDir) {
   const formatDefault = serverConfig.format === "yaml" ? "yaml" : "json";
   const streamDefaults = normalizeRuntimeStreamSettings(
     serverConfig.streamDefaults || serverConfig.stream_defaults || {},
-    { intervalMs: 500, loop: false, maxLoops: 0 },
+    { intervalMs: 1000, loop: false, maxLoops: 0 },
   );
   const selectedScenarioIds = normalizeActiveScenarioIds(
     serverConfig.selectedScenarioIds ||

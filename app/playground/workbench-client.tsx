@@ -162,6 +162,7 @@ import {
 import {
   buildDefaultMockScenario,
   buildMockMappingRows,
+  clearInheritedMockStreamOverridesForDefaultChange,
   createDefaultMockServerProject,
   currentFileEmptyEditorText,
   ensureUniqueMockScenarioId,
@@ -4556,6 +4557,7 @@ export default function PlaygroundPage() {
   function handleMockScenarioSelectChange(method: RpcMethodInfo, scenarioId: string) {
     const key = methodKey(method);
     if (!scenarioId) return;
+    setMockScenarioEditorDraft(null);
     setMockServer((current) => ({
       ...current,
       selectedScenarioIds: { ...current.selectedScenarioIds, [key]: scenarioId },
@@ -4737,12 +4739,17 @@ export default function PlaygroundPage() {
    */
   function handleMockGlobalStreamBaseChange(patch: Partial<MockStreamSettings>) {
     setMockServer((current) => {
+      const previousBase = current.streamDefaults;
       const nextBase = normalizeMockStreamSettings(
         { ...current.streamDefaults, ...patch },
         current.streamDefaults,
       ) as Required<Pick<MockStreamSettings, "intervalMs" | "loop" | "maxLoops">>;
       if (patch.loop === true && patch.maxLoops === undefined && (nextBase.maxLoops ?? 0) <= 1) nextBase.maxLoops = 0;
-      return { ...current, streamDefaults: nextBase, updatedAt: new Date().toISOString() };
+      const changedKeys = (["intervalMs", "loop", "maxLoops"] as Array<
+        keyof Pick<MockStreamSettings, "intervalMs" | "loop" | "maxLoops">
+      >).filter((key) => Object.hasOwn(patch, key) && previousBase[key] !== nextBase[key]);
+      const nextProject = clearInheritedMockStreamOverridesForDefaultChange(current, previousBase, changedKeys);
+      return { ...nextProject, streamDefaults: nextBase, updatedAt: new Date().toISOString() };
     });
   }
 
@@ -4980,9 +4987,6 @@ export default function PlaygroundPage() {
         configVersion: result.configVersion,
         updatedAt: new Date().toISOString(),
       });
-      setNativeTarget(localTarget);
-      setTransportMode("native-grpc");
-      updateActiveSession({ transportMode: "native-grpc", nativeTarget: localTarget });
       showToast(
         result.apisixTarget
           ? `Mock server running. APISIX upstream target: ${result.apisixTarget}.`
@@ -7189,6 +7193,7 @@ export default function PlaygroundPage() {
                           status={mockServerStatus}
                           currentFile={currentMockFile}
                           currentParseResult={currentMockParse}
+                          editorInstanceKey={currentMockEditorKey}
                           editorText={currentMockEditorText}
                           streamDefaults={mockServer.streamDefaults}
                           mappingRows={mockMappingRows}

@@ -25,6 +25,8 @@ import type {
   ProjectData,
 } from "../../shared/workbench-types";
 
+const legacyGeneratedMockStreamIntervalMs = 500;
+
 export function createDefaultMockServerProject(): MockServerProject {
   return {
     port: defaultMockPort,
@@ -293,6 +295,86 @@ export function applyMockScenarioStreamDefaults(scenario: MockScenario, defaults
       maxLoops: scenario.stream.maxLoops ?? defaults.maxLoops,
     },
   };
+}
+
+/**
+ * Removes legacy generated stream overrides when the global stream base changes.
+ * Older generated server-streaming scenarios stored the default 500ms/loop=false
+ * values directly in each scenario, which made later global changes ineffective.
+ * If a scenario field still matches the previous base, it is treated as inherited
+ * and removed so the running runtime uses the new global defaults without
+ * replaying or recreating the stream. Scenario-specific overrides that differ
+ * from the previous base are preserved.
+ */
+export function clearInheritedMockStreamOverridesForDefaultChange(
+  project: MockServerProject,
+  previousDefaults: Required<Pick<MockStreamSettings, "intervalMs" | "loop" | "maxLoops">>,
+  changedKeys: Array<keyof Pick<MockStreamSettings, "intervalMs" | "loop" | "maxLoops">>,
+): MockServerProject {
+  const changed = new Set(changedKeys);
+  const stripTrackedOverrides = (scenario: MockScenario): MockScenario => {
+    if (!scenario.stream) return scenario;
+    const nextStream = { ...scenario.stream };
+    let changedScenario = false;
+
+    if (
+      changed.has("intervalMs") &&
+      (nextStream.intervalMs === previousDefaults.intervalMs ||
+        nextStream.intervalMs === legacyGeneratedMockStreamIntervalMs)
+    ) {
+      nextStream.intervalMs = undefined;
+      changedScenario = true;
+    }
+    if (changed.has("loop") && nextStream.loop === previousDefaults.loop) {
+      nextStream.loop = undefined;
+      changedScenario = true;
+    }
+    if (changed.has("maxLoops") && nextStream.maxLoops === previousDefaults.maxLoops) {
+      nextStream.maxLoops = undefined;
+      changedScenario = true;
+    }
+
+    return changedScenario ? { ...scenario, stream: nextStream } : scenario;
+  };
+
+  let changedProject = false;
+  const methodFiles = { ...(project.methodFiles ?? {}) };
+  for (const [key, file] of Object.entries(methodFiles)) {
+    const parsed = parseMockScenarioText(file.scenarioText, file.format, project.port);
+    if (!parsed.ok) continue;
+    let changedFile = false;
+    const scenarios = parsed.bundle.scenarios.map((scenario) => {
+      const nextScenario = stripTrackedOverrides(scenario);
+      if (nextScenario !== scenario) changedFile = true;
+      return nextScenario;
+    });
+    if (!changedFile) continue;
+    methodFiles[key] = {
+      ...file,
+      scenarioText: formatMockScenarioBundle({ ...parsed.bundle, scenarios }, file.format),
+      updatedAt: new Date().toISOString(),
+    };
+    changedProject = true;
+  }
+
+  let scenarioText = project.scenarioText;
+  if (scenarioText?.trim()) {
+    const parsed = parseMockScenarioText(scenarioText, project.format, project.port);
+    if (parsed.ok) {
+      let changedLegacy = false;
+      const scenarios = parsed.bundle.scenarios.map((scenario) => {
+        const nextScenario = stripTrackedOverrides(scenario);
+        if (nextScenario !== scenario) changedLegacy = true;
+        return nextScenario;
+      });
+      if (changedLegacy) {
+        scenarioText = formatMockScenarioBundle({ ...parsed.bundle, scenarios }, project.format);
+        changedProject = true;
+      }
+    }
+  }
+
+  return changedProject ? { ...project, methodFiles, scenarioText, updatedAt: new Date().toISOString() } : project;
 }
 
 /**
@@ -583,6 +665,23 @@ export function resolveMockActiveScenarioIds(
   return output;
 }
 
+function isLegacyGeneratedMockScenarioRecord(value: Record<string, unknown>): boolean {
+  const description = typeof value.description === "string" ? value.description.toLowerCase() : "";
+  return description.includes("generated from proto mapping");
+}
+
+function stripLegacyGeneratedMockStreamDefaults(
+  value: Record<string, unknown>,
+  stream: MockScenario["stream"],
+): MockScenario["stream"] {
+  if (!stream || !isLegacyGeneratedMockScenarioRecord(value)) return stream;
+  const next = { ...stream };
+  if (next.intervalMs === legacyGeneratedMockStreamIntervalMs) delete next.intervalMs;
+  if (next.loop === false) delete next.loop;
+  if (next.maxLoops === 0) delete next.maxLoops;
+  return next;
+}
+
 /**
  * Normalizes one mock scenario while retaining compatible input/output aliases.
  */
@@ -602,7 +701,7 @@ export function normalizeMockScenario(value: unknown, index: number): MockScenar
     input: normalizeMockMatcher(value.input ?? value.match),
     response: normalizeMockScenarioResponse(value.response ?? value.output),
     output: normalizeMockScenarioResponse(value.output ?? value.response),
-    stream: normalizeMockStream(value.stream),
+    stream: stripLegacyGeneratedMockStreamDefaults(value, normalizeMockStream(value.stream)),
   };
 }
 
@@ -748,7 +847,7 @@ export function buildDefaultMockScenario(
   root: protobuf.Root | undefined | null,
   index: number,
   requestJsonOverride?: string,
-  streamDefaults: MockStreamSettings = createDefaultMockStreamDefaults(),
+  _streamDefaults: MockStreamSettings = createDefaultMockStreamDefaults(),
 ): MockScenario {
   const requestExample = parseObjectOrFallback(requestJsonOverride, () =>
     root ? safeGenerateRandomExample(root, method.requestType) : {},
@@ -768,9 +867,6 @@ export function buildDefaultMockScenario(
         "Generated from proto mapping. Edit input equals/contains OR matchers and stream responses as needed.",
       input,
       stream: {
-        intervalMs: streamDefaults.intervalMs,
-        loop: streamDefaults.loop,
-        maxLoops: streamDefaults.maxLoops,
         responses: [
           { data: decorateGeneratedResponse(responseExample, 1) },
           { data: decorateGeneratedResponse(responseExample, 2) },
