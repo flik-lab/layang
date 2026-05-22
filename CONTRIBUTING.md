@@ -27,6 +27,31 @@ Run the Electron desktop app:
 pnpm run desktop
 ```
 
+Build the production app:
+
+```bash
+pnpm run build
+```
+
+Create the Windows MSI installer:
+
+```bash
+pnpm run desktop:setup
+```
+
+Install WiX Toolset v3 first on Windows if you need MSI builds:
+
+```powershell
+choco install wixtoolset --version=3.14.0
+```
+
+Create Linux packages:
+
+```bash
+pnpm run desktop:deb
+pnpm run desktop:rpm
+```
+
 Run checks before opening a pull request:
 
 ```bash

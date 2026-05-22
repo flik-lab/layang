@@ -1,15 +1,32 @@
+<p align="center">
+  <img src="github-pages/assets/layang-logo.png" alt="Layang logo" width="120" />
+</p>
+
 # Layang
 
-[![Website](https://img.shields.io/badge/website-open-blue)](https://flik-lab.github.io/layang/)
+[![Website](https://img.shields.io/badge/website-layang.mff.web.id-blue)](https://layang.mff.web.id/)
 [![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/flik-lab/layang/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
-
 
 Layang is a workspace-based API workbench for testing, mocking, benchmarking, documenting, and automating APIs across gRPC, gRPC-Web, WebSocket, and REST.
 
 Layang `1.0.0` is the first official stable release. It includes the full workspace workflow for REST, WebSocket, and gRPC APIs, with local mocks, scenario matching, response templates, request logs, generated docs, benchmarking, and CLI automation.
 
 ![Layang workbench](github-pages/assets/layang-app-screenshot.png)
+
+## Download
+
+- Website: [layang.mff.web.id](https://layang.mff.web.id/)
+- Windows and release files: [GitHub Releases](https://github.com/flik-lab/layang/releases)
+- Source code: [github.com/flik-lab/layang](https://github.com/flik-lab/layang)
+
+## What Layang Does
+
+- Test gRPC, gRPC-Web, WebSocket, and REST APIs in one desktop workspace.
+- Save requests, examples, docs, environments, mocks, and history as readable files.
+- Run local mock servers for gRPC, WebSocket, and REST workflows.
+- Generate Markdown or HTML docs from proto files, saved examples, mocks, and responses.
+- Run CLI checks for CI/CD against the same workspace used in the desktop app.
 
 ## Features
 
@@ -28,6 +45,15 @@ Layang `1.0.0` is the first official stable release. It includes the full worksp
 
 The official `1.0.0` release brings REST, WebSocket, gRPC, and gRPC-Web into one stable workspace experience. REST support includes richer mock scenarios, query/header/body matching, response templates, request logs, and guide files for REST, gRPC, and WebSocket mocking.
 
+## Install
+
+For most users, the simplest path is:
+
+1. Download the latest Windows installer from [GitHub Releases](https://github.com/flik-lab/layang/releases).
+2. Run the installer.
+3. Open Layang from Start Menu or Desktop shortcut.
+4. On first launch, choose the workspace folder location you want to use.
+
 ## Mocking And Streaming
 
 ![Layang mock streaming](github-pages/assets/layang-mock-stream.png)
@@ -39,53 +65,6 @@ Mock scenarios live with the workspace and can be edited as JSON/YAML. Server-st
 ![Layang documentation](github-pages/assets/layang-app-documentation.png)
 
 Generated docs can include proto metadata, saved examples, mock scenarios, and the latest saved responses. Export them as Markdown or HTML for static publishing.
-
-## Development
-
-Install dependencies with pnpm:
-
-```powershell
-pnpm install
-```
-
-Run the web app:
-
-```powershell
-pnpm run dev
-```
-
-Run the desktop app:
-
-```powershell
-pnpm run desktop
-```
-
-Build the app:
-
-```powershell
-pnpm run build
-```
-
-Create the Windows installer:
-
-```powershell
-pnpm run desktop:setup
-```
-
-Create Linux packages:
-
-```powershell
-pnpm run desktop:deb
-pnpm run desktop:rpm
-```
-
-## Technology Stack
-
-- TypeScript, React 19, Next.js 16, and Tailwind CSS for the workbench UI.
-- Electron 42 for the desktop app, native bridges, and local mock server workflows.
-- `@grpc/grpc-js`, `@grpc/proto-loader`, and `protobufjs` for protobuf and native gRPC support.
-- Browser gRPC-Web plus WebSocket support for transport testing.
-- Biome, Node.js test runner, and pnpm for formatting, linting, testing, and package management.
 
 ## CLI
 
@@ -109,19 +88,15 @@ The default desktop workspace is:
 Documents/Layang/Workspace
 ```
 
-## Checks
+You can also choose a custom workspace folder on first launch in the desktop app.
 
-```powershell
-pnpm run typecheck
-pnpm run test:ci
-pnpm run lint
-pnpm run docs:build
-```
+## For Contributors
+
+Development setup, local build commands, and packaging notes are in [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 
 MIT
-
 
 ## Mock Guides
 
