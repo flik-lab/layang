@@ -55,7 +55,10 @@ export function mergeEnvironments(input?: EnvironmentConfig[]): EnvironmentConfi
         label: env.label || fallback?.label || env.key,
         grpcWebBaseUrl: env.grpcWebBaseUrl || fallback?.grpcWebBaseUrl || "",
         nativeTarget: env.nativeTarget || fallback?.nativeTarget || "",
-        websocketUrl: env.websocketUrl || fallback?.websocketUrl || (env.grpcWebBaseUrl?.startsWith("ws") ? env.grpcWebBaseUrl : ""),
+        websocketUrl:
+          env.websocketUrl ||
+          fallback?.websocketUrl ||
+          (env.grpcWebBaseUrl?.startsWith("ws") ? env.grpcWebBaseUrl : ""),
         restBaseUrl: env.restBaseUrl || fallback?.restBaseUrl || env.grpcWebBaseUrl || "",
       });
     }

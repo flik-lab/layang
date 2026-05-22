@@ -76,17 +76,32 @@ export function WindowControls() {
         </IconButton>
       </Tooltip>
       <Tooltip title="Minimize">
-        <IconButton size="small" aria-label="Minimize window" onClick={() => void window.electronWindow?.minimize?.()} sx={iconButtonSx}>
+        <IconButton
+          size="small"
+          aria-label="Minimize window"
+          onClick={() => void window.electronWindow?.minimize?.()}
+          sx={iconButtonSx}
+        >
           <Remove sx={{ fontSize: 17 }} />
         </IconButton>
       </Tooltip>
       <Tooltip title="Maximize">
-        <IconButton size="small" aria-label="Maximize or restore window" onClick={() => void window.electronWindow?.maximizeToggle?.()} sx={iconButtonSx}>
+        <IconButton
+          size="small"
+          aria-label="Maximize or restore window"
+          onClick={() => void window.electronWindow?.maximizeToggle?.()}
+          sx={iconButtonSx}
+        >
           <CropSquare sx={{ fontSize: 14 }} />
         </IconButton>
       </Tooltip>
       <Tooltip title="Close">
-        <IconButton size="small" aria-label="Close window" onClick={() => void window.electronWindow?.close?.()} sx={iconButtonSx}>
+        <IconButton
+          size="small"
+          aria-label="Close window"
+          onClick={() => void window.electronWindow?.close?.()}
+          sx={iconButtonSx}
+        >
           <Close sx={{ fontSize: 16 }} />
         </IconButton>
       </Tooltip>
@@ -190,7 +205,11 @@ export function RequestTabs({
       return;
     }
 
-    if (event.key === "Backspace" || event.key === "Delete" || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "w")) {
+    if (
+      event.key === "Backspace" ||
+      event.key === "Delete" ||
+      ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "w")
+    ) {
       event.preventDefault();
       event.stopPropagation();
       onClose(session.id);

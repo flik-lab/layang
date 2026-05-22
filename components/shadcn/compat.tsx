@@ -432,7 +432,19 @@ export function FormControl({
 }
 
 /** Native select styled like shadcn Select trigger. */
-export function Select({ value, onChange, children, sx, className, size: _size, ...props }: AnyProps) {
+export function Select({
+  value,
+  onChange,
+  children,
+  sx,
+  className,
+  size: _size,
+  displayEmpty: _displayEmpty,
+  fullWidth: _fullWidth,
+  variant: _variant,
+  label: _label,
+  ...props
+}: AnyProps) {
   const theme = useContext(ThemeContext);
   const options: Array<{ value: unknown; label: ReactNode }> = Children.toArray(children)
     .filter(isValidElement)
@@ -701,6 +713,20 @@ export function ListItemIcon({ children, sx, className, ...props }: AnyProps) {
   );
 }
 
+function typographyPropsToStyle(typographyProps: AnyProps | undefined, theme: ShadcnTheme): CSSProperties {
+  if (!typographyProps) return {};
+  const style: CSSProperties = {};
+  for (const key of ["fontSize", "fontWeight", "lineHeight", "letterSpacing", "maxWidth"] as const) {
+    const value = typographyProps[key];
+    if (value !== undefined && value !== null) {
+      (style as Record<string, unknown>)[key] = normalizeCssValue(key, value, theme);
+    }
+  }
+  if (typographyProps.color !== undefined)
+    style.color = resolveColor(typographyProps.color, theme) ?? typographyProps.color;
+  return style;
+}
+
 export function ListItemText({
   primary,
   secondary,
@@ -711,16 +737,35 @@ export function ListItemText({
   ...props
 }: AnyProps) {
   const theme = useContext(ThemeContext);
+  const primaryStyle = mergeStyles(
+    typographyPropsToStyle(primaryTypographyProps, theme),
+    sxToStyle(primaryTypographyProps?.sx, theme),
+    primaryTypographyProps?.style,
+  );
+  const secondaryStyle = mergeStyles(
+    typographyPropsToStyle(secondaryTypographyProps, theme),
+    sxToStyle(secondaryTypographyProps?.sx, theme),
+    secondaryTypographyProps?.style,
+  );
   return (
-    <span {...props} className={cn("min-w-0 flex-1", className)} style={mergeStyles(sxToStyle(sx, theme), props.style)}>
+    <span
+      {...props}
+      className={cn("min-w-0 flex-1 overflow-hidden", className)}
+      style={mergeStyles(sxToStyle(sx, theme), props.style)}
+    >
       <span
         title={primaryTypographyProps?.title}
-        className={cn("block truncate text-[12px]", primaryTypographyProps?.noWrap && "truncate")}
+        className={cn("block truncate text-[12px] leading-4", primaryTypographyProps?.noWrap && "truncate")}
+        style={primaryStyle}
       >
         {primary}
       </span>
       {secondary ? (
-        <span title={secondaryTypographyProps?.title} className="block truncate text-[11px] text-muted-foreground">
+        <span
+          title={secondaryTypographyProps?.title}
+          className="block truncate text-[11px] leading-4 text-muted-foreground"
+          style={secondaryStyle}
+        >
           {secondary}
         </span>
       ) : null}

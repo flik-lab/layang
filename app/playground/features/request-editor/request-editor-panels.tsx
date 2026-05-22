@@ -229,7 +229,8 @@ export function CodeTextField({
             border: 0,
           }}
         >
-          Press Tab for 2 spaces, Shift+Tab to unindent, Shift+Alt+F to format, F11 to toggle full screen, Esc to close full screen, and quote keys to wrap selected text.
+          Press Tab for 2 spaces, Shift+Tab to unindent, Shift+Alt+F to format, F11 to toggle full screen, Esc to close
+          full screen, and quote keys to wrap selected text.
         </span>
         <div
           className="response-selectable code-editor__body"
@@ -337,14 +338,17 @@ export function CodeTextField({
         >
           <span>{fullscreenTitle ?? `${language.toUpperCase()} editor`}</span>
           <Tooltip title="Close full screen editor (Esc or F11)">
-            <IconButton size="small" aria-label="Close full screen editor (Esc or F11)" title="Close full screen editor (Esc or F11)" onClick={() => setFullscreenOpen(false)}>
+            <IconButton
+              size="small"
+              aria-label="Close full screen editor (Esc or F11)"
+              title="Close full screen editor (Esc or F11)"
+              onClick={() => setFullscreenOpen(false)}
+            >
               <Close sx={{ fontSize: 16 }} />
             </IconButton>
           </Tooltip>
         </DialogTitle>
-        <DialogContent sx={{ p: 1.2 }}>
-          {renderEditor({ fullscreen: true })}
-        </DialogContent>
+        <DialogContent sx={{ p: 1.2 }}>{renderEditor({ fullscreen: true })}</DialogContent>
       </Dialog>
     </>
   );
@@ -377,7 +381,6 @@ type TextareaEdit = {
   selectionStart: number;
   selectionEnd: number;
 };
-
 
 function isEditorQuoteKey(key: string): key is "'" | '"' {
   return key === "'" || key === '"';

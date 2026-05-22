@@ -1,443 +1,536 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Layang - Workspace-based API workbench</title>
-    <meta
-      name="description"
-      content="Layang is a workspace-based API workbench for testing, mocking, benchmarking, documenting, and automating protobuf and gRPC APIs."
-    />
-    <meta
-      property="og:title"
-      content="Layang - Workspace-based API workbench"
-    />
-    <meta
-      property="og:description"
-      content="Test gRPC and gRPC-Web APIs, edit mock streaming scenarios, generate documentation, and run workspace checks from the CLI."
-    />
-    <meta property="og:image" content="assets/layang-app-screenshot.png" />
-    <link rel="icon" href="assets/layang-logo.png" />
-    <link rel="stylesheet" href="assets/styles.css" />
-  </head>
-  <body>
-    <header class="navbar">
-      <div class="container nav-inner">
-        <a class="brand" href="index.html" aria-label="Layang home">
-          <img src="assets/layang-logo.png" alt="Layang logo" />
-          <span>Layang</span>
-        </a>
-        <nav class="nav-links" aria-label="Main navigation">
-          <a href="#app">App</a>
-          <a href="#features">Features</a>
-          <a href="#websocket">WebSocket beta</a>
-          <a href="#mocking">Mocking</a>
-          <a href="#documentation">Documentation</a>
-          <a href="#cli">CLI</a>
-        </nav>
-        <div class="nav-actions">
-          <a class="btn star-btn" href="https://github.com/flik-lab/layang" aria-label="Star Layang on GitHub">
-            <span class="star-icon" aria-hidden="true">&#9733;</span>
-            Star
-            <strong class="star-count" data-github-stars>5</strong>
-          </a>
-          <a class="btn primary" href="https://github.com/flik-lab/layang/releases">Download</a>
-        </div>
+ <head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Layang - Workspace-based API workbench</title>
+  <meta
+   name="description"
+   content="Layang is a workspace-based API workbench for testing, mocking, benchmarking, documenting, and automating REST, WebSocket, gRPC, and gRPC-Web APIs."
+  />
+  <meta
+   name="robots"
+   content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1"
+  />
+  <link rel="canonical" href="https://layang.mff.web.id/" />
+  <meta
+   property="og:title"
+   content="Layang - Workspace-based API workbench"
+  />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://layang.mff.web.id/" />
+  <meta
+   property="og:description"
+   content="Test REST, WebSocket, gRPC, and gRPC-Web APIs, edit local mock scenarios, generate documentation, benchmark requests, and run workspace checks from the CLI."
+  />
+  <meta
+   property="og:image"
+   content="https://layang.mff.web.id/assets/layang-app-screenshot.png"
+  />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta
+   name="twitter:title"
+   content="Layang - Workspace-based API workbench"
+  />
+  <meta
+   name="twitter:description"
+   content="Test REST, WebSocket, gRPC, and gRPC-Web APIs from one workspace with local mocks, docs, benchmarks, and CLI automation."
+  />
+  <meta
+   name="twitter:image"
+   content="https://layang.mff.web.id/assets/layang-app-screenshot.png"
+  />
+  <link rel="icon" href="assets/layang-logo.png" />
+  <link rel="stylesheet" href="assets/styles.css" />
+  <script type="application/ld+json">
+   {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Layang",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Windows, Linux, macOS",
+    "url": "https://layang.mff.web.id/",
+    "downloadUrl": "https://github.com/flik-lab/layang/releases",
+    "image": "https://layang.mff.web.id/assets/layang-app-screenshot.png",
+    "description": "Layang is a workspace-based API workbench for testing, mocking, benchmarking, documenting, and automating REST, WebSocket, gRPC, and gRPC-Web APIs.",
+    "softwareVersion": "1.0.0",
+    "author": {
+     "@type": "Organization",
+     "name": "Layang contributors"
+    },
+    "offers": {
+     "@type": "Offer",
+     "price": "0",
+     "priceCurrency": "USD"
+    }
+   }
+  </script>
+ </head>
+ <body>
+  <header class="navbar">
+   <div class="container nav-inner">
+    <a class="brand" href="index.html" aria-label="Layang home">
+     <img src="assets/layang-logo.png" alt="Layang logo" />
+     <span>Layang</span>
+    </a>
+    <nav class="nav-links" aria-label="Main navigation">
+     <a href="#app">App</a>
+     <a href="#features">Features</a>
+     <a href="#websocket">WebSocket</a>
+     <a href="#rest">REST</a>
+     <a href="#mocking">Mocking</a>
+     <a href="#documentation">Documentation</a>
+     <a href="#cli">CLI</a>
+    </nav>
+    <div class="nav-actions">
+     <a class="btn star-btn" href="https://github.com/flik-lab/layang" aria-label="Star Layang on GitHub">
+      <span class="star-icon" aria-hidden="true">&#9733;</span>
+      Star
+      <strong class="star-count" data-github-stars>5</strong>
+     </a>
+     <a class="btn primary" href="https://github.com/flik-lab/layang/releases">Download</a>
+    </div>
+   </div>
+  </header>
+
+  <main>
+   <section class="hero hero-centered">
+    <div class="container hero-stack">
+     <a
+      class="announcement"
+      href="https://github.com/flik-lab/layang/releases"
+     >
+      <span class="announcement-dot"></span>
+      Layang v1.0.0 is officially released
+      <span aria-hidden="true">-&gt;</span>
+     </a>
+     <h1>Test, mock, benchmark, and document APIs from one workspace.</h1>
+     <p class="hero-lead">
+      Layang is a workspace-based API workbench for REST, WebSocket,
+      gRPC, and gRPC-Web. Build requests, run local mocks, inspect
+      responses, benchmark latency, generate docs, and automate checks
+      from one portable workspace.
+     </p>
+     <div class="hero-actions centered-actions">
+      <a class="btn primary large" href="https://github.com/flik-lab/layang/releases">Download release</a>
+      <a class="btn large star-btn" href="https://github.com/flik-lab/layang" aria-label="Star Layang on GitHub">
+       <span class="star-icon" aria-hidden="true">&#9733;</span>
+       Star on GitHub
+       <strong class="star-count" data-github-stars>5</strong>
+      </a>
+     </div>
+     <div class="install-strip" aria-label="CLI command preview">
+      <span class="terminal-dot red"></span><span class="terminal-dot yellow"></span><span class="terminal-dot green"></span>
+      <code>layang run ./workspace --env dev --reporter junit</code>
+     </div>
+    </div>
+
+    <div class="container hero-product-wrap" id="app">
+     <div class="product-glow"></div>
+     <figure class="product-shot">
+      <div class="shot-toolbar">
+       <span class="traffic"></span><span class="traffic"></span><span class="traffic"></span>
+       <span>Layang Workbench</span>
       </div>
-    </header>
+      <img
+       src="assets/layang-app-screenshot.png"
+       alt="Layang desktop app screenshot showing the protobuf and request workbench"
+      />
+     </figure>
+     <div class="floating-card card-left">
+      <span class="mini-label">Workspace</span>
+      <strong>Portable project folder</strong>
+      <p>
+       Proto files, requests, docs, mocks, environments, and history stay
+       together.
+      </p>
+     </div>
+     <div class="floating-card card-right">
+      <span class="mini-label">API workbench</span>
+      <strong>Test, mock, and document APIs</strong>
+      <p>
+       Send REST, WebSocket, gRPC, and gRPC-Web requests, create mock scenarios, save
+       examples, and generate docs from one workspace.
+      </p>
+     </div>
+    </div>
+   </section>
 
-    <main>
-      <section class="hero hero-centered">
-        <div class="container hero-stack">
-          <a
-            class="announcement"
-            href="https://github.com/flik-lab/layang/releases"
-          >
-            <span class="announcement-dot"></span>
-            Layang v1.0.0 RC 2 is available with WebSocket beta
-            <span aria-hidden="true">-&gt;</span>
-          </a>
-          <h1>Test, mock, benchmark, and document APIs from one workspace.</h1>
-          <p class="hero-lead">
-            Layang is a workspace-based API workbench. The first release focuses
-            on protobuf and gRPC, with `.proto` browsing, gRPC/gRPC-Web calls,
-            mock scenarios, benchmarks, generated docs, CLI automation, and a
-            beta WebSocket workflow for early testing.
-          </p>
-          <div class="hero-actions centered-actions">
-            <a class="btn primary large" href="https://github.com/flik-lab/layang/releases">Download release</a>
-            <a class="btn large star-btn" href="https://github.com/flik-lab/layang" aria-label="Star Layang on GitHub">
-              <span class="star-icon" aria-hidden="true">&#9733;</span>
-              Star on GitHub
-              <strong class="star-count" data-github-stars>5</strong>
-            </a>
-          </div>
-          <div class="install-strip" aria-label="CLI command preview">
-            <span class="terminal-dot red"></span><span class="terminal-dot yellow"></span><span class="terminal-dot green"></span>
-            <code>layang run ./workspace --env dev --reporter junit</code>
-          </div>
-        </div>
-
-        <div class="container hero-product-wrap" id="app">
-          <div class="product-glow"></div>
-          <figure class="product-shot">
-            <div class="shot-toolbar">
-              <span class="traffic"></span><span class="traffic"></span><span class="traffic"></span>
-              <span>Layang Workbench</span>
-            </div>
-            <img
-              src="assets/layang-app-screenshot.png"
-              alt="Layang desktop app screenshot showing the protobuf and request workbench"
-            />
-          </figure>
-          <div class="floating-card card-left">
-            <span class="mini-label">Workspace</span>
-            <strong>Portable project folder</strong>
-            <p>
-              Proto files, requests, docs, mocks, environments, and history stay
-              together.
-            </p>
-          </div>
-          <div class="floating-card card-right">
-            <span class="mini-label">gRPC workbench</span>
-            <strong>Test, mock, and document APIs</strong>
-            <p>
-              Send gRPC and gRPC-Web requests, create mock scenarios, save
-              examples, and generate docs from one workspace.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <section id="features" class="section section-tight">
-        <div class="container split-heading">
-          <div>
-            <div class="eyebrow"><span class="dot"></span> Feature set</div>
-            <h2>Built around protobuf and gRPC workflows.</h2>
-          </div>
-          <p>
-            Import proto files, send calls, save examples, benchmark latency,
-            generate docs, and keep everything in a workspace folder.
-          </p>
-        </div>
-        <div class="container feature-bento">
-          <article class="bento-card bento-large">
-            <h3>Native gRPC and gRPC-Web</h3>
-            <p>
-              Run unary and server-streaming calls with request bodies,
-              metadata, response history, trailers, and test assertions.
-            </p>
-            <pre class="code-block mini">
+   <section id="features" class="section section-tight">
+    <div class="container split-heading">
+     <div>
+      <div class="eyebrow"><span class="dot"></span> Feature set</div>
+      <h2>Built around REST, WebSocket, and gRPC workflows.</h2>
+     </div>
+     <p>
+      Import proto files, create REST and WebSocket requests, save
+      examples, benchmark latency, generate docs, and keep everything in
+      a workspace folder.
+     </p>
+    </div>
+    <div class="container feature-bento">
+     <article class="bento-card bento-large">
+      <h3>Native gRPC and gRPC-Web</h3>
+      <p>
+       Run unary and server-streaming calls with request bodies,
+       metadata, response history, trailers, and test assertions.
+      </p>
+      <pre class="code-block mini">
 target: localhost:50051
 method: demo.v1.GreeterService/SayHello
 transport: native-grpc</pre>
-          </article>
-          <article class="bento-card">
-            <h3>WebSocket beta</h3>
-            <p>
-              Create WebSocket requests, connect to ws/wss endpoints, send
-              messages, inspect events, mock responses, benchmark latency, and
-              publish beta docs.
-            </p>
-          </article>
-          <article class="bento-card">
-            <h3>Proto registry</h3>
-            <p>
-              Browse imported `.proto` files, services, methods, request
-              messages, and response messages.
-            </p>
-          </article>
-          <article class="bento-card">
-            <h3>Benchmarks</h3>
-            <p>
-              Run latency samples and export benchmark JSON reports for active
-              methods.
-            </p>
-          </article>
-          <article class="bento-card">
-            <h3>Generated docs</h3>
-            <p>
-              Create Markdown or HTML documentation from proto files, examples,
-              mocks, and latest responses.
-            </p>
-          </article>
-          <article class="bento-card">
-            <h3>CI automation</h3>
-            <p>
-              Validate workspaces, list saved requests, check mocks, and run
-              native gRPC requests from the CLI.
-            </p>
-          </article>
-        </div>
-      </section>
+     </article>
+     <article class="bento-card">
+      <h3>REST</h3>
+      <p>
+       Build REST requests with params, headers, auth, body modes,
+       local mocks, scenario matching, response templates, logs, docs,
+       and examples.
+      </p>
+     </article>
+     <article class="bento-card">
+      <h3>WebSocket</h3>
+      <p>
+       Create WebSocket requests, connect to ws/wss endpoints, send
+       messages, inspect events, mock responses, benchmark latency, and
+       publish docs.
+      </p>
+     </article>
+     <article class="bento-card">
+      <h3>Proto registry</h3>
+      <p>
+       Browse imported `.proto` files, services, methods, request
+       messages, and response messages.
+      </p>
+     </article>
+     <article class="bento-card">
+      <h3>Benchmarks</h3>
+      <p>
+       Run latency samples and export benchmark JSON reports for active
+       methods.
+      </p>
+     </article>
+     <article class="bento-card">
+      <h3>Generated docs</h3>
+      <p>
+       Create Markdown or HTML documentation from proto files, examples,
+       mocks, and latest responses.
+      </p>
+     </article>
+     <article class="bento-card">
+      <h3>CI automation</h3>
+      <p>
+       Validate workspaces, list saved requests, check mocks, and run
+       native gRPC requests from the CLI.
+      </p>
+     </article>
+    </div>
+   </section>
 
-      <section id="websocket" class="section alt">
-        <div class="container split-heading">
-          <div>
-            <div class="eyebrow"><span class="dot"></span> WebSocket beta</div>
-            <h2>Early WebSocket workflows now live beside gRPC.</h2>
-          </div>
-          <p>
-            RC 2 introduces beta WebSocket collections for live client testing,
-            desktop-managed mock responses, benchmark exports, and generated
-            docs. The feature is ready for feedback and may still change before
-            stable 1.0.
-          </p>
-        </div>
-        <div class="container two-column reverse-on-mobile">
-          <figure class="media-card">
-            <img
-              src="assets/layang-app-ws.png"
-              alt="Layang WebSocket beta screenshot showing request and live event workflow"
-            />
-            <figcaption>
-              WebSocket beta workbench with connection controls, live events,
-              request messaging, and workspace-backed testing flow.
-            </figcaption>
-          </figure>
-          <div class="comparison-card">
-            <div class="comparison-row head">
-              <span>Area</span>
-              <span>Status</span>
-              <span>What is included</span>
-            </div>
-            <div class="comparison-row">
-              <span>Client</span>
-              <span>Beta</span>
-              <span>Open ws/wss connections, send payloads, and inspect live events.</span>
-            </div>
-            <div class="comparison-row">
-              <span>Mocking</span>
-              <span>Beta</span>
-              <span>Run a local desktop WebSocket mock server and send responses to connected clients.</span>
-            </div>
-            <div class="comparison-row">
-              <span>Docs and reports</span>
-              <span>Beta</span>
-              <span>Publish WebSocket docs and export benchmark data from the active workspace.</span>
-            </div>
-          </div>
-        </div>
-      </section>
+   <section id="websocket" class="section alt">
+    <div class="container split-heading">
+     <div>
+      <div class="eyebrow"><span class="dot"></span> WebSocket</div>
+      <h2>WebSocket workflows live beside REST and gRPC.</h2>
+     </div>
+     <p>
+      WebSocket collections support live client testing, desktop-managed
+      mock responses, benchmark exports, and generated docs as part of
+      the official 1.0.0 release.
+     </p>
+    </div>
+    <div class="container two-column reverse-on-mobile">
+     <figure class="media-card">
+      <img
+       src="assets/layang-app-ws.png"
+       alt="Layang WebSocket screenshot showing request and live event workflow"
+      />
+      <figcaption>
+       WebSocket workbench with connection controls, live events,
+       request messaging, and workspace-backed testing flow.
+      </figcaption>
+     </figure>
+     <div class="comparison-card">
+      <div class="comparison-row head">
+       <span>Area</span>
+       <span>Status</span>
+       <span>What is included</span>
+      </div>
+      <div class="comparison-row">
+       <span>Client</span>
+       <span>Ready</span>
+       <span>Open ws/wss connections, send payloads, and inspect live events.</span>
+      </div>
+      <div class="comparison-row">
+       <span>Mocking</span>
+       <span>Ready</span>
+       <span>Run a local desktop WebSocket mock server and send responses to connected clients.</span>
+      </div>
+      <div class="comparison-row">
+       <span>Docs and reports</span>
+       <span>Ready</span>
+       <span>Publish WebSocket docs and export benchmark data from the active workspace.</span>
+      </div>
+     </div>
+    </div>
+   </section>
 
-      <section id="workspace" class="section alt">
-        <div class="container two-column">
-          <div>
-            <div class="eyebrow">
-              <span class="dot"></span> Workspace folder
-            </div>
-            <h2>Your API project is stored as readable files.</h2>
-            <p class="section-copy">
-              The desktop app can create or open a workspace folder. A workspace
-              stores a snapshot plus Git-friendly files under folders such as
-              `protos/`, `requests/`, `examples/`, `docs/`, `environments/`,
-              `history/`, and `mocks/`.
-            </p>
-            <div class="check-list">
-              <span>One workspace folder</span>
-              <span>Per-method mock scenarios</span>
-              <span>Portable workspace export</span>
-              <span>CLI-ready project files</span>
-            </div>
-          </div>
-          <div class="file-tree-card">
-            <div class="file-tree-title">Documents/Layang/Workspace</div>
-            <pre>
+   <section id="rest" class="section">
+    <div class="container split-heading">
+     <div>
+      <div class="eyebrow"><span class="dot"></span> REST</div>
+      <h2>REST requests, mocks, docs, and examples are first-class.</h2>
+     </div>
+     <p>
+      Build REST collections with params, headers, auth, body modes,
+      local mock scenarios, request matching, response templates, logs,
+      generated docs, and saved examples.
+     </p>
+    </div>
+    <div class="container feature-bento">
+     <article class="bento-card">
+      <h3>Request builder</h3>
+      <p>
+       Compose methods, URLs, path params, query params, headers, auth,
+       JSON, text, and form bodies from the workspace.
+      </p>
+     </article>
+     <article class="bento-card">
+      <h3>Mock scenarios</h3>
+      <p>
+       Match by path, query, headers, body text, or JSON path, then
+       return templated responses with delays and priority.
+      </p>
+     </article>
+     <article class="bento-card">
+      <h3>Docs and logs</h3>
+      <p>
+       Save REST examples, publish generated docs, and review recent
+       matched or missed mock requests.
+      </p>
+     </article>
+    </div>
+   </section>
+
+   <section id="workspace" class="section alt">
+    <div class="container two-column">
+     <div>
+      <div class="eyebrow">
+       <span class="dot"></span> Workspace folder
+      </div>
+      <h2>Your API project is stored as readable files.</h2>
+      <p class="section-copy">
+       The desktop app can create or open a workspace folder. A workspace
+       stores a snapshot plus Git-friendly files under folders such as
+       `protos/`, `requests/`, `examples/`, `docs/`, `environments/`,
+       `history/`, and `mocks/`.
+      </p>
+      <div class="check-list">
+       <span>One workspace folder</span>
+       <span>Per-method mock scenarios</span>
+       <span>Portable workspace export</span>
+       <span>CLI-ready project files</span>
+      </div>
+     </div>
+     <div class="file-tree-card">
+      <div class="file-tree-title">Documents/Layang/Workspace</div>
+      <pre>
 protos/
-  demo/v1/greeter.proto
+ demo/v1/greeter.proto
 requests/
-  tabs.json
-  items/
+ tabs.json
+ items/
 examples/
-  examples.json
+ examples.json
 docs/
-  published-docs.json
-  saved-results.json
+ published-docs.json
+ saved-results.json
 mocks/
-  mock-server.json
-  scenarios/
+ mock-server.json
+ scenarios/
 environments/
-  environments.json
+ environments.json
 history/
-  history.json</pre>
-          </div>
-        </div>
-      </section>
+ history.json</pre>
+     </div>
+    </div>
+   </section>
 
-      <section id="mocking" class="section">
-        <div class="container split-heading">
-          <div>
-            <div class="eyebrow">
-              <span class="dot"></span> Mocking and streaming
-            </div>
-            <h2>Edit streaming mock scenarios visually.</h2>
-          </div>
-          <p>
-            Enable mock behavior per method, choose active scenarios, and tune
-            stream intervals, loop mode, and response sequences from the app.
-          </p>
-        </div>
-        <div class="container media-grid">
-          <figure class="media-card">
-            <img
-              src="assets/layang-mock-stream.png"
-              alt="Layang mock streaming editor screenshot"
-            />
-            <figcaption>
-              Mock streaming editor with per-method scenarios, selected active
-              response, and stream controls.
-            </figcaption>
-          </figure>
-          <div class="workflow-steps">
-            <article>
-              <span>01</span><strong>Per-method scenarios</strong>
-              <p>
-                Keep mock behavior focused by storing scenario files per RPC
-                method.
-              </p>
-            </article>
-            <article>
-              <span>02</span><strong>Streaming controls</strong>
-              <p>
-                Set interval, loop behavior, and max loops for server-streaming
-                responses.
-              </p>
-            </article>
-            <article>
-              <span>03</span><strong>Local mock server</strong>
-              <p>
-                Run a desktop-managed mock server for local clients and
-                integration work.
-              </p>
-            </article>
-            <article>
-              <span>04</span><strong>Workspace files</strong>
-              <p>
-                Scenario JSON/YAML stays in the same portable workspace as
-                requests and docs.
-              </p>
-            </article>
-          </div>
-        </div>
-      </section>
+   <section id="mocking" class="section">
+    <div class="container split-heading">
+     <div>
+      <div class="eyebrow">
+       <span class="dot"></span> Mocking and streaming
+      </div>
+      <h2>Edit streaming mock scenarios visually.</h2>
+     </div>
+     <p>
+      Enable mock behavior per method, choose active scenarios, and tune
+      stream intervals, loop mode, and response sequences from the app.
+     </p>
+    </div>
+    <div class="container media-grid">
+     <figure class="media-card">
+      <img
+       src="assets/layang-mock-stream.png"
+       alt="Layang mock streaming editor screenshot"
+      />
+      <figcaption>
+       Mock streaming editor with per-method scenarios, selected active
+       response, and stream controls.
+      </figcaption>
+     </figure>
+     <div class="workflow-steps">
+      <article>
+       <span>01</span><strong>Per-method scenarios</strong>
+       <p>
+        Keep mock behavior focused by storing scenario files per RPC
+        method.
+       </p>
+      </article>
+      <article>
+       <span>02</span><strong>Streaming controls</strong>
+       <p>
+        Set interval, loop behavior, and max loops for server-streaming
+        responses.
+       </p>
+      </article>
+      <article>
+       <span>03</span><strong>Local mock server</strong>
+       <p>
+        Run a desktop-managed mock server for local clients and
+        integration work.
+       </p>
+      </article>
+      <article>
+       <span>04</span><strong>Workspace files</strong>
+       <p>
+        Scenario JSON/YAML stays in the same portable workspace as
+        requests and docs.
+       </p>
+      </article>
+     </div>
+    </div>
+   </section>
 
-      <section id="documentation" class="section alt">
-        <div class="container two-column reverse-on-mobile">
-          <div>
-            <div class="eyebrow"><span class="dot"></span> Documentation</div>
-            <h2>Generate docs from the work you already saved.</h2>
-            <p class="section-copy">
-              Layang can generate Markdown or HTML docs using proto metadata,
-              saved examples, mock scenarios, and the latest saved responses.
-            </p>
-            <div class="timeline-list">
-              <div>
-                <strong>Proto reference</strong>
-                <span>Service, method, request, response, and source `.proto` information.</span>
-              </div>
-              <div>
-                <strong>Examples and responses</strong>
-                <span>Saved request examples and latest responses become readable docs sections.</span>
-              </div>
-              <div>
-                <strong>Static publishing</strong>
-                <span>Export docs for a static site or keep them inside the workspace folder.</span>
-              </div>
-            </div>
-          </div>
-          <figure class="media-card">
-            <img
-              src="assets/layang-app-documentation.png"
-              alt="Layang generated documentation preview screenshot"
-            />
-            <figcaption>
-              Generated documentation preview for a selected method.
-            </figcaption>
-          </figure>
-        </div>
-      </section>
+   <section id="documentation" class="section alt">
+    <div class="container two-column reverse-on-mobile">
+     <div>
+      <div class="eyebrow"><span class="dot"></span> Documentation</div>
+      <h2>Generate docs from the work you already saved.</h2>
+      <p class="section-copy">
+       Layang can generate Markdown or HTML docs using proto metadata,
+       saved examples, mock scenarios, and the latest saved responses.
+      </p>
+      <div class="timeline-list">
+       <div>
+        <strong>Proto reference</strong>
+        <span>Service, method, request, response, and source `.proto` information.</span>
+       </div>
+       <div>
+        <strong>Examples and responses</strong>
+        <span>Saved request examples and latest responses become readable docs sections.</span>
+       </div>
+       <div>
+        <strong>Static publishing</strong>
+        <span>Export docs for a static site or keep them inside the workspace folder.</span>
+       </div>
+      </div>
+     </div>
+     <figure class="media-card">
+      <img
+       src="assets/layang-app-documentation.png"
+       alt="Layang generated documentation preview screenshot"
+      />
+      <figcaption>
+       Generated documentation preview for a selected method.
+      </figcaption>
+     </figure>
+    </div>
+   </section>
 
-      <section id="cli" class="section">
-        <div class="container split-heading">
-          <div>
-            <div class="eyebrow"><span class="dot"></span> CLI</div>
-            <h2>Run the same workspace in automation.</h2>
-          </div>
-          <p>
-            Keep desktop exploration and CI checks aligned. The CLI reads the
-            same workspace files that the app writes.
-          </p>
-        </div>
-        <div class="container cli-grid">
-          <div class="terminal-card">
-            <div class="terminal-bar">
-              <span class="terminal-dot red"></span><span class="terminal-dot yellow"></span><span class="terminal-dot green"></span>
-            </div>
-            <pre>
+   <section id="cli" class="section">
+    <div class="container split-heading">
+     <div>
+      <div class="eyebrow"><span class="dot"></span> CLI</div>
+      <h2>Run the same workspace in automation.</h2>
+     </div>
+     <p>
+      Keep desktop exploration and CI checks aligned. The CLI reads the
+      same workspace files that the app writes.
+     </p>
+    </div>
+    <div class="container cli-grid">
+     <div class="terminal-card">
+      <div class="terminal-bar">
+       <span class="terminal-dot red"></span><span class="terminal-dot yellow"></span><span class="terminal-dot green"></span>
+      </div>
+      <pre>
 layang validate ./workspace --json
 layang list ./workspace
 layang run ./workspace \
-  --env dev \
-  --reporter junit \
-  --output reports/layang-junit.xml
+ --env dev \
+ --reporter junit \
+ --output reports/layang-junit.xml
 layang mock:check ./workspace</pre>
-          </div>
-          <div class="cli-points">
-            <article>
-              <strong>Validate</strong>
-              <span>Check workspace structure, request files, proto availability, and mock scenario files.</span>
-            </article>
-            <article>
-              <strong>Run</strong>
-              <span>Execute saved native gRPC requests with clear exit codes for CI/CD.</span>
-            </article>
-            <article>
-              <strong>Report</strong>
-              <span>Output spec, JSON, or JUnit reports for build pipelines.</span>
-            </article>
-          </div>
-        </div>
-      </section>
+     </div>
+     <div class="cli-points">
+      <article>
+       <strong>Validate</strong>
+       <span>Check workspace structure, request files, proto availability, and mock scenario files.</span>
+      </article>
+      <article>
+       <strong>Run</strong>
+       <span>Execute saved native gRPC requests with clear exit codes for CI/CD.</span>
+      </article>
+      <article>
+       <strong>Report</strong>
+       <span>Output spec, JSON, or JUnit reports for build pipelines.</span>
+      </article>
+     </div>
+    </div>
+   </section>
 
-      <section class="section final-cta">
-        <div class="container final-card">
-          <div>
-            <div class="eyebrow">
-              <span class="dot"></span> Start with a proto file
-            </div>
-            <h2>Build a complete API workspace in Layang.</h2>
-            <p>
-              Import proto files, run requests, edit streaming mocks, generate
-              docs, benchmark methods, and automate checks in CI.
-            </p>
-          </div>
-          <div class="final-actions">
-            <a class="btn primary large" href="https://github.com/flik-lab/layang/releases">Download release</a>
-            <a class="btn large star-btn" href="https://github.com/flik-lab/layang" aria-label="Star Layang on GitHub">
-              <span class="star-icon" aria-hidden="true">&#9733;</span>
-              Star on GitHub
-              <strong class="star-count" data-github-stars>5</strong>
-            </a>
-          </div>
-        </div>
-      </section>
-    </main>
-
-    <footer class="footer">
-      <div class="container footer-grid">
-        <div>
-          <a class="brand footer-brand" href="index.html"><img src="assets/layang-logo.png" alt="" /><span>Layang</span></a>
-          <p>Workspace-based API tooling for protobuf and gRPC teams.</p>
-        </div>
-        <div class="footer-links">
-          <a href="#features">Features</a>
-          <a href="#websocket">WebSocket beta</a>
-          <a href="#mocking">Mocking</a>
-          <a href="#documentation">Docs</a>
-          <a href="#cli">CLI</a>
-        </div>
+   <section class="section final-cta">
+    <div class="container final-card">
+     <div>
+      <div class="eyebrow">
+       <span class="dot"></span> Start with a proto file
       </div>
-    </footer>
-    <script src="assets/site.js" defer></script>
-  </body>
+      <h2>Build a complete API workspace in Layang.</h2>
+      <p>
+       Create REST, WebSocket, gRPC, and gRPC-Web requests, run local
+       mocks, generate docs, benchmark methods, and automate checks in CI.
+      </p>
+     </div>
+     <div class="final-actions">
+      <a class="btn primary large" href="https://github.com/flik-lab/layang/releases">Download release</a>
+      <a class="btn large star-btn" href="https://github.com/flik-lab/layang" aria-label="Star Layang on GitHub">
+       <span class="star-icon" aria-hidden="true">&#9733;</span>
+       Star on GitHub
+       <strong class="star-count" data-github-stars>5</strong>
+      </a>
+     </div>
+    </div>
+   </section>
+  </main>
+
+  <footer class="footer">
+   <div class="container footer-grid">
+    <div>
+     <a class="brand footer-brand" href="index.html"><img src="assets/layang-logo.png" alt="" /><span>Layang</span></a>
+     <p>Workspace-based API tooling for REST, WebSocket, and gRPC teams.</p>
+    </div>
+    <div class="footer-links">
+     <a href="#features">Features</a>
+     <a href="#websocket">WebSocket</a>
+     <a href="#rest">REST</a>
+     <a href="#mocking">Mocking</a>
+     <a href="#documentation">Docs</a>
+     <a href="#cli">CLI</a>
+    </div>
+   </div>
+  </footer>
+  <script src="assets/site.js" defer></script>
+ </body>
 </html>

@@ -64,7 +64,7 @@ export const defaultMetadata: MetadataPair[] = [
 
 export const defaultAssertion = "";
 export const defaultMockPort = 50055;
-export const defaultMockStreamIntervalMs = 500;
+export const defaultMockStreamIntervalMs = 1000;
 export const defaultMockStreamLoop = false;
 export const defaultMockScenarioText = JSON.stringify(
   {

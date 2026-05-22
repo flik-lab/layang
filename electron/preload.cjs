@@ -42,6 +42,10 @@ contextBridge.exposeInMainWorld("electronWorkspace", {
   openFolder: (directoryPath) => ipcRenderer.invoke("workspace:open-folder", { directoryPath }),
   getDefaultFolder: () => ipcRenderer.invoke("workspace:get-default-folder"),
   ensureDefaultFolder: (bundle) => ipcRenderer.invoke("workspace:ensure-default-folder", { bundle }),
+  ensureFolder: (bundle, directoryPath) => ipcRenderer.invoke("workspace:ensure-folder", { bundle, directoryPath }),
+  getPreference: () => ipcRenderer.invoke("workspace:get-preference"),
+  setPreference: (directoryPath) => ipcRenderer.invoke("workspace:set-preference", { directoryPath }),
+  chooseFolder: (title) => ipcRenderer.invoke("workspace:choose-folder", { title }),
   openPath: (directoryPath, relativePath, options) =>
     ipcRenderer.invoke("workspace:open-path", { directoryPath, relativePath, ...(options || {}) }),
   isAvailable: true,
@@ -61,6 +65,14 @@ contextBridge.exposeInMainWorld("electronWsMock", {
   update: (payload) => ipcRenderer.invoke("ws-mock:update", payload),
   send: (payload) => ipcRenderer.invoke("ws-mock:send", payload),
   status: () => ipcRenderer.invoke("ws-mock:status"),
+  isAvailable: true,
+});
+
+contextBridge.exposeInMainWorld("electronRestMock", {
+  start: (payload) => ipcRenderer.invoke("rest-mock:start", payload),
+  stop: () => ipcRenderer.invoke("rest-mock:stop"),
+  update: (payload) => ipcRenderer.invoke("rest-mock:update", payload),
+  status: () => ipcRenderer.invoke("rest-mock:status"),
   isAvailable: true,
 });
 

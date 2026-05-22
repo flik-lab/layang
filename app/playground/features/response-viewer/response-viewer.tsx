@@ -1,10 +1,11 @@
 "use client";
 
-import { Fragment, JSX, useMemo, useState } from "react";
+import { Fragment, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import {
   Box,
   Button,
   Chip,
+  IconButton,
   Paper,
   Stack,
   Table,
@@ -13,8 +14,10 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  Tooltip,
   Typography,
 } from "@/components/shadcn/compat";
+import { ContentCopy } from "@/components/shadcn/icons";
 import { EmptyState } from "../../shared/components/empty-state";
 import { formatTimestampShort } from "../../shared/formatters";
 import { deepTextIncludes, safePrettyJson } from "../../shared/json-utils";
@@ -41,6 +44,7 @@ export function MessageTable({
   filterQuery?: string;
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const normalizedFilterQuery = filterQuery.trim();
   const displayEvents = useMemo(() => {
     const normalizedQuery = filterQuery.trim();
@@ -111,7 +115,58 @@ export function MessageTable({
                 {expanded && (
                   <TableRow key={`${event.id}-expanded`}>
                     <TableCell colSpan={3}>
-                      <JsonBlock value={event.payload} compact highlightQuery={filterQuery} />
+                      <Box
+                        sx={{
+                          position: "relative",
+                          maxHeight: 440,
+                          overflow: "auto",
+                          border: "1px solid",
+                          borderColor: "divider",
+                          borderRadius: 1.25,
+                          bgcolor: "var(--muted)",
+                          "& .code-viewer": {
+                            maxHeight: "none",
+                            overflow: "visible",
+                            border: 0,
+                            borderRadius: 0,
+                            bgcolor: "transparent",
+                          },
+                        }}
+                      >
+                        <Tooltip title={copiedId === event.id ? "Copied" : "Copy message"}>
+                          <IconButton
+                            size="small"
+                            aria-label="Copy message"
+                            onClick={(clickEvent: MouseEvent<HTMLButtonElement>) => {
+                              clickEvent.stopPropagation();
+                              void copyMessagePayload(event.payload).then((copied) => {
+                                if (!copied) return;
+                                setCopiedId(event.id);
+                                window.setTimeout(
+                                  () => setCopiedId((current) => (current === event.id ? null : current)),
+                                  1200,
+                                );
+                              });
+                            }}
+                            sx={{
+                              position: "sticky",
+                              top: 8,
+                              right: 8,
+                              float: "right",
+                              m: 0.75,
+                              zIndex: 2,
+                              bgcolor: "background.paper",
+                              border: "1px solid",
+                              borderColor: "divider",
+                              boxShadow: 1,
+                              "&:hover": { bgcolor: "action.hover" },
+                            }}
+                          >
+                            <ContentCopy sx={{ fontSize: 16 }} />
+                          </IconButton>
+                        </Tooltip>
+                        <JsonBlock value={event.payload} compact highlightQuery={filterQuery} />
+                      </Box>
                     </TableCell>
                   </TableRow>
                 )}
@@ -139,6 +194,29 @@ function oneLinePayload(value: unknown): string {
   return text.length > 320 ? `${text.slice(0, 320)}...` : text;
 }
 
+/** Copies the selected message payload in a user-friendly raw/pretty format. */
+async function copyMessagePayload(value: unknown): Promise<boolean> {
+  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) return false;
+  try {
+    await navigator.clipboard.writeText(messagePayloadCopyText(value));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Preserves raw text messages while pretty-printing JSON-like payloads. */
+function messagePayloadCopyText(value: unknown): string {
+  if (typeof value === "string") {
+    try {
+      return JSON.stringify(JSON.parse(value), null, 2);
+    } catch {
+      return value;
+    }
+  }
+  return safePrettyJson(value);
+}
+
 /** Renders lower-volume raw event lists. */
 export function EventList({
   events,
@@ -150,13 +228,14 @@ export function EventList({
   filterQuery?: string;
 }) {
   const normalizedFilterQuery = filterQuery.trim();
-  const displayEvents = (normalizedFilterQuery
-    ? events.filter(
-        (event) =>
-          deepTextIncludes(event.payload, normalizedFilterQuery) ||
-          event.title.toLowerCase().includes(normalizedFilterQuery.toLowerCase()),
-      )
-    : events
+  const displayEvents = (
+    normalizedFilterQuery
+      ? events.filter(
+          (event) =>
+            deepTextIncludes(event.payload, normalizedFilterQuery) ||
+            event.title.toLowerCase().includes(normalizedFilterQuery.toLowerCase()),
+        )
+      : events
   ).slice(0, maxMessageTableRows);
   if (displayEvents.length === 0) {
     return (
@@ -277,7 +356,7 @@ function renderBoldMatches(text: string, query: string) {
   if (!needle) return text;
 
   const regex = new RegExp(escapeRegExp(needle), "ig");
-  const nodes: Array<string | JSX.Element> = [];
+  const nodes: ReactNode[] = [];
   let cursor = 0;
 
   for (const match of text.matchAll(regex)) {

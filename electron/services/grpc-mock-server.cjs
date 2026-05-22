@@ -11,6 +11,8 @@ const { safeRelativePath } = require("../utils/path-utils.cjs");
 
 let activeMockServer = null;
 
+const legacyGeneratedMockStreamIntervalMs = 500;
+
 function getReachableMockTargets(port, bindHost) {
   const normalizedPort = normalizeMockServerPort(port);
   const normalizedBindHost = normalizeMockBindHost(bindHost);
@@ -117,7 +119,7 @@ async function startMockServer(payload) {
   const methods = Array.isArray(payload.methods) ? payload.methods : [];
   const scenarios = Array.isArray(payload.scenarios) ? payload.scenarios : [];
   const streamDefaults = normalizeRuntimeStreamSettings(payload.streamDefaults || {}, {
-    intervalMs: 500,
+    intervalMs: 1000,
     loop: false,
     maxLoops: 0,
   });
@@ -202,6 +204,9 @@ async function startMockServer(payload) {
     methodSignature: createMockMethodSignature(methods),
     protoSignature: createMockProtoSignature(protoFiles),
     startedAt: new Date().toISOString(),
+    hasUiStreamDefaultsOverride: false,
+    hasUiRuntimeOverride: false,
+    lastUiRuntimeUpdateAt: 0,
   };
   await startMockScenarioWatcher(workspaceDirectory, activeMockServer);
 
@@ -324,12 +329,13 @@ function createMockRuntimeState(scenarios, streamDefaults, activeScenarioIds, en
     scenarioIndex: (Array.isArray(scenarios) ? scenarios : [])
       .map((scenario, index) => normalizeMockRuntimeScenario(scenario, index))
       .filter(Boolean),
-    streamDefaults: normalizeRuntimeStreamSettings(streamDefaults || {}, { intervalMs: 500, loop: false, maxLoops: 0 }),
+    streamDefaults: normalizeRuntimeStreamSettings(streamDefaults || {}, { intervalMs: 1000, loop: false, maxLoops: 0 }),
     activeScenarioIds: normalizeActiveScenarioIds(activeScenarioIds || {}),
     enabledMethods: normalizeEnabledMethods(enabledMethods || {}),
     configVersion: 1,
     updatedAt: new Date().toISOString(),
     source: source || "unknown",
+    streamReschedulers: new Set(),
   };
 }
 
@@ -400,12 +406,38 @@ async function updateActiveMockServer(payload, source) {
     };
   }
 
+  if (source === "ui") {
+    active.hasUiStreamDefaultsOverride = true;
+    active.hasUiRuntimeOverride = true;
+    active.lastUiRuntimeUpdateAt = Date.now();
+  }
+  const fileRuntimeMtimeMs = Number(payload.workspaceMtimeMs || payload.workspace_mtime_ms || 0);
+  const isStaleFileRuntimeUpdate =
+    source === "file" &&
+    active.hasUiRuntimeOverride &&
+    active.lastUiRuntimeUpdateAt > 0 &&
+    (fileRuntimeMtimeMs <= 0 || fileRuntimeMtimeMs < active.lastUiRuntimeUpdateAt);
+  const nextStreamDefaults =
+    isStaleFileRuntimeUpdate || (source === "file" && active.hasUiStreamDefaultsOverride)
+      ? runtime.streamDefaults
+      : payload.streamDefaults || runtime.streamDefaults;
+  const nextScenarios = isStaleFileRuntimeUpdate
+    ? runtime.scenarioIndex
+    : Array.isArray(payload.scenarios)
+      ? payload.scenarios
+      : runtime.scenarioIndex;
+  const nextActiveScenarioIds = isStaleFileRuntimeUpdate
+    ? runtime.activeScenarioIds
+    : payload.activeScenarioIds || payload.selectedScenarioIds || runtime.activeScenarioIds;
+  const nextEnabledMethods = isStaleFileRuntimeUpdate
+    ? runtime.enabledMethods
+    : payload.enabledMethods || runtime.enabledMethods;
   const next = createMockRuntimeState(
-    Array.isArray(payload.scenarios) ? payload.scenarios : runtime.scenarioIndex,
-    payload.streamDefaults || runtime.streamDefaults,
-    payload.activeScenarioIds || payload.selectedScenarioIds || runtime.activeScenarioIds,
-    payload.enabledMethods || runtime.enabledMethods,
-    source || "update",
+    nextScenarios,
+    nextStreamDefaults,
+    nextActiveScenarioIds,
+    nextEnabledMethods,
+    isStaleFileRuntimeUpdate ? "ui" : source || "update",
   );
   runtime.scenarioIndex = next.scenarioIndex;
   runtime.streamDefaults = next.streamDefaults;
@@ -414,6 +446,7 @@ async function updateActiveMockServer(payload, source) {
   runtime.configVersion += 1;
   runtime.updatedAt = new Date().toISOString();
   runtime.source = next.source;
+  notifyRuntimeStreamReschedulers(runtime);
   return {
     running: true,
     scenarioCount: runtime.scenarioIndex.length,
@@ -423,6 +456,18 @@ async function updateActiveMockServer(payload, source) {
     updatedAt: runtime.updatedAt,
     source: runtime.source,
   };
+}
+
+function notifyRuntimeStreamReschedulers(runtime) {
+  const listeners = runtime?.streamReschedulers;
+  if (!listeners || typeof listeners[Symbol.iterator] !== "function") return;
+  for (const listener of Array.from(listeners)) {
+    try {
+      listener();
+    } catch {
+      // Ignore stale stream callbacks; the stream cleanup path removes them.
+    }
+  }
 }
 
 /**
@@ -474,13 +519,24 @@ async function startMockScenarioWatcher(workspaceDirectory, serverState) {
  */
 async function loadRuntimeScenariosFromWorkspace(workspaceDirectory, methods, port) {
   const mocksDir = path.join(workspaceDirectory, "mocks");
+  let workspaceMtimeMs = 0;
+  const noteWorkspaceMtime = async (filePath) => {
+    try {
+      const stat = await fs.stat(filePath);
+      if (Number.isFinite(stat.mtimeMs)) workspaceMtimeMs = Math.max(workspaceMtimeMs, stat.mtimeMs);
+    } catch {
+      // Optional workspace files may not exist.
+    }
+  };
+  await noteWorkspaceMtime(path.join(mocksDir, "mock-server.json"));
   const serverConfig = (await readJsonIfExists(path.join(mocksDir, "mock-server.json")).catch(() => ({}))) || {};
   const streamDefaults = normalizeRuntimeStreamSettings(
     serverConfig.streamDefaults || serverConfig.stream_defaults || {},
-    { intervalMs: 500, loop: false, maxLoops: 0 },
+    { intervalMs: 1000, loop: false, maxLoops: 0 },
   );
   const enabledMethods = normalizeEnabledMethods(serverConfig.enabledMethods || serverConfig.enabled_methods || {});
   const scenariosDir = path.join(mocksDir, "scenarios");
+  await noteWorkspaceMtime(path.join(scenariosDir, "manifest.json"));
   const manifest = (await readJsonIfExists(path.join(scenariosDir, "manifest.json")).catch(() => ({}))) || {};
   const scenarios = [];
   const activeScenarioIds = normalizeActiveScenarioIds(
@@ -495,6 +551,7 @@ async function loadRuntimeScenariosFromWorkspace(workspaceDirectory, methods, po
     if (ext !== ".json" && ext !== ".yaml" && ext !== ".yml") return;
     if (path.basename(filePath).toLowerCase() === "manifest.json") return;
     const format = ext === ".json" ? "json" : "yaml";
+    await noteWorkspaceMtime(filePath);
     const text = await fs.readFile(filePath, "utf8");
     const parsed = parseRuntimeScenarioText(text, format, port);
     const methodScenarios = parsed.scenarios.filter((scenario) =>
@@ -526,7 +583,7 @@ async function loadRuntimeScenariosFromWorkspace(workspaceDirectory, methods, po
     );
     if (activeScenario && !activeScenarioIds[key]) activeScenarioIds[key] = activeScenario.id;
   }
-  return { scenarios, activeScenarioIds, enabledMethods, streamDefaults };
+  return { scenarios, activeScenarioIds, enabledMethods, streamDefaults, workspaceMtimeMs };
 }
 
 /**
@@ -544,10 +601,10 @@ function parseRuntimeScenarioText(text, format, fallbackPort) {
         : [];
   const serverRecord =
     record.server && typeof record.server === "object" && !Array.isArray(record.server) ? record.server : {};
-  const streamDefaults = normalizeRuntimeStreamSettings(
-    serverRecord.streamDefaults || serverRecord.stream_defaults || {},
-    { intervalMs: 500, loop: false, maxLoops: 0 },
-  );
+  const hasPerFileStreamDefaults = Boolean(serverRecord.streamDefaults || serverRecord.stream_defaults);
+  const streamDefaults = hasPerFileStreamDefaults
+    ? normalizeRuntimeStreamSettings(serverRecord.streamDefaults || serverRecord.stream_defaults || {}, {})
+    : {};
   const activeScenarioIds = normalizeActiveScenarioIds(
     serverRecord.selectedScenarioIds ||
       serverRecord.selected_scenario_ids ||
@@ -576,24 +633,19 @@ function parseRuntimeScenarioText(text, format, fallbackPort) {
 function applyRuntimeStreamDefaultsToRawScenario(scenario, defaults) {
   if (!scenario || typeof scenario !== "object" || !scenario.stream || typeof scenario.stream !== "object")
     return scenario;
+  const stream = { ...scenario.stream };
+  if (stream.intervalMs === undefined && stream.interval_ms === undefined && defaults?.intervalMs !== undefined) {
+    stream.intervalMs = defaults.intervalMs;
+  }
+  if (!Object.hasOwn(stream, "loop") && defaults?.loop !== undefined) {
+    stream.loop = defaults.loop;
+  }
+  if (stream.maxLoops === undefined && stream.max_loops === undefined && defaults?.maxLoops !== undefined) {
+    stream.maxLoops = defaults.maxLoops;
+  }
   return {
     ...scenario,
-    stream: {
-      ...scenario.stream,
-      intervalMs:
-        scenario.stream.intervalMs !== undefined
-          ? scenario.stream.intervalMs
-          : scenario.stream.interval_ms !== undefined
-            ? scenario.stream.interval_ms
-            : defaults.intervalMs,
-      loop: Object.hasOwn(scenario.stream, "loop") ? scenario.stream.loop : defaults.loop,
-      maxLoops:
-        scenario.stream.maxLoops !== undefined
-          ? scenario.stream.maxLoops
-          : scenario.stream.max_loops !== undefined
-            ? scenario.stream.max_loops
-            : defaults.maxLoops,
-    },
+    stream,
   };
 }
 
@@ -737,37 +789,197 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls) {
     return;
   }
 
-  const scenarioId = initialScenario.id;
+  let currentScenarioId = initialScenario.id;
+  let currentResponseSignature = createRuntimeStreamResponsesSignature(getRuntimeStreamResponses(initialScenario));
+  let sentResponseCounts = new Map();
   let index = 0;
-  let restarts = 0;
+  let completedCycles = 0;
   let closed = false;
+  let pendingTimer = null;
+  let pendingAction = null;
+  let pendingActionKind = null;
+  let pendingUsesRuntimeInterval = false;
+  let pendingTimerStartedAt = 0;
+  let pendingPlannedDelayMs = 0;
+  let pendingCompletedCycle = false;
+
+  const clearPendingTimer = () => {
+    if (!pendingTimer) return;
+    clearTimeout(pendingTimer);
+    timers.delete(pendingTimer);
+    pendingTimer = null;
+  };
 
   const cleanup = () => {
+    if (closed) return;
     closed = true;
+    clearPendingTimer();
     activeCalls.delete(call);
+    if (runtime.streamReschedulers && typeof runtime.streamReschedulers.delete === "function") {
+      runtime.streamReschedulers.delete(reschedulePendingStreamTimer);
+    }
   };
+
+  const failStream = (code, message) => {
+    cleanup();
+    endMockServerStreamWithError(call, code, message, activeCalls);
+  };
+
+  const getLiveSnapshot = () => {
+    const scenario = getLiveStreamScenario(method, request, currentScenarioId, runtime);
+    if (!scenario) return undefined;
+    const responses = getRuntimeStreamResponses(scenario);
+    const timing = getRuntimeStreamTiming(scenario, runtime);
+    const responseSignature = createRuntimeStreamResponsesSignature(responses);
+    const scenarioChanged = Boolean(currentScenarioId && scenario.id !== currentScenarioId);
+    const responseStackChanged = Boolean(
+      !scenarioChanged &&
+        currentResponseSignature &&
+        responseSignature &&
+        responseSignature !== currentResponseSignature,
+    );
+
+    if (scenarioChanged) {
+      currentScenarioId = scenario.id;
+      currentResponseSignature = responseSignature;
+      sentResponseCounts = new Map();
+      index = 0;
+      completedCycles = 0;
+      pendingCompletedCycle = false;
+    } else if (responseStackChanged) {
+      currentResponseSignature = responseSignature;
+      if (timing.shouldLoop) {
+        sentResponseCounts = new Map();
+        index = 0;
+        completedCycles = 0;
+        pendingCompletedCycle = false;
+      } else {
+        const nextUnsentIndex = findFirstUnsentRuntimeStreamResponseIndex(responses, sentResponseCounts);
+        if (nextUnsentIndex >= 0 && (pendingActionKind === "finish" || index >= responses.length || nextUnsentIndex < index)) {
+          index = nextUnsentIndex;
+          completedCycles = 0;
+          pendingCompletedCycle = false;
+        } else if (index > responses.length) {
+          index = responses.length;
+        }
+      }
+    } else {
+      currentScenarioId = scenario.id;
+      currentResponseSignature = responseSignature;
+    }
+
+    return { scenario, responses, timing };
+  };
+
+  const getLiveTiming = () => getLiveSnapshot()?.timing;
+
+  const getActionForPendingKind = (kind) => (kind === "finish" ? finishStream : writeNext);
+
+  const canContinueAfterCompletedCycle = (timing) =>
+    Boolean(timing?.shouldLoop) && (timing.maxLoops <= 0 || completedCycles <= timing.maxLoops);
+
+  const resolvePendingActionForLiveSnapshot = (currentKind, snapshot) => {
+    if (!snapshot?.timing || !currentKind) return { kind: currentKind, undoCompletedCycle: false };
+    if (currentKind === "finish") {
+      if (index < snapshot.responses.length) return { kind: "next", undoCompletedCycle: pendingCompletedCycle };
+      if (canContinueAfterCompletedCycle(snapshot.timing)) return { kind: "next", undoCompletedCycle: false };
+    }
+    if (
+      currentKind === "next" &&
+      index === 0 &&
+      completedCycles > 0 &&
+      !canContinueAfterCompletedCycle(snapshot.timing)
+    ) {
+      return { kind: "finish", undoCompletedCycle: false };
+    }
+    if (currentKind === "next" && index >= snapshot.responses.length && !canContinueAfterCompletedCycle(snapshot.timing)) {
+      return { kind: "finish", undoCompletedCycle: false };
+    }
+    return { kind: currentKind, undoCompletedCycle: false };
+  };
+
+  const scheduleTimer = (delay, action, usesRuntimeInterval, actionKind, startedAt, plannedDelayMs, completedCycle) => {
+    if (closed) return;
+    clearPendingTimer();
+    const waitMs = normalizeDelayMs(delay);
+    const now = Date.now();
+    pendingAction = action;
+    pendingActionKind = actionKind || null;
+    pendingUsesRuntimeInterval = Boolean(usesRuntimeInterval);
+    pendingTimerStartedAt = startedAt || now;
+    pendingPlannedDelayMs = normalizeDelayMs(plannedDelayMs !== undefined ? plannedDelayMs : waitMs);
+    pendingCompletedCycle = Boolean(completedCycle);
+    const timer = setTimeout(() => {
+      timers.delete(timer);
+      if (pendingTimer === timer) {
+        pendingTimer = null;
+        pendingAction = null;
+        pendingActionKind = null;
+        pendingUsesRuntimeInterval = false;
+        pendingTimerStartedAt = 0;
+        pendingPlannedDelayMs = 0;
+        pendingCompletedCycle = false;
+      }
+      action();
+    }, waitMs);
+    pendingTimer = timer;
+    timers.add(timer);
+  };
+
+  function reschedulePendingStreamTimer() {
+    if (closed || !pendingTimer || !pendingAction) return;
+    const snapshot = getLiveSnapshot();
+    if (!snapshot) return;
+    const startedAt = pendingTimerStartedAt || Date.now();
+    const elapsed = Math.max(0, Date.now() - startedAt);
+    const nextPlannedDelay = pendingUsesRuntimeInterval
+      ? normalizeDelayMs(snapshot.timing.intervalMs)
+      : normalizeDelayMs(pendingPlannedDelayMs);
+    const resolved = resolvePendingActionForLiveSnapshot(pendingActionKind, snapshot);
+    if (resolved.undoCompletedCycle) completedCycles = Math.max(0, completedCycles - 1);
+    const nextActionKind = resolved.kind;
+    const nextAction = nextActionKind ? getActionForPendingKind(nextActionKind) : pendingAction;
+    const remaining = Math.max(0, nextPlannedDelay - elapsed);
+    const nextCompletedCycle = pendingCompletedCycle && nextActionKind === "finish" && !resolved.undoCompletedCycle;
+    scheduleTimer(
+      remaining,
+      nextAction,
+      pendingUsesRuntimeInterval,
+      nextActionKind,
+      startedAt,
+      nextPlannedDelay,
+      nextCompletedCycle,
+    );
+  }
+
+  const scheduleNext = (delay, usesRuntimeInterval = false) => {
+    scheduleTimer(delay, writeNext, usesRuntimeInterval, "next", Date.now(), delay, false);
+  };
+
+  const scheduleFinish = (delay, usesRuntimeInterval = false, completedCycle = false) => {
+    scheduleTimer(delay, finishStream, usesRuntimeInterval, "finish", Date.now(), delay, completedCycle);
+  };
+
+  const finishStream = () => {
+    if (closed) return;
+    cleanup();
+    call.end();
+  };
+
   activeCalls.add(call);
+  if (runtime.streamReschedulers && typeof runtime.streamReschedulers.add === "function") {
+    runtime.streamReschedulers.add(reschedulePendingStreamTimer);
+  }
   if (typeof call.on === "function") {
     call.on("cancelled", cleanup);
     call.on("error", cleanup);
   }
 
-  const scheduleNext = (delay) => {
+  function writeNext() {
     if (closed) return;
-    const timer = setTimeout(() => {
-      timers.delete(timer);
-      writeNext();
-    }, normalizeDelayMs(delay));
-    timers.add(timer);
-  };
-
-  const writeNext = () => {
-    if (closed) return;
-    const scenario = getLiveStreamScenario(method, request, scenarioId, runtime);
-    if (!scenario) {
-      closed = true;
-      endMockServerStreamWithError(
-        call,
+    const snapshot = getLiveSnapshot();
+    if (!snapshot?.scenario) {
+      failStream(
         grpc.status.NOT_FOUND,
         buildMockNoMatchMessage(
           method,
@@ -776,119 +988,144 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls) {
           runtime.activeScenarioIds,
           runtime.enabledMethods,
         ),
-        activeCalls,
       );
       return;
     }
 
-    const stream = scenario.stream || {};
-    const fallbackOutput = getMockScenarioOutput(scenario);
-    const explicitResponses = Array.isArray(stream.responses) ? stream.responses.filter(isUsableMockStreamOutput) : [];
-    const responses = explicitResponses.length
-      ? explicitResponses
-      : isUsableMockStreamOutput(fallbackOutput)
-        ? [fallbackOutput]
-        : [];
+    const { scenario, responses, timing } = snapshot;
     if (!responses.length) {
-      closed = true;
-      endMockServerStreamWithError(
-        call,
+      failStream(
         grpc.status.FAILED_PRECONDITION,
         `Mock stream scenario ${scenario.id} has no stream output. Add stream.responses before starting the stream.`,
-        activeCalls,
       );
       return;
     }
-    const intervalMs = normalizeDelayMs(
-      stream.intervalMs !== undefined ? stream.intervalMs : runtime.streamDefaults.intervalMs,
-    );
-    const shouldLoop = stream.loop !== undefined ? Boolean(stream.loop) : Boolean(runtime.streamDefaults.loop);
-    const maxLoops = Math.max(
-      0,
-      Math.floor(Number(stream.maxLoops !== undefined ? stream.maxLoops : runtime.streamDefaults.maxLoops || 0)),
-    );
+    const { intervalMs, shouldLoop, maxLoops } = timing;
 
-    if (index >= responses.length) index = 0;
+    if (index >= responses.length) {
+      if (!canContinueAfterCompletedCycle(timing)) {
+        scheduleFinish(intervalMs, true);
+        return;
+      }
+      index = 0;
+    }
     const item = responses[index] || {};
     const code = normalizeGrpcStatus(item.code);
     if (code !== grpc.status.OK) {
-      closed = true;
-      endMockServerStreamWithError(
-        call,
-        code,
-        item.message || `Mock stream scenario ${scenario.id} returned status ${code}.`,
-        activeCalls,
-      );
+      failStream(code, item.message || `Mock stream scenario ${scenario.id} returned status ${code}.`);
       return;
     }
 
     const wrote = call.write(item.data === undefined ? {} : item.data);
+    recordRuntimeStreamResponseSent(sentResponseCounts, item);
     index += 1;
     if (index >= responses.length) {
-      if (!shouldLoop || (maxLoops > 0 && restarts >= maxLoops)) {
+      completedCycles += 1;
+      if (!shouldLoop || (maxLoops > 0 && completedCycles > maxLoops)) {
         const endDelay = Number(item.delayMs);
-        const finish = () => {
-          if (closed) return;
-          closed = true;
-          activeCalls.delete(call);
-          call.end();
-        };
-        const delay = Number.isFinite(endDelay) && endDelay > 0 ? endDelay : intervalMs;
-        const timer = setTimeout(() => {
-          timers.delete(timer);
-          finish();
-        }, normalizeDelayMs(delay));
-        timers.add(timer);
+        const hasExplicitEndDelay = Number.isFinite(endDelay) && endDelay > 0;
+        const delay = hasExplicitEndDelay ? endDelay : intervalMs;
+        scheduleFinish(delay, !hasExplicitEndDelay, true);
         return;
       }
-      restarts += 1;
       index = 0;
     }
     const responseDelay = Number(item.delayMs);
-    const nextDelay = Number.isFinite(responseDelay) && responseDelay > 0 ? responseDelay : intervalMs;
+    const hasExplicitResponseDelay = Number.isFinite(responseDelay) && responseDelay > 0;
+    const nextDelay = hasExplicitResponseDelay ? responseDelay : intervalMs;
     if (wrote === false && typeof call.once === "function") {
-      call.once("drain", () => scheduleNext(nextDelay));
+      call.once("drain", () => {
+        const delay = hasExplicitResponseDelay ? nextDelay : getLiveTiming()?.intervalMs ?? nextDelay;
+        scheduleNext(delay, !hasExplicitResponseDelay);
+      });
     } else {
-      scheduleNext(nextDelay);
+      scheduleNext(nextDelay, !hasExplicitResponseDelay);
     }
-  };
+  }
 
-  const firstStream = initialScenario.stream || {};
-  const firstExplicitResponses = Array.isArray(firstStream.responses)
-    ? firstStream.responses.filter(isUsableMockStreamOutput)
-    : [];
-  const firstFallbackOutput = getMockScenarioOutput(initialScenario);
-  const firstResponses = firstExplicitResponses.length
-    ? firstExplicitResponses
-    : isUsableMockStreamOutput(firstFallbackOutput)
-      ? [firstFallbackOutput]
-      : [];
+  const firstResponses = getRuntimeStreamResponses(initialScenario);
   if (!firstResponses.length) {
-    endMockServerStreamWithError(
-      call,
+    failStream(
       grpc.status.FAILED_PRECONDITION,
-      `Mock stream scenario ${scenarioId} has no stream output. Add stream.responses before starting the stream.`,
-      activeCalls,
+      `Mock stream scenario ${currentScenarioId} has no stream output. Add stream.responses before starting the stream.`,
     );
     return;
   }
   const firstDelayRaw = Number(firstResponses[0]?.delayMs);
-  scheduleNext(Number.isFinite(firstDelayRaw) && firstDelayRaw > 0 ? firstDelayRaw : 0);
+  scheduleNext(Number.isFinite(firstDelayRaw) && firstDelayRaw > 0 ? firstDelayRaw : 0, false);
+}
+
+function getRuntimeStreamResponses(scenario) {
+  const stream = scenario?.stream || {};
+  const fallbackOutput = getMockScenarioOutput(scenario);
+  const explicitResponses = Array.isArray(stream.responses) ? stream.responses.filter(isUsableMockStreamOutput) : [];
+  return explicitResponses.length
+    ? explicitResponses
+    : isUsableMockStreamOutput(fallbackOutput)
+      ? [fallbackOutput]
+      : [];
+}
+
+
+function createRuntimeStreamResponseFingerprint(item) {
+  const output = item && typeof item === "object" ? item : {};
+  return stableJson({
+    code: normalizeGrpcStatus(output.code),
+    message: output.message || "",
+    data: output.data === undefined ? {} : output.data,
+  });
+}
+
+function createRuntimeStreamResponsesSignature(responses) {
+  return (Array.isArray(responses) ? responses : []).map(createRuntimeStreamResponseFingerprint).join("\n");
+}
+
+function recordRuntimeStreamResponseSent(sentCounts, item) {
+  if (!sentCounts || typeof sentCounts.set !== "function") return;
+  const fingerprint = createRuntimeStreamResponseFingerprint(item);
+  sentCounts.set(fingerprint, (sentCounts.get(fingerprint) || 0) + 1);
+}
+
+function findFirstUnsentRuntimeStreamResponseIndex(responses, sentCounts) {
+  if (!Array.isArray(responses) || !responses.length) return -1;
+  const seenInNextStack = new Map();
+  for (let index = 0; index < responses.length; index += 1) {
+    const fingerprint = createRuntimeStreamResponseFingerprint(responses[index]);
+    const nextCount = (seenInNextStack.get(fingerprint) || 0) + 1;
+    seenInNextStack.set(fingerprint, nextCount);
+    if (nextCount > (sentCounts?.get?.(fingerprint) || 0)) return index;
+  }
+  return -1;
+}
+
+function getRuntimeStreamTiming(scenario, runtime) {
+  const stream = scenario?.stream || {};
+  const intervalMs = normalizeDelayMs(
+    stream.intervalMs !== undefined ? stream.intervalMs : runtime.streamDefaults.intervalMs,
+  );
+  const shouldLoop = stream.loop !== undefined ? Boolean(stream.loop) : Boolean(runtime.streamDefaults.loop);
+  const maxLoops = Math.max(
+    0,
+    Math.floor(Number(stream.maxLoops !== undefined ? stream.maxLoops : runtime.streamDefaults.maxLoops || 0)),
+  );
+  return { intervalMs, shouldLoop, maxLoops };
 }
 
 /**
- * Returns the currently live stream scenario, preferring the scenario that started the call.
+ * Returns the currently live stream scenario. Active streams keep their current
+ * scenario when it still matches, but can switch to the newly selected scenario
+ * so runtime scenario edits/selection changes keep applying on every tick.
  */
-function getLiveStreamScenario(method, request, scenarioId, runtime) {
+function getLiveStreamScenario(method, request, preferredScenarioId, runtime) {
   const candidates = getActiveRuntimeScenariosForMethod(
     method,
     runtime.scenarioIndex,
     runtime.activeScenarioIds,
     runtime.enabledMethods,
-  );
-  const sameScenario = candidates.find((scenario) => scenario.id === scenarioId);
-  if (!sameScenario) return undefined;
-  return mockMatcherMatches(sameScenario.input, request) ? sameScenario : undefined;
+  )
+    .filter((scenario) => mockMatcherMatches(scenario.input, request))
+    .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0));
+  return candidates.find((scenario) => scenario.id === preferredScenarioId) || candidates[0];
 }
 
 /**
@@ -979,6 +1216,20 @@ function normalizeEnabledMethods(value) {
   return output;
 }
 
+function isLegacyGeneratedRuntimeScenario(value) {
+  const description = typeof value?.description === "string" ? value.description.toLowerCase() : "";
+  return description.includes("generated from proto mapping");
+}
+
+function stripLegacyGeneratedRuntimeStreamDefaults(value, stream) {
+  if (!stream || !isLegacyGeneratedRuntimeScenario(value)) return stream;
+  const next = { ...stream };
+  if (next.intervalMs === legacyGeneratedMockStreamIntervalMs) delete next.intervalMs;
+  if (next.loop === false) delete next.loop;
+  if (next.maxLoops === 0) delete next.maxLoops;
+  return next;
+}
+
 /**
  * Normalizes one runtime scenario while retaining compatible input/output aliases.
  */
@@ -997,7 +1248,7 @@ function normalizeMockRuntimeScenario(value, index) {
     input: normalizeRuntimeMatcher(value.input || value.match),
     response: normalizeRuntimeOutput(value.response || value.output),
     output: normalizeRuntimeOutput(value.output || value.response),
-    stream: normalizeRuntimeStream(value.stream),
+    stream: stripLegacyGeneratedRuntimeStreamDefaults(value, normalizeRuntimeStream(value.stream)),
   };
 }
 

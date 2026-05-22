@@ -6,6 +6,9 @@ const siteDir = path.join(rootDir, "github-pages");
 const requiredFiles = [
   "index.html",
   ".nojekyll",
+  "CNAME",
+  "robots.txt",
+  "sitemap.xml",
   "assets/styles.css",
   "assets/layang-logo.png",
   "assets/layang-app-screenshot.png",

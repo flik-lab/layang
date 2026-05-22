@@ -630,6 +630,7 @@ export function MockServerPanel({
   status,
   currentFile,
   currentParseResult,
+  editorInstanceKey,
   editorText,
   streamDefaults,
   mappingRows,
@@ -650,6 +651,7 @@ export function MockServerPanel({
   status: MockServerStatus;
   currentFile: MockMethodScenarioFile;
   currentParseResult: MockParseResult;
+  editorInstanceKey: string;
   editorText: string;
   streamDefaults: Required<
     Pick<MockStreamSettings, "intervalMs" | "loop" | "maxLoops">
@@ -941,6 +943,7 @@ export function MockServerPanel({
           Selected scenario JSON/YAML editor
         </Typography>
         <FeatureCodeTextField
+          key={editorInstanceKey}
           value={editorText}
           onChange={onScenarioTextChange}
           minRows={15}

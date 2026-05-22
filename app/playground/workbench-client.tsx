@@ -141,6 +141,11 @@ import {
   mergeProtoFiles,
   normalizeApiCollections,
   normalizeProjectData,
+  createDefaultRestMockProject,
+  createDefaultWebSocketMockProject,
+  normalizeRestMockBindHost,
+  normalizeRestMockPort,
+  normalizeWebSocketMockPort,
   normalizeVisibleResponseTab,
   readStoredProject,
   runWhenIdle,
@@ -157,6 +162,7 @@ import {
 import {
   buildDefaultMockScenario,
   buildMockMappingRows,
+  clearInheritedMockStreamOverridesForDefaultChange,
   createDefaultMockServerProject,
   currentFileEmptyEditorText,
   ensureUniqueMockScenarioId,
@@ -246,7 +252,14 @@ import type {
   WorkspaceImportRecord,
   WorkspaceLayoutSnapshot,
   WebSocketMockStatus,
+  WebSocketMockProject,
+  WebSocketMockScenario,
   MockScenarioBundle,
+  RestAuthConfig,
+  RestBodyType,
+  RestMockProject,
+  RestMockScenario,
+  RestMockStatus,
 } from "./shared/workbench-types";
 import type { GrpcEvent, GrpcResult, LoadedProto, MetadataPair, ProtoSourceFile, RpcMethodInfo } from "@/lib/types";
 
@@ -298,7 +311,11 @@ function grpcBaseUrlFallback(candidate: string | undefined, fallback: string | u
   return "http://localhost:9080/grpc/web";
 }
 
-function stripGrpcMethodPathFromUrl(candidate: string | undefined, method: RpcMethodInfo, fallback: string | undefined) {
+function stripGrpcMethodPathFromUrl(
+  candidate: string | undefined,
+  method: RpcMethodInfo,
+  fallback: string | undefined,
+) {
   const base = grpcBaseUrlFallback(candidate, fallback).replace(/\/+$/, "");
   const suffixes = [`/${method.serviceName}/${method.methodName}`];
   const shortServiceName = method.serviceName.split(".").pop();
@@ -331,6 +348,8 @@ function defaultWebSocketMockResponse(name = "WebSocket Request") {
         request: name,
         count: "{{count}}",
         message: "Hello from mock WebSocket",
+        incomingMethod: "{{incoming.method}}",
+        requestId: "{{uuid}}",
         timestamp: "{{now}}",
       },
       {
@@ -343,6 +362,609 @@ function defaultWebSocketMockResponse(name = "WebSocket Request") {
     ],
     null,
     2,
+  );
+}
+
+function webSocketRequestPath(request: Pick<ApiCollectionRequest, "url"> | null | undefined) {
+  if (!request?.url) return "/mock/ws";
+  try {
+    return new URL(request.url, "ws://localhost").pathname || "/mock/ws";
+  } catch {
+    return request.url.startsWith("/") ? request.url.split(/[?#]/)[0] || "/mock/ws" : "/mock/ws";
+  }
+}
+
+function createWebSocketMockScenarioForRequest(
+  request: ApiCollectionRequest & { collectionName?: string },
+  overrides: Partial<WebSocketMockScenario> = {},
+): WebSocketMockScenario {
+  return {
+    id: overrides.id ?? createId(),
+    requestId: overrides.requestId ?? request.id,
+    name: overrides.name ?? `${request.name} scenario`,
+    enabled: overrides.enabled ?? true,
+    path: overrides.path ?? webSocketRequestPath(request),
+    responseText: overrides.responseText ?? request.mockResponse ?? defaultWebSocketMockResponse(request.name),
+    intervalMs: Math.max(1, Math.floor(Number(overrides.intervalMs) || 1000)),
+    loop: overrides.loop ?? false,
+    maxLoops: Math.max(0, Math.floor(Number(overrides.maxLoops) || 0)),
+    streamOnConnect: overrides.streamOnConnect ?? false,
+    sendOnMessage: overrides.sendOnMessage ?? false,
+    matchMode: overrides.matchMode ?? "always",
+    matchValue: overrides.matchValue ?? "",
+    matchJsonPath: overrides.matchJsonPath ?? "$.method",
+  };
+}
+
+function normalizeWebSocketMockPath(value: string) {
+  const path = (value || "/mock/ws").split(/[?#]/)[0].trim() || "/mock/ws";
+  return path.startsWith("/") ? path : `/${path}`;
+}
+
+const restMethods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
+
+function defaultRestMockResponse(name = "REST Request") {
+  return JSON.stringify({ ok: true, request: name, timestamp: "{{now}}" }, null, 2);
+}
+
+function restRequestPath(request: Pick<ApiCollectionRequest, "url">) {
+  try {
+    return new URL(request.url || "http://localhost", "http://localhost").pathname || "/";
+  } catch {
+    return request.url.startsWith("/") ? request.url : "/";
+  }
+}
+
+function createRestMockScenarioForRequest(
+  request: ApiCollectionRequest & { collectionName?: string },
+  overrides: Partial<RestMockScenario> = {},
+): RestMockScenario {
+  const path = restRequestPath(request);
+  return {
+    id: overrides.id ?? createId(),
+    name: overrides.name ?? `${request.name} success`,
+    enabled: overrides.enabled ?? true,
+    method: overrides.method ?? request.method ?? "GET",
+    path: overrides.path ?? path,
+    priority: overrides.priority ?? 0,
+    status: overrides.status ?? 200,
+    headers: overrides.headers ?? [{ key: "content-type", value: "application/json" }],
+    body: overrides.body ?? request.mockResponse ?? defaultRestMockResponse(request.name),
+    delayMs: overrides.delayMs ?? 0,
+    matchQuery: overrides.matchQuery ?? [],
+    matchHeaders: overrides.matchHeaders ?? [],
+    matchBodyContains: overrides.matchBodyContains ?? "",
+    matchJsonPath: overrides.matchJsonPath ?? "",
+    matchJsonEquals: overrides.matchJsonEquals ?? "",
+    ...overrides,
+    requestId: overrides.requestId ?? request.id,
+  };
+}
+
+function createRestMockPresetScenario(
+  request: ApiCollectionRequest & { collectionName?: string },
+  preset: "success" | "not-found" | "validation-error" | "delayed",
+): RestMockScenario {
+  if (preset === "not-found") {
+    return createRestMockScenarioForRequest(request, {
+      name: `${request.name} not found`,
+      priority: 20,
+      status: 404,
+      body: JSON.stringify({ error: "Not found", id: "{{request.path.id}}", timestamp: "{{now}}" }, null, 2),
+    });
+  }
+  if (preset === "validation-error") {
+    return createRestMockScenarioForRequest(request, {
+      name: `${request.name} validation error`,
+      priority: 30,
+      status: 422,
+      matchJsonPath: "$.invalid",
+      matchJsonEquals: "true",
+      body: JSON.stringify({ error: "Validation failed", field: "invalid", timestamp: "{{now}}" }, null, 2),
+    });
+  }
+  if (preset === "delayed") {
+    return createRestMockScenarioForRequest(request, {
+      name: `${request.name} delayed success`,
+      priority: 10,
+      delayMs: 750,
+      body: JSON.stringify({ ok: true, delayed: true, request: request.name, timestamp: "{{now}}" }, null, 2),
+    });
+  }
+  return createRestMockScenarioForRequest(request, { id: request.id, name: `${request.name} success` });
+}
+
+function restDocKey(request: Pick<ApiCollectionRequest, "id"> | null | undefined) {
+  return request?.id ? `rest:${request.id}` : "";
+}
+
+function findRestRequestForDocKey(collections: ApiCollection[], key: string) {
+  const requestId = key.startsWith("rest:") ? key.slice(5) : key;
+  for (const collection of collections) {
+    const request = collection.requests.find((item) => item.id === requestId && item.kind === "rest");
+    if (request) return { ...request, collectionName: collection.name };
+  }
+  return null;
+}
+
+function defaultRestAuth(): RestAuthConfig {
+  return { type: "none" };
+}
+
+function buildRestRequestUrl(request: ApiCollectionRequest, fallbackBaseUrl: string) {
+  let url = (request.url || fallbackBaseUrl || "http://127.0.0.1:3000").trim();
+  for (const param of request.restPathParams ?? []) {
+    const key = param.key.trim();
+    if (!key) continue;
+    const encodedValue = encodeURIComponent(param.value);
+    url = url.replaceAll(`:${key}`, encodedValue).replaceAll(`{${key}}`, encodedValue);
+  }
+
+  try {
+    const parsed = new URL(url, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+    for (const param of request.restParams ?? []) {
+      const key = param.key.trim();
+      if (key) parsed.searchParams.set(key, param.value);
+    }
+    const auth = request.restAuth ?? defaultRestAuth();
+    if (auth.type === "api-key" && auth.in === "query" && auth.key.trim()) {
+      parsed.searchParams.set(auth.key.trim(), auth.value);
+    }
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+function renderRestDocsMarkdown({
+  collectionRequest,
+  url,
+  latestResult,
+}: {
+  collectionRequest: ApiCollectionRequest & { collectionName?: string };
+  url: string;
+  latestResult: GrpcResult | null;
+}) {
+  const method = collectionRequest.method ?? "GET";
+  const headers = (collectionRequest.headers ?? []).filter((item) => item.key.trim());
+  const query = (collectionRequest.restParams ?? []).filter((item) => item.key.trim());
+  const path = (collectionRequest.restPathParams ?? []).filter((item) => item.key.trim());
+  return [
+    `# ${method} ${collectionRequest.name}`,
+    "",
+    `Collection: ${collectionRequest.collectionName ?? "Collection"}`,
+    "",
+    "## Request",
+    "",
+    `- Method: \`${method}\``,
+    `- URL: \`${url}\``,
+    `- Body type: \`${collectionRequest.restBodyType ?? "json"}\``,
+    `- Auth: \`${collectionRequest.restAuth?.type ?? "none"}\``,
+    "",
+    path.length ? "## Path params" : "",
+    ...path.map((item) => `- \`${item.key}\`: \`${item.value}\``),
+    path.length ? "" : "",
+    query.length ? "## Query params" : "",
+    ...query.map((item) => `- \`${item.key}\`: \`${item.value}\``),
+    query.length ? "" : "",
+    headers.length ? "## Headers" : "",
+    ...headers.map((item) => `- \`${item.key}\`: \`${item.value}\``),
+    headers.length ? "" : "",
+    collectionRequest.body.trim() ? "## Body" : "",
+    collectionRequest.body.trim() ? "```json" : "",
+    collectionRequest.body.trim() ? collectionRequest.body.trim() : "",
+    collectionRequest.body.trim() ? "```" : "",
+    latestResult ? "" : "",
+    latestResult ? "## Latest response" : "",
+    latestResult ? `- HTTP status: \`${latestResult.httpStatus ?? "unknown"}\`` : "",
+    latestResult ? `- Duration: \`${latestResult.durationMs}ms\`` : "",
+  ]
+    .filter((line, index, lines) => line || lines[index - 1])
+    .join("\n");
+}
+
+function RestPairEditor({
+  title,
+  rows,
+  onAdd,
+  onUpdate,
+  onRemove,
+}: {
+  title: string;
+  rows: MetadataPair[];
+  onAdd: () => void;
+  onUpdate: (index: number, field: keyof MetadataPair, value: string) => void;
+  onRemove: (index: number) => void;
+}) {
+  return (
+    <Stack spacing={0.7}>
+      <Stack direction="row" justifyContent="space-between" alignItems="center">
+        <Typography variant="subtitle1">{title}</Typography>
+        <Button size="small" startIcon={<Add />} onClick={onAdd}>
+          Add row
+        </Button>
+      </Stack>
+      <TableContainer component={Paper} variant="outlined">
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell>Key</TableCell>
+              <TableCell>Value</TableCell>
+              <TableCell width={56}>Action</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {rows.length ? (
+              rows.map((item, index) => (
+                <TableRow key={`${title}-${item.key || "blank"}-${item.value || "blank"}`}>
+                  <TableCell>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      value={item.key}
+                      onChange={(event: TextInputChangeEvent) => onUpdate(index, "key", event.target.value)}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      value={item.value}
+                      onChange={(event: TextInputChangeEvent) => onUpdate(index, "value", event.target.value)}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <IconButton size="small" color="error" onClick={() => onRemove(index)}>
+                      <Delete sx={{ fontSize: 16 }} />
+                    </IconButton>
+                  </TableCell>
+                </TableRow>
+              ))
+            ) : (
+              <TableRow>
+                <TableCell colSpan={3}>
+                  <Typography variant="caption" color="text.secondary">
+                    No {title.toLowerCase()} configured.
+                  </Typography>
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Stack>
+  );
+}
+
+function RestDocsPanel({
+  collectionRequest,
+  url,
+  latestResult,
+  doc,
+  onPreview,
+  onExport,
+  onPublish,
+  onUnpublish,
+}: {
+  collectionRequest: (ApiCollectionRequest & { collectionName?: string }) | null;
+  url: string;
+  latestResult: GrpcResult | null;
+  doc: MethodDoc | null;
+  onPreview: () => void;
+  onExport: () => void;
+  onPublish: () => void;
+  onUnpublish: () => void;
+}) {
+  const markdown = collectionRequest
+    ? renderRestDocsMarkdown({ collectionRequest, url, latestResult })
+    : "Select a REST request to preview generated docs.";
+  return (
+    <Stack spacing={1.2}>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="subtitle1" noWrap title={collectionRequest?.name ?? "REST docs"}>
+            REST docs
+          </Typography>
+          <Typography variant="caption" color="text.secondary" noWrap title={url}>
+            {url || collectionRequest?.url || "https://api.example.com"}
+          </Typography>
+        </Box>
+        <Stack direction="row" spacing={0.6} alignItems="center" flexWrap="wrap" justifyContent="flex-end">
+          <Button size="small" variant="outlined" onClick={onPreview} disabled={!collectionRequest}>
+            Preview
+          </Button>
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<Download />}
+            onClick={onExport}
+            disabled={!collectionRequest}
+          >
+            Export markdown
+          </Button>
+          {doc?.published ? (
+            <Button size="small" variant="outlined" onClick={onUnpublish}>
+              Unpublish
+            </Button>
+          ) : null}
+          <Button size="small" variant="contained" onClick={onPublish} disabled={!collectionRequest}>
+            {doc?.published ? "Update" : "Publish"}
+          </Button>
+        </Stack>
+      </Stack>
+      <Alert severity="info" variant="outlined">
+        Generated from the saved request and latest response.
+      </Alert>
+      <FeatureMarkdownPreview markdown={markdown} />
+    </Stack>
+  );
+}
+
+function RestMockPanel({
+  request,
+  scenarios,
+  activeScenario,
+  mockResponseText,
+  status,
+  project,
+  onMockResponseTextChange,
+  onPortChange,
+  onBindHostChange,
+  onScenarioSelect,
+  onScenarioChange,
+  onScenarioPairAdd,
+  onScenarioPairUpdate,
+  onScenarioPairRemove,
+  onAddScenario,
+  onStart,
+  onStop,
+}: {
+  request: (ApiCollectionRequest & { collectionName?: string }) | null;
+  scenarios: RestMockScenario[];
+  activeScenario: RestMockScenario | null;
+  mockResponseText: string;
+  status: RestMockStatus;
+  project: RestMockProject;
+  onMockResponseTextChange: (value: string) => void;
+  onPortChange: (value: number) => void;
+  onBindHostChange: (value: string) => void;
+  onScenarioSelect: (scenarioId: string) => void;
+  onScenarioChange: (patch: Partial<RestMockScenario>) => void;
+  onScenarioPairAdd: (field: "matchQuery" | "matchHeaders") => void;
+  onScenarioPairUpdate: (
+    field: "matchQuery" | "matchHeaders",
+    index: number,
+    pairField: keyof MetadataPair,
+    value: string,
+  ) => void;
+  onScenarioPairRemove: (field: "matchQuery" | "matchHeaders", index: number) => void;
+  onAddScenario: (preset: "success" | "not-found" | "validation-error" | "delayed") => void;
+  onStart: () => void;
+  onStop: () => void;
+}) {
+  return (
+    <Stack spacing={1.2}>
+      <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap" useFlexGap>
+        <Box>
+          <Typography variant="subtitle1">REST mock server</Typography>
+          <Typography variant="caption" color="text.secondary">
+            Mock saved REST requests with scenario priority, query/header/body matching, delay, and templates.
+          </Typography>
+        </Box>
+        <Stack direction="row" spacing={0.7} alignItems="center" flexWrap="wrap" useFlexGap>
+          <Chip
+            size="small"
+            color={status.running ? "success" : "default"}
+            label={status.running ? "Running" : "Stopped"}
+          />
+          {status.running ? (
+            <Button size="small" variant="outlined" color="warning" onClick={onStop}>
+              Stop
+            </Button>
+          ) : (
+            <Button size="small" variant="contained" startIcon={<PlayArrow />} onClick={onStart}>
+              Start
+            </Button>
+          )}
+        </Stack>
+      </Stack>
+      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+        <TextField
+          size="small"
+          label="Bind IP"
+          value={project.bindHost}
+          onChange={(event: TextInputChangeEvent) => onBindHostChange(event.target.value)}
+          sx={{ width: 180 }}
+        />
+        <TextField
+          size="small"
+          label="Port"
+          type="number"
+          value={project.port}
+          onChange={(event: TextInputChangeEvent) => onPortChange(Number(event.target.value))}
+          sx={{ width: 120 }}
+        />
+        <Typography variant="caption" color="text.secondary" sx={{ fontFamily: "monospace" }}>
+          {status.url ?? `http://${project.bindHost}:${project.port}`}
+        </Typography>
+      </Stack>
+      {request && activeScenario ? (
+        <Stack spacing={1.1}>
+          <Stack direction="row" spacing={0.8} alignItems="center" flexWrap="wrap" useFlexGap>
+            <FormControl size="small" sx={{ minWidth: 240 }}>
+              <Select
+                value={activeScenario.id}
+                onChange={(event: SelectInputChangeEvent) => onScenarioSelect(String(event.target.value))}
+              >
+                {scenarios.map((scenario) => (
+                  <MenuItem key={`rest-scenario-${scenario.id}`} value={scenario.id}>
+                    {scenario.name || scenario.id}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <Button size="small" variant="outlined" onClick={() => onAddScenario("success")}>
+              Success
+            </Button>
+            <Button size="small" variant="outlined" onClick={() => onAddScenario("not-found")}>
+              404
+            </Button>
+            <Button size="small" variant="outlined" onClick={() => onAddScenario("validation-error")}>
+              422
+            </Button>
+            <Button size="small" variant="outlined" onClick={() => onAddScenario("delayed")}>
+              Delayed
+            </Button>
+          </Stack>
+          <Stack direction="row" spacing={0.8} alignItems="center" flexWrap="wrap" useFlexGap>
+            <TextField
+              size="small"
+              label="Scenario name"
+              value={activeScenario.name}
+              onChange={(event: TextInputChangeEvent) => onScenarioChange({ name: event.target.value })}
+              sx={{ minWidth: 220, flex: 1 }}
+            />
+            <TextField
+              size="small"
+              label="Path"
+              value={activeScenario.path}
+              onChange={(event: TextInputChangeEvent) => onScenarioChange({ path: event.target.value })}
+              sx={{ minWidth: 220 }}
+            />
+            <TextField
+              size="small"
+              type="number"
+              label="Status"
+              value={activeScenario.status}
+              onChange={(event: TextInputChangeEvent) => onScenarioChange({ status: Number(event.target.value) })}
+              sx={{ width: 105 }}
+            />
+            <TextField
+              size="small"
+              type="number"
+              label="Priority"
+              value={activeScenario.priority ?? 0}
+              onChange={(event: TextInputChangeEvent) => onScenarioChange({ priority: Number(event.target.value) })}
+              sx={{ width: 105 }}
+            />
+            <TextField
+              size="small"
+              type="number"
+              label="Delay ms"
+              value={activeScenario.delayMs ?? 0}
+              onChange={(event: TextInputChangeEvent) => onScenarioChange({ delayMs: Number(event.target.value) })}
+              sx={{ width: 115 }}
+            />
+            <FormControl size="small" sx={{ width: 120 }}>
+              <Select
+                value={activeScenario.enabled ? "enabled" : "disabled"}
+                onChange={(event: SelectInputChangeEvent) =>
+                  onScenarioChange({ enabled: event.target.value === "enabled" })
+                }
+              >
+                <MenuItem value="enabled">Enabled</MenuItem>
+                <MenuItem value="disabled">Disabled</MenuItem>
+              </Select>
+            </FormControl>
+          </Stack>
+          <Paper variant="outlined" sx={{ p: 1, borderRadius: 2 }}>
+            <Stack spacing={1}>
+              <Typography variant="subtitle1">Matchers</Typography>
+              <RestPairEditor
+                title="Query must equal"
+                rows={activeScenario.matchQuery ?? []}
+                onAdd={() => onScenarioPairAdd("matchQuery")}
+                onUpdate={(index, field, value) => onScenarioPairUpdate("matchQuery", index, field, value)}
+                onRemove={(index) => onScenarioPairRemove("matchQuery", index)}
+              />
+              <RestPairEditor
+                title="Headers must equal"
+                rows={activeScenario.matchHeaders ?? []}
+                onAdd={() => onScenarioPairAdd("matchHeaders")}
+                onUpdate={(index, field, value) => onScenarioPairUpdate("matchHeaders", index, field, value)}
+                onRemove={(index) => onScenarioPairRemove("matchHeaders", index)}
+              />
+              <Stack direction="row" spacing={0.8} alignItems="center" flexWrap="wrap" useFlexGap>
+                <TextField
+                  size="small"
+                  label="Body contains"
+                  value={activeScenario.matchBodyContains ?? ""}
+                  onChange={(event: TextInputChangeEvent) =>
+                    onScenarioChange({ matchBodyContains: event.target.value })
+                  }
+                  sx={{ minWidth: 220, flex: 1 }}
+                />
+                <TextField
+                  size="small"
+                  label="JSON path"
+                  value={activeScenario.matchJsonPath ?? ""}
+                  onChange={(event: TextInputChangeEvent) => onScenarioChange({ matchJsonPath: event.target.value })}
+                  placeholder="$.data.id"
+                  sx={{ width: 180 }}
+                />
+                <TextField
+                  size="small"
+                  label="JSON equals"
+                  value={activeScenario.matchJsonEquals ?? ""}
+                  onChange={(event: TextInputChangeEvent) => onScenarioChange({ matchJsonEquals: event.target.value })}
+                  placeholder="123 or true"
+                  sx={{ width: 180 }}
+                />
+              </Stack>
+            </Stack>
+          </Paper>
+          <Stack spacing={0.8}>
+            <Typography variant="subtitle1">Response body</Typography>
+            <FeatureCodeTextField
+              value={mockResponseText}
+              onChange={onMockResponseTextChange}
+              minRows={7}
+              maxRows={12}
+              language="json"
+              formatAriaLabel="Prettier JSON"
+              fullscreenTitle="REST mock response editor"
+            />
+            <Typography variant="caption" color="text.secondary">
+              Templates: {"{{now}}"}, {"{{timestamp}}"}, {"{{uuid}}"}, {"{{request.path.id}}"},{" "}
+              {"{{request.query.name}}"}, {"{{request.header.authorization}}"}, {"{{request.bodyJson.data.id}}"}
+            </Typography>
+          </Stack>
+        </Stack>
+      ) : (
+        <Alert severity="info" variant="outlined">
+          Select a REST request to edit its mock scenarios.
+        </Alert>
+      )}
+      {status.requestLog?.length ? (
+        <Paper variant="outlined" sx={{ p: 1, borderRadius: 2 }}>
+          <Typography variant="subtitle1">Recent mock requests</Typography>
+          <TableContainer>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Time</TableCell>
+                  <TableCell>Method</TableCell>
+                  <TableCell>Path</TableCell>
+                  <TableCell>Status</TableCell>
+                  <TableCell>Scenario</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {status.requestLog.slice(0, 8).map((entry) => (
+                  <TableRow key={entry.id}>
+                    <TableCell>{formatTimestampShort(entry.timestamp)}</TableCell>
+                    <TableCell>{entry.method}</TableCell>
+                    <TableCell>{entry.path}</TableCell>
+                    <TableCell>{entry.status}</TableCell>
+                    <TableCell>{entry.scenarioId ?? "miss"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
+      ) : null}
+    </Stack>
   );
 }
 
@@ -402,6 +1024,11 @@ export default function PlaygroundPage() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [mockServer, setMockServer] = useState<MockServerProject>(() => createDefaultMockServerProject());
   const [mockServerStatus, setMockServerStatus] = useState<MockServerStatus>({ running: false });
+  const [restMockServer, setRestMockServer] = useState<RestMockProject>(() => createDefaultRestMockProject());
+  const [restMockStatus, setRestMockStatus] = useState<RestMockStatus>({ running: false });
+  const [restMockScenarioId, setRestMockScenarioId] = useState("");
+  const [wsMockServer, setWsMockServer] = useState<WebSocketMockProject>(() => createDefaultWebSocketMockProject());
+  const [wsMockScenarioId, setWsMockScenarioId] = useState("");
   const [mockSettingsOpen, setMockSettingsOpen] = useState(false);
   const [mockScenarioEditorDraft, setMockScenarioEditorDraft] = useState<{
     methodKey: string;
@@ -432,9 +1059,13 @@ export default function PlaygroundPage() {
   const [collectionNameDraft, setCollectionNameDraft] = useState("");
   const [requestNameDialogOpen, setRequestNameDialogOpen] = useState(false);
   const [requestNameDraft, setRequestNameDraft] = useState("");
+  const [requestKindDraft, setRequestKindDraft] = useState<ApiRequestKind>("websocket");
   const [requestTargetCollectionId, setRequestTargetCollectionId] = useState("");
   const pendingCollectionImportRef = useRef<string>("");
   const [workspaceFolderPath, setWorkspaceFolderPath] = useState("");
+  const [workspaceSetupOpen, setWorkspaceSetupOpen] = useState(false);
+  const [workspaceSetupDefaultPath, setWorkspaceSetupDefaultPath] = useState("");
+  const [workspaceSetupPending, setWorkspaceSetupPending] = useState(false);
   const [envMenuAnchor, setEnvMenuAnchor] = useState<HTMLElement | null>(null);
   const [envDialogOpen, setEnvDialogOpen] = useState(false);
   const [envDialogMode, setEnvDialogMode] = useState<"create" | "edit">("create");
@@ -448,13 +1079,6 @@ export default function PlaygroundPage() {
   const [wsBenchmarkIterations, setWsBenchmarkIterations] = useState(5);
   const [wsBenchmarkResults, setWsBenchmarkResults] = useState<BenchmarkResult[]>([]);
   const [wsBenchmarkRunning, setWsBenchmarkRunning] = useState(false);
-  const [wsMockResponseText, setWsMockResponseText] = useState(defaultWebSocketMockResponse());
-  const [wsMockPort, setWsMockPort] = useState(8090);
-  const [wsMockPath, setWsMockPath] = useState("/mock/ws");
-  const [wsMockIntervalMs, setWsMockIntervalMs] = useState(1000);
-  const [wsMockLoop, setWsMockLoop] = useState(false);
-  const [wsMockMaxLoops, setWsMockMaxLoops] = useState(0);
-  const [wsMockStreamOnConnect, setWsMockStreamOnConnect] = useState(false);
   const [wsMockStatus, setWsMockStatus] = useState<WebSocketMockStatus>({ running: false });
   const wsClientRef = useRef<ManagedWebSocketClient | null>(null);
   const [wsClientState, setWsClientState] = useState<WebSocketClientState>({
@@ -540,9 +1164,17 @@ export default function PlaygroundPage() {
       return nextLayout;
     }
 
+    function rememberWorkspaceFolder(nextPath: string) {
+      setWorkspaceFolderPath(nextPath);
+      window.localStorage.setItem(workspaceFolderStorageKey, nextPath);
+    }
+
     async function loadInitialWorkspace() {
       const cachedLayout = applyCachedLayout();
       const cachedProject = readStoredProject();
+      const workspacePreference = window.electronWorkspace?.getPreference
+        ? await window.electronWorkspace.getPreference().catch(() => null)
+        : null;
 
       if (storedWorkspacePath && window.electronWorkspace?.openFolder) {
         try {
@@ -556,8 +1188,7 @@ export default function PlaygroundPage() {
 
             if (localDraftIsNewer) {
               const nextPath = result.directoryPath ?? storedWorkspacePath;
-              setWorkspaceFolderPath(nextPath);
-              window.localStorage.setItem(workspaceFolderStorageKey, nextPath);
+              rememberWorkspaceFolder(nextPath);
               applyProject(cachedProject);
               setHydrated(true);
               return;
@@ -566,8 +1197,7 @@ export default function PlaygroundPage() {
             const imported = applyWorkspaceBundle(result.bundle);
             if (imported) {
               const nextPath = result.directoryPath ?? storedWorkspacePath;
-              setWorkspaceFolderPath(nextPath);
-              window.localStorage.setItem(workspaceFolderStorageKey, nextPath);
+              rememberWorkspaceFolder(nextPath);
               setHydrated(true);
               return;
             }
@@ -578,6 +1208,16 @@ export default function PlaygroundPage() {
       }
 
       if (cancelled) return;
+
+      if (!storedWorkspacePath && workspacePreference?.ok && !workspacePreference.hasCustomPreference) {
+        setWorkspaceSetupDefaultPath(
+          workspacePreference.defaultDirectoryPath ?? workspacePreference.directoryPath ?? "",
+        );
+        applyProject(cachedProject);
+        setHydrated(true);
+        setWorkspaceSetupOpen(true);
+        return;
+      }
 
       if (window.electronWorkspace?.ensureDefaultFolder) {
         try {
@@ -592,8 +1232,7 @@ export default function PlaygroundPage() {
           };
           const result = await window.electronWorkspace.ensureDefaultFolder(defaultWorkspaceBundle);
           if (!cancelled && result.ok && result.directoryPath) {
-            setWorkspaceFolderPath(result.directoryPath);
-            window.localStorage.setItem(workspaceFolderStorageKey, result.directoryPath);
+            rememberWorkspaceFolder(result.directoryPath);
             if (result.bundle && !result.created) {
               const imported = applyWorkspaceBundle(result.bundle);
               if (imported) {
@@ -617,6 +1256,53 @@ export default function PlaygroundPage() {
       cancelled = true;
     };
   }, [prefersDark]);
+
+  async function applyWorkspacePreference(directoryPath?: string) {
+    if (!window.electronWorkspace?.ensureFolder) return;
+
+    setWorkspaceSetupPending(true);
+    try {
+      if (directoryPath) {
+        await window.electronWorkspace.setPreference?.(directoryPath);
+      } else {
+        await window.electronWorkspace.setPreference?.("");
+      }
+
+      const targetPath = directoryPath || workspaceSetupDefaultPath;
+      const result = await window.electronWorkspace.ensureFolder(getWorkspaceExportBundle(), targetPath);
+      if (!result.ok || !result.directoryPath) {
+        showToast(result.error || "Workspace folder setup failed.", "error");
+        return;
+      }
+
+      if (result.bundle && !result.created) {
+        const imported = applyWorkspaceBundle(result.bundle);
+        if (!imported) {
+          showToast("The selected folder does not contain supported workspace data.", "warning");
+        }
+      }
+
+      setWorkspaceSetupOpen(false);
+      setWorkspaceFolderPath(result.directoryPath);
+      window.localStorage.setItem(workspaceFolderStorageKey, result.directoryPath);
+      showToast("Workspace folder configured.", "success");
+    } catch (err) {
+      showToast(`Workspace folder setup failed: ${toErrorMessage(err)}`, "error");
+    } finally {
+      setWorkspaceSetupPending(false);
+    }
+  }
+
+  async function chooseCustomWorkspacePreference() {
+    if (!window.electronWorkspace?.chooseFolder) return;
+    try {
+      const result = await window.electronWorkspace.chooseFolder("Choose Layang workspace folder");
+      if (!result.ok || result.cancelled || !result.directoryPath) return;
+      await applyWorkspacePreference(result.directoryPath);
+    } catch (err) {
+      showToast(`Open workspace folder failed: ${toErrorMessage(err)}`, "error");
+    }
+  }
 
   useEffect(() => {
     return () => {
@@ -655,7 +1341,10 @@ export default function PlaygroundPage() {
 
       if (hasTabModifier && (event.key === "PageUp" || event.key === "PageDown") && requestSessions.length > 1) {
         event.preventDefault();
-        const activeIndex = Math.max(0, requestSessions.findIndex((session) => session.id === activeRequestId));
+        const activeIndex = Math.max(
+          0,
+          requestSessions.findIndex((session) => session.id === activeRequestId),
+        );
         const direction = event.key === "PageUp" ? -1 : 1;
         const nextIndex = (activeIndex + direction + requestSessions.length) % requestSessions.length;
         activateRequestSession(requestSessions[nextIndex]);
@@ -736,6 +1425,8 @@ export default function PlaygroundPage() {
     assertionJson,
     history,
     mockServer,
+    restMockServer,
+    wsMockServer,
     requestSessions,
     activeRequestId,
   ]);
@@ -809,6 +1500,8 @@ export default function PlaygroundPage() {
     assertionJson,
     history,
     mockServer,
+    restMockServer,
+    wsMockServer,
     requestSessions,
     activeRequestId,
     sidebarOpen,
@@ -988,7 +1681,8 @@ export default function PlaygroundPage() {
   const activeCollectionKey = activeCollectionRequest
     ? `${activeCollectionRequest.collectionName ?? "Collection"}/${activeCollectionRequest.name}`
     : "";
-  const activeDocKey = activeMethodKey || webSocketDocKey(activeCollectionRequest);
+  const activeDocKey =
+    activeMethodKey || webSocketDocKey(activeCollectionRequest) || restDocKey(activeCollectionRequest);
   const activeExampleKey = activeMethodKey || activeCollectionKey;
   const currentExamples = useMemo(
     () => (activeExampleKey ? examples.filter((example) => savedExampleKey(example) === activeExampleKey) : []),
@@ -998,10 +1692,72 @@ export default function PlaygroundPage() {
     () => (activeExampleKey ? history.filter((item) => item.method === activeExampleKey) : []),
     [history, activeExampleKey],
   );
-  const activeWebSocketMockResponseText =
+  const activeWebSocketMockScenarios = useMemo(() => {
+    if (activeCollectionRequest?.kind !== "websocket") return [];
+    const related = wsMockServer.scenarios.filter(
+      (scenario) => scenario.requestId === activeCollectionRequest.id || scenario.id === activeCollectionRequest.id,
+    );
+    if (related.length) return related;
+    return [createWebSocketMockScenarioForRequest(activeCollectionRequest, { id: activeCollectionRequest.id })];
+  }, [activeCollectionRequest, wsMockServer.scenarios]);
+  const selectedWebSocketScenarioId =
     activeCollectionRequest?.kind === "websocket"
-      ? (activeCollectionRequest.mockResponse ?? wsMockResponseText)
-      : wsMockResponseText;
+      ? wsMockServer.selectedScenarioIds[activeCollectionRequest.id] || wsMockScenarioId || ""
+      : "";
+  const activeWebSocketMockScenario =
+    activeWebSocketMockScenarios.find((scenario) => scenario.id === selectedWebSocketScenarioId) ??
+    activeWebSocketMockScenarios[0] ??
+    null;
+  const activeWebSocketMockResponseText =
+    activeWebSocketMockScenario?.responseText ??
+    activeCollectionRequest?.mockResponse ??
+    defaultWebSocketMockResponse(activeCollectionRequest?.name);
+  const wsMockPort = wsMockServer.port;
+  const wsMockPath = activeWebSocketMockScenario?.path ?? webSocketRequestPath(activeCollectionRequest);
+  const wsMockIntervalMs = activeWebSocketMockScenario?.intervalMs ?? 1000;
+  const wsMockLoop = activeWebSocketMockScenario?.loop ?? false;
+  const wsMockMaxLoops = activeWebSocketMockScenario?.maxLoops ?? 0;
+  const wsMockStreamOnConnect = activeWebSocketMockScenario?.streamOnConnect ?? false;
+  const wsMockSidebarRows = useMemo(() => {
+    const requestsById = new Map<string, ApiCollectionRequest & { collectionName?: string }>();
+    for (const collection of collections) {
+      for (const request of collection.requests) {
+        if (request.kind === "websocket") requestsById.set(request.id, { ...request, collectionName: collection.name });
+      }
+    }
+    return buildWebSocketMockPayload(wsMockServer).scenarios.map((scenario) => {
+      const request = scenario.requestId ? requestsById.get(scenario.requestId) : undefined;
+      return {
+        id: scenario.id,
+        scenarioId: scenario.id,
+        requestId: scenario.requestId,
+        name: scenario.name,
+        requestName: request?.name ?? scenario.name,
+        path: scenario.path,
+        enabled: scenario.enabled !== false,
+        intervalMs: scenario.intervalMs,
+        loop: scenario.loop,
+        maxLoops: scenario.maxLoops,
+        url: `ws://127.0.0.1:${wsMockStatus.port ?? wsMockServer.port}${scenario.path}`,
+      };
+    });
+  }, [collections, wsMockServer, wsMockStatus.port]);
+  const activeRestMockScenarios = useMemo(() => {
+    if (activeCollectionRequest?.kind !== "rest") return [];
+    const related = restMockServer.scenarios.filter(
+      (scenario) => scenario.requestId === activeCollectionRequest.id || scenario.id === activeCollectionRequest.id,
+    );
+    if (related.length) return related;
+    return [createRestMockPresetScenario(activeCollectionRequest, "success")];
+  }, [activeCollectionRequest, restMockServer.scenarios]);
+  const activeRestMockScenario =
+    activeRestMockScenarios.find((scenario) => scenario.id === restMockScenarioId) ??
+    activeRestMockScenarios[0] ??
+    null;
+  const activeRestMockResponseText =
+    activeRestMockScenario?.body ??
+    activeCollectionRequest?.mockResponse ??
+    defaultRestMockResponse(activeCollectionRequest?.name);
   const latestResultByMethod = useMemo(() => buildLatestResultByMethod(requestSessions), [requestSessions]);
   const savedDocResultByMethod = useMemo(() => buildSavedDocResultByMethod(docResults), [docResults]);
   const currentMethodDoc = useMemo(
@@ -1021,6 +1777,45 @@ export default function PlaygroundPage() {
       }
     );
   }, [methodDocs, activeCollectionRequest]);
+  const currentRestDoc = useMemo(() => {
+    const key = restDocKey(activeCollectionRequest);
+    if (!key || activeCollectionRequest?.kind !== "rest") return null;
+    return (
+      methodDocs.find((doc) => doc.methodKey === key) ?? {
+        methodKey: key,
+        serviceName: activeCollectionRequest.collectionName ?? "REST Collection",
+        methodName: activeCollectionRequest.name,
+        published: false,
+        updatedAt: activeCollectionRequest.updatedAt,
+      }
+    );
+  }, [methodDocs, activeCollectionRequest]);
+
+  useEffect(() => {
+    if (activeCollectionRequest?.kind !== "rest") {
+      if (restMockScenarioId) setRestMockScenarioId("");
+      return;
+    }
+    if (!activeRestMockScenarios.length) return;
+    if (!activeRestMockScenarios.some((scenario) => scenario.id === restMockScenarioId)) {
+      setRestMockScenarioId(activeRestMockScenarios[0].id);
+    }
+  }, [activeCollectionRequest, activeRestMockScenarios, restMockScenarioId]);
+
+  useEffect(() => {
+    if (activeCollectionRequest?.kind !== "websocket") {
+      if (wsMockScenarioId) setWsMockScenarioId("");
+      return;
+    }
+    if (!activeWebSocketMockScenarios.length) return;
+    const selectedScenarioId = wsMockServer.selectedScenarioIds[activeCollectionRequest.id] || wsMockScenarioId;
+    if (!activeWebSocketMockScenarios.some((scenario) => scenario.id === selectedScenarioId)) {
+      selectWebSocketMockScenario(activeWebSocketMockScenarios[0].id);
+    } else if (selectedScenarioId !== wsMockScenarioId) {
+      setWsMockScenarioId(selectedScenarioId);
+    }
+  }, [activeCollectionRequest, activeWebSocketMockScenarios, wsMockScenarioId, wsMockServer.selectedScenarioIds]);
+
   const activeDocsResult = activeMethodKey
     ? (savedDocResultByMethod.get(activeMethodKey) ?? latestResultByMethod.get(activeMethodKey) ?? null)
     : null;
@@ -1059,7 +1854,24 @@ export default function PlaygroundPage() {
           }),
         };
       });
-    return [...grpcDocs, ...wsDocs];
+    const restDocs = methodDocs
+      .filter((doc) => doc.published && doc.methodKey.startsWith("rest:"))
+      .map((doc) => {
+        const request = findRestRequestForDocKey(collections, doc.methodKey);
+        if (!request) return doc;
+        const session = requestSessions.find((item) => item.methodKey === request.id);
+        return {
+          ...doc,
+          serviceName: request.collectionName ?? doc.serviceName,
+          methodName: request.name,
+          generatedMarkdown: renderRestDocsMarkdown({
+            collectionRequest: request,
+            url: session?.requestUrl || buildRestRequestUrl(request, session?.baseUrl || request.url),
+            latestResult: session?.lastResult ?? null,
+          }),
+        };
+      });
+    return [...grpcDocs, ...wsDocs, ...restDocs];
   }, [
     loaded,
     methodDocs,
@@ -1127,17 +1939,22 @@ export default function PlaygroundPage() {
 
   const rawActiveTransportMode = activeSession?.transportMode ?? transportMode;
   const activeIsWebSocket = activeCollectionRequest?.kind === "websocket" || activeSession?.requestKind === "websocket";
+  const activeIsRest = activeCollectionRequest?.kind === "rest" || activeSession?.requestKind === "rest";
   const activeTransportMode: TransportMode = activeIsWebSocket
     ? "websocket"
-    : rawActiveTransportMode === "websocket"
-      ? "grpc-web"
-      : rawActiveTransportMode;
+    : activeIsRest
+      ? "rest"
+      : rawActiveTransportMode === "websocket" || rawActiveTransportMode === "rest"
+        ? "grpc-web"
+        : rawActiveTransportMode;
   const webSocketSubprotocolValue = activeIsWebSocket
     ? (metadata.find((item) => item.key.trim().toLowerCase() === "sec-websocket-protocol")?.value ?? "")
     : "";
   const activeBaseUrl = activeIsWebSocket
     ? (activeSession?.baseUrl ?? activeCollectionRequest?.url ?? "ws://localhost:8080")
-    : grpcBaseUrlFallback(activeSession?.baseUrl, baseUrl);
+    : activeIsRest
+      ? (activeSession?.baseUrl ?? activeCollectionRequest?.url ?? "http://127.0.0.1:3000")
+      : grpcBaseUrlFallback(activeSession?.baseUrl, baseUrl);
   const activeNativeTarget = activeSession?.nativeTarget ?? nativeTarget;
   const activeEnvironmentKey = activeSession?.environmentKey ?? environmentKey;
   const activeTargetTransport: TransportMode = activeTransportMode === "native-grpc" ? "grpc-web" : activeTransportMode;
@@ -1192,29 +2009,13 @@ export default function PlaygroundPage() {
   useEffect(() => {
     if (!wsMockStatus.running || !window.electronWsMock?.update) return;
     const timer = window.setTimeout(() => {
-      void window.electronWsMock
-        ?.update?.({
-          responseText: activeWebSocketMockResponseText,
-          intervalMs: wsMockIntervalMs,
-          loop: wsMockLoop,
-          maxLoops: wsMockMaxLoops,
-          streamOnConnect: wsMockStreamOnConnect,
-          sendOnMessage: false,
-        })
-        .then((result) => {
-          if (result?.ok)
-            setWsMockStatus((current) => ({ ...current, ...result, running: result.running ?? current.running }));
-        });
+      void window.electronWsMock?.update?.(buildWebSocketMockPayload()).then((result) => {
+        if (result?.ok)
+          setWsMockStatus((current) => ({ ...current, ...result, running: result.running ?? current.running }));
+      });
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [
-    activeWebSocketMockResponseText,
-    wsMockIntervalMs,
-    wsMockLoop,
-    wsMockMaxLoops,
-    wsMockStreamOnConnect,
-    wsMockStatus.running,
-  ]);
+  }, [collections, wsMockServer, wsMockStatus.running]);
 
   useEffect(() => {
     if (!wsMockStatus.running || !window.electronWsMock?.status) return;
@@ -1225,6 +2026,24 @@ export default function PlaygroundPage() {
     }, 1500);
     return () => window.clearInterval(timer);
   }, [wsMockStatus.running]);
+
+  useEffect(() => {
+    if (!restMockStatus.running || !window.electronRestMock?.update) return;
+    const timer = window.setTimeout(() => {
+      void updateRunningRestMockServer();
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [collections, restMockServer, restMockStatus.running]);
+
+  useEffect(() => {
+    if (!restMockStatus.running || !window.electronRestMock?.status) return;
+    const timer = window.setInterval(() => {
+      void window.electronRestMock?.status?.().then((result) => {
+        setRestMockStatus((current) => (current.running || result?.running ? { ...current, ...result } : current));
+      });
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [restMockStatus.running]);
 
   useEffect(() => {
     setMockScenarioEditorDraft(null);
@@ -1293,13 +2112,19 @@ export default function PlaygroundPage() {
     }
   }, [loaded, selectedMethod]);
 
-  const previewUrl = selectedMethod
-    ? activeTransportMode === "native-grpc"
-      ? `${draftEffectiveNativeTarget.replace(/\/+$/, "")}/${selectedMethod.serviceName}/${selectedMethod.methodName}`
-      : buildGrpcWebUrl(draftEffectiveBaseUrl, selectedMethod.serviceName, selectedMethod.methodName)
-    : isNativeTransport
-      ? draftEffectiveNativeTarget
-      : draftEffectiveBaseUrl;
+  const previewUrl =
+    activeIsRest && activeCollectionRequest
+      ? buildRestRequestUrl(
+          { ...activeCollectionRequest, url: targetDraft || activeCollectionRequest.url },
+          draftEffectiveBaseUrl,
+        )
+      : selectedMethod
+        ? activeTransportMode === "native-grpc"
+          ? `${draftEffectiveNativeTarget.replace(/\/+$/, "")}/${selectedMethod.serviceName}/${selectedMethod.methodName}`
+          : buildGrpcWebUrl(draftEffectiveBaseUrl, selectedMethod.serviceName, selectedMethod.methodName)
+        : isNativeTransport
+          ? draftEffectiveNativeTarget
+          : draftEffectiveBaseUrl;
 
   const messageEvents = events.filter((event) => event.kind === "message");
   const reportPayload = useMemo(
@@ -1338,16 +2163,25 @@ export default function PlaygroundPage() {
             { value: "docs", label: "Docs" },
             { value: "benchmark", label: "Benchmark" },
           ]
-        : [
-            { value: "body", label: "Body" },
-            { value: "metadata", label: "Metadata" },
-            { value: "schema", label: "Schema" },
-            { value: "docs", label: "Docs" },
-            { value: "benchmark", label: "Benchmark" },
-            { value: "examples", label: currentExamples.length ? `Examples ${currentExamples.length}` : "Examples" },
-            { value: "mock", label: "Mock" },
-          ],
-    [activeIsWebSocket, currentExamples.length],
+        : activeIsRest
+          ? [
+              { value: "body", label: "Body" },
+              { value: "metadata", label: "Headers" },
+              { value: "schema", label: "Auth & Params" },
+              { value: "docs", label: "Docs" },
+              { value: "examples", label: currentExamples.length ? `Examples ${currentExamples.length}` : "Examples" },
+              { value: "mock", label: "Mock" },
+            ]
+          : [
+              { value: "body", label: "Body" },
+              { value: "metadata", label: "Metadata" },
+              { value: "schema", label: "Schema" },
+              { value: "docs", label: "Docs" },
+              { value: "benchmark", label: "Benchmark" },
+              { value: "examples", label: currentExamples.length ? `Examples ${currentExamples.length}` : "Examples" },
+              { value: "mock", label: "Mock" },
+            ],
+    [activeIsWebSocket, activeIsRest, currentExamples.length],
   );
 
   useEffect(() => {
@@ -1411,6 +2245,8 @@ export default function PlaygroundPage() {
       assertionJson,
       history: history.slice(0, 50),
       mockServer,
+      restMockServer,
+      wsMockServer,
       requestTabs: requestSessions.map(compactRequestSessionForStorage),
       activeRequestId,
     };
@@ -1424,13 +2260,15 @@ export default function PlaygroundPage() {
     nextCollections: ApiCollection[],
     nextLoaded: LoadedProto | null,
   ): RequestSession[] {
-    const restored = sessions.map((session) => {
+    const restored = sessions.map((session): RequestSession => {
       if (session.requestKind !== "grpc" || !nextLoaded) return session;
 
       const collectionRequest =
         findCollectionRequestById(nextCollections, session.methodKey) ??
         nextCollections
-          .flatMap((collection) => collection.requests.map((request) => ({ ...request, collectionName: collection.name })))
+          .flatMap((collection) =>
+            collection.requests.map((request) => ({ ...request, collectionName: collection.name })),
+          )
           .find((request) => request.kind === "grpc" && request.grpcMethodKey === session.methodKey) ??
         null;
       const grpcMethodKey = collectionRequest?.grpcMethodKey ?? session.methodKey;
@@ -1438,8 +2276,6 @@ export default function PlaygroundPage() {
 
       const grpcMethod = nextLoaded.methods.find((method) => methodKey(method) === grpcMethodKey);
       if (!grpcMethod) return session;
-
-      const transportMode: TransportMode = session.transportMode === "native-grpc" ? "native-grpc" : "grpc-web";
 
       return {
         ...session,
@@ -1451,7 +2287,7 @@ export default function PlaygroundPage() {
         httpMethod: undefined,
         requestJson: session.requestJson?.trim() ? session.requestJson : (collectionRequest?.body ?? "{}"),
         metadata: session.metadata.length ? session.metadata : (collectionRequest?.headers ?? []),
-        transportMode,
+        transportMode: session.transportMode === "native-grpc" ? "native-grpc" : "grpc-web",
         baseUrl: stripGrpcMethodPathFromUrl(session.baseUrl || collectionRequest?.url, grpcMethod, baseUrl),
       };
     });
@@ -1489,6 +2325,8 @@ export default function PlaygroundPage() {
     setAssertionJson(project.assertionJson || defaultAssertion);
     setHistory(project.history ?? []);
     setMockServer(normalizeMockServerProject(project.mockServer));
+    setRestMockServer(project.restMockServer ?? createDefaultRestMockProject());
+    setWsMockServer(project.wsMockServer ?? createDefaultWebSocketMockProject());
     setEvents([]);
     setLastResult(null);
     setAssertionResults([]);
@@ -1528,8 +2366,7 @@ export default function PlaygroundPage() {
         return;
       }
 
-      const activeSession =
-        restoredTabs.find((session) => session.id === restoredActiveRequestId) ?? restoredTabs[0];
+      const activeSession = restoredTabs.find((session) => session.id === restoredActiveRequestId) ?? restoredTabs[0];
       if (activeSession?.requestKind) {
         activateRequestSession(activeSession);
         return;
@@ -2110,9 +2947,7 @@ export default function PlaygroundPage() {
     if (session.requestKind === "grpc" && loaded) {
       const collectionGrpcRequest = findCollectionRequestById(collections, session.methodKey);
       const grpcMethodKey = collectionGrpcRequest?.grpcMethodKey ?? "";
-      const grpcMethod = grpcMethodKey
-        ? loaded.methods.find((method) => methodKey(method) === grpcMethodKey)
-        : null;
+      const grpcMethod = grpcMethodKey ? loaded.methods.find((method) => methodKey(method) === grpcMethodKey) : null;
       if (grpcMethod) {
         setActiveCollectionRequestId("");
         setSelectedMethodKey(grpcMethodKey);
@@ -2132,11 +2967,14 @@ export default function PlaygroundPage() {
     const nextTransportMode: TransportMode =
       session.requestKind === "websocket"
         ? "websocket"
-        : session.transportMode === "websocket"
-          ? "grpc-web"
-          : (session.transportMode ?? transportMode);
+        : session.requestKind === "rest"
+          ? "rest"
+          : session.transportMode === "websocket" || session.transportMode === "rest"
+            ? "grpc-web"
+            : (session.transportMode ?? transportMode);
     setTransportMode(nextTransportMode);
-    if (session.requestKind !== "websocket") setBaseUrl(grpcBaseUrlFallback(session.baseUrl, baseUrl));
+    if (session.requestKind === "rest") setBaseUrl(session.baseUrl || session.requestUrl || "http://127.0.0.1:3000");
+    else if (session.requestKind !== "websocket") setBaseUrl(grpcBaseUrlFallback(session.baseUrl, baseUrl));
     setNativeTarget(session.nativeTarget ?? nativeTarget);
     setEnvironmentKey(session.environmentKey ?? environmentKey);
     setAssertionJson(session.assertionJson ?? assertionJson);
@@ -2310,9 +3148,147 @@ export default function PlaygroundPage() {
     );
   }
 
+  function updateActiveRestMethod(method: string) {
+    const value = method.toUpperCase();
+    updateActiveSession({ httpMethod: value });
+    patchActiveCollectionRequest({ method: value });
+  }
+
+  function updateActiveRestBodyType(value: RestBodyType) {
+    patchActiveCollectionRequest({ restBodyType: value });
+  }
+
+  function updateActiveRestAuth(auth: RestAuthConfig) {
+    patchActiveCollectionRequest({ restAuth: auth });
+  }
+
+  function updateRestPairList(field: "restParams" | "restPathParams", rows: MetadataPair[]) {
+    patchActiveCollectionRequest({ [field]: rows } as Partial<ApiCollectionRequest>);
+  }
+
+  function updateRestPairRow(
+    field: "restParams" | "restPathParams",
+    index: number,
+    key: keyof MetadataPair,
+    value: string,
+  ) {
+    if (!activeCollectionRequest) return;
+    const current =
+      field === "restParams"
+        ? (activeCollectionRequest.restParams ?? [])
+        : (activeCollectionRequest.restPathParams ?? []);
+    const next = current.map((item, itemIndex) => (itemIndex === index ? { ...item, [key]: value } : item));
+    updateRestPairList(field, next);
+  }
+
+  function addRestPairRow(field: "restParams" | "restPathParams") {
+    if (!activeCollectionRequest) return;
+    const current =
+      field === "restParams"
+        ? (activeCollectionRequest.restParams ?? [])
+        : (activeCollectionRequest.restPathParams ?? []);
+    updateRestPairList(field, [...current, { key: "", value: "" }]);
+  }
+
+  function removeRestPairRow(field: "restParams" | "restPathParams", index: number) {
+    if (!activeCollectionRequest) return;
+    const current =
+      field === "restParams"
+        ? (activeCollectionRequest.restParams ?? [])
+        : (activeCollectionRequest.restPathParams ?? []);
+    updateRestPairList(
+      field,
+      current.filter((_, itemIndex) => itemIndex !== index),
+    );
+  }
+
+  function selectWebSocketMockScenario(scenarioId: string) {
+    setWsMockScenarioId(scenarioId);
+    if (activeCollectionRequest?.kind !== "websocket") return;
+    setWsMockServer((current) => ({
+      ...current,
+      selectedScenarioIds: { ...current.selectedScenarioIds, [activeCollectionRequest.id]: scenarioId },
+      updatedAt: new Date().toISOString(),
+    }));
+  }
+
+  function updateActiveWebSocketMockScenario(patch: Partial<WebSocketMockScenario>) {
+    if (activeCollectionRequest?.kind !== "websocket") return;
+    const scenarioId = activeWebSocketMockScenario?.id ?? wsMockScenarioId;
+    setWsMockServer((current) => {
+      const payload = buildWebSocketMockPayload(current);
+      const scenarios = payload.scenarios.length
+        ? payload.scenarios
+        : [createWebSocketMockScenarioForRequest(activeCollectionRequest, { id: activeCollectionRequest.id })];
+      const hasScenario = scenarios.some((scenario) => scenario.id === scenarioId);
+      const fallback = createWebSocketMockScenarioForRequest(activeCollectionRequest, {
+        id: activeCollectionRequest.id,
+      });
+      const targetId = hasScenario ? scenarioId : fallback.id;
+      const nextScenarios = (hasScenario ? scenarios : [fallback, ...scenarios]).map((scenario) =>
+        scenario.id === targetId ? { ...scenario, ...patch, requestId: activeCollectionRequest.id } : scenario,
+      );
+      return { ...current, scenarios: nextScenarios, updatedAt: new Date().toISOString() };
+    });
+  }
+
   function updateActiveWebSocketMockResponse(value: string) {
-    setWsMockResponseText(value);
-    if (activeCollectionRequest?.kind === "websocket") patchActiveCollectionRequest({ mockResponse: value });
+    if (activeCollectionRequest?.kind !== "websocket") return;
+    updateActiveWebSocketMockScenario({ responseText: value });
+    if (activeWebSocketMockScenario?.id === activeCollectionRequest.id || !activeWebSocketMockScenario) {
+      patchActiveCollectionRequest({ mockResponse: value });
+    }
+  }
+
+  function updateWebSocketMockScenario(scenarioId: string, patch: Partial<WebSocketMockScenario>) {
+    if (!scenarioId) return;
+    setWsMockServer((current) => {
+      const payload = buildWebSocketMockPayload(current);
+      const nextScenarios = payload.scenarios.map((scenario) =>
+        scenario.id === scenarioId ? { ...scenario, ...patch } : scenario,
+      );
+      return { ...current, scenarios: nextScenarios, updatedAt: new Date().toISOString() };
+    });
+  }
+
+  function addWebSocketMockScenario() {
+    if (activeCollectionRequest?.kind !== "websocket") return;
+    const scenario = createWebSocketMockScenarioForRequest(activeCollectionRequest, {
+      name: `${activeCollectionRequest.name} scenario ${activeWebSocketMockScenarios.length + 1}`,
+    });
+    setWsMockScenarioId(scenario.id);
+    setWsMockServer((current) => ({
+      ...current,
+      scenarios: [...buildWebSocketMockPayload(current).scenarios, scenario],
+      selectedScenarioIds: { ...current.selectedScenarioIds, [activeCollectionRequest.id]: scenario.id },
+      updatedAt: new Date().toISOString(),
+    }));
+  }
+
+  function openWebSocketMockScenarioFromSidebar(requestId: string | undefined, scenarioId: string) {
+    if (requestId) {
+      setWsMockServer((current) => ({
+        ...current,
+        selectedScenarioIds: { ...current.selectedScenarioIds, [requestId]: scenarioId },
+        updatedAt: new Date().toISOString(),
+      }));
+      setWsMockScenarioId(scenarioId);
+      for (const collection of collections) {
+        const request = collection.requests.find((item) => item.id === requestId && item.kind === "websocket");
+        if (request) {
+          selectCollectionRequest(collection, request);
+          setRequestTab("mock");
+          return;
+        }
+      }
+    }
+    selectWebSocketMockScenario(scenarioId);
+    setRequestTab("mock");
+  }
+
+  function handleWebSocketMockPortChange(value: number) {
+    const port = normalizeWebSocketMockPort(value);
+    setWsMockServer((current) => ({ ...current, port, updatedAt: new Date().toISOString() }));
   }
 
   async function copyActiveWebSocketMockResponse() {
@@ -2331,40 +3307,215 @@ export default function PlaygroundPage() {
     patchActiveCollectionRequest({ headers: next });
   }
 
-  function buildWebSocketMockPayload() {
+  function buildWebSocketMockPayload(project = wsMockServer): Pick<WebSocketMockProject, "port" | "scenarios"> {
+    const wsRequests = collections.flatMap((collection) =>
+      collection.requests
+        .filter((request) => request.kind === "websocket")
+        .map((request) => ({ ...request, collectionName: collection.name })),
+    );
+    const scenarios: WebSocketMockScenario[] = project.scenarios
+      .filter((scenario) => {
+        if (!scenario.requestId) return true;
+        return wsRequests.some((request) => request.id === scenario.requestId);
+      })
+      .map((scenario) => ({
+        ...scenario,
+        path: normalizeWebSocketMockPath(scenario.path),
+        intervalMs: Math.max(1, Math.floor(Number(scenario.intervalMs) || 1000)),
+        maxLoops: Math.max(0, Math.floor(Number(scenario.maxLoops) || 0)),
+        loop: Boolean(scenario.loop),
+        streamOnConnect: Boolean(scenario.streamOnConnect),
+        sendOnMessage: Boolean(scenario.sendOnMessage),
+        matchMode:
+          scenario.matchMode === "contains" || scenario.matchMode === "regex" || scenario.matchMode === "jsonPath"
+            ? scenario.matchMode
+            : "always",
+        matchValue: scenario.matchValue ?? "",
+        matchJsonPath: scenario.matchJsonPath ?? "",
+      }));
+
+    for (const request of wsRequests) {
+      const hasScenario = scenarios.some((scenario) => scenario.requestId === request.id || scenario.id === request.id);
+      if (!hasScenario) scenarios.push(createWebSocketMockScenarioForRequest(request, { id: request.id }));
+    }
+
+    const selectedScenarioIds = project.selectedScenarioIds ?? {};
+    scenarios.sort((left, right) => {
+      const leftSelected = left.requestId ? selectedScenarioIds[left.requestId] === left.id : false;
+      const rightSelected = right.requestId ? selectedScenarioIds[right.requestId] === right.id : false;
+      if (leftSelected !== rightSelected) return leftSelected ? -1 : 1;
+      return 0;
+    });
+
     return {
-      port: Math.max(1, Math.min(65535, Math.floor(Number(wsMockPort) || 8090))),
-      path: wsMockPath.trim() || "/mock/ws",
-      responseText: activeWebSocketMockResponseText,
-      intervalMs: Math.max(1, Math.floor(Number(wsMockIntervalMs) || 1000)),
-      loop: wsMockLoop,
-      maxLoops: Math.max(0, Math.floor(Number(wsMockMaxLoops) || 0)),
-      streamOnConnect: wsMockStreamOnConnect,
-      sendOnMessage: false,
+      port: normalizeWebSocketMockPort(project.port),
+      scenarios,
     };
   }
 
+  function buildRestMockPayload(project = restMockServer) {
+    const restRequests = collections.flatMap((collection) =>
+      collection.requests
+        .filter((request) => request.kind === "rest")
+        .map((request) => ({ ...request, collectionName: collection.name })),
+    );
+    const scenarios: RestMockScenario[] = project.scenarios
+      .filter((scenario) => {
+        if (!scenario.requestId) return true;
+        return restRequests.some((request) => request.id === scenario.requestId);
+      })
+      .map((scenario) => ({
+        ...scenario,
+        method: (scenario.method || "GET").toUpperCase(),
+        priority: Math.trunc(Number(scenario.priority) || 0),
+        status: Math.min(599, Math.max(100, Math.trunc(Number(scenario.status) || 200))),
+        delayMs: Math.max(0, Math.trunc(Number(scenario.delayMs) || 0)),
+        matchQuery: scenario.matchQuery ?? [],
+        matchHeaders: scenario.matchHeaders ?? [],
+        matchBodyContains: scenario.matchBodyContains ?? "",
+        matchJsonPath: scenario.matchJsonPath ?? "",
+        matchJsonEquals: scenario.matchJsonEquals ?? "",
+      }));
+
+    for (const request of restRequests) {
+      const hasScenario = scenarios.some((scenario) => scenario.requestId === request.id || scenario.id === request.id);
+      if (!hasScenario) scenarios.push(createRestMockPresetScenario(request, "success"));
+    }
+
+    return {
+      port: normalizeRestMockPort(project.port),
+      bindHost: normalizeRestMockBindHost(project.bindHost),
+      scenarios,
+    };
+  }
+
+  function updateActiveRestMockScenario(patch: Partial<RestMockScenario>) {
+    if (activeCollectionRequest?.kind !== "rest") return;
+    const scenarioId = activeRestMockScenario?.id ?? restMockScenarioId;
+    setRestMockServer((current) => {
+      const payload = buildRestMockPayload(current);
+      const scenarios = payload.scenarios.length
+        ? payload.scenarios
+        : [createRestMockPresetScenario(activeCollectionRequest, "success")];
+      const hasScenario = scenarios.some((scenario) => scenario.id === scenarioId);
+      const nextScenarios = (
+        hasScenario ? scenarios : [createRestMockPresetScenario(activeCollectionRequest, "success"), ...scenarios]
+      ).map((scenario) =>
+        scenario.id === (hasScenario ? scenarioId : activeCollectionRequest.id)
+          ? { ...scenario, ...patch, requestId: activeCollectionRequest.id }
+          : scenario,
+      );
+      return { ...current, scenarios: nextScenarios, updatedAt: new Date().toISOString() };
+    });
+  }
+
+  function updateActiveRestMockResponse(value: string) {
+    if (activeCollectionRequest?.kind !== "rest") return;
+    updateActiveRestMockScenario({ body: value });
+    if (activeRestMockScenario?.id === activeCollectionRequest.id || !activeRestMockScenario) {
+      patchActiveCollectionRequest({ mockResponse: value });
+    }
+  }
+
+  function addRestMockScenario(preset: "success" | "not-found" | "validation-error" | "delayed") {
+    if (activeCollectionRequest?.kind !== "rest") return;
+    const scenario = createRestMockPresetScenario(activeCollectionRequest, preset);
+    setRestMockScenarioId(scenario.id);
+    setRestMockServer((current) => ({
+      ...current,
+      scenarios: [...buildRestMockPayload(current).scenarios, scenario],
+      updatedAt: new Date().toISOString(),
+    }));
+  }
+
+  function updateRestMockScenarioPair(
+    field: "matchQuery" | "matchHeaders",
+    index: number,
+    pairField: keyof MetadataPair,
+    value: string,
+  ) {
+    const rows = activeRestMockScenario?.[field] ?? [];
+    updateActiveRestMockScenario({
+      [field]: rows.map((item, itemIndex) => (itemIndex === index ? { ...item, [pairField]: value } : item)),
+    } as Partial<RestMockScenario>);
+  }
+
+  function addRestMockScenarioPair(field: "matchQuery" | "matchHeaders") {
+    updateActiveRestMockScenario({
+      [field]: [...(activeRestMockScenario?.[field] ?? []), { key: "", value: "" }],
+    } as Partial<RestMockScenario>);
+  }
+
+  function removeRestMockScenarioPair(field: "matchQuery" | "matchHeaders", index: number) {
+    updateActiveRestMockScenario({
+      [field]: (activeRestMockScenario?.[field] ?? []).filter((_, itemIndex) => itemIndex !== index),
+    } as Partial<RestMockScenario>);
+  }
+
+  function handleRestMockPortChange(value: number) {
+    const port = normalizeRestMockPort(value);
+    setRestMockServer((current) => ({ ...current, port, updatedAt: new Date().toISOString() }));
+  }
+
+  function handleRestMockBindHostChange(value: string) {
+    const bindHost = normalizeRestMockBindHost(value);
+    setRestMockServer((current) => ({ ...current, bindHost, updatedAt: new Date().toISOString() }));
+  }
+
+  async function startRestMockServer() {
+    if (!window.electronRestMock?.start) {
+      showToast("REST mock server is available in the desktop app only.", "warning");
+      return;
+    }
+    const payload = buildRestMockPayload();
+    const result = await window.electronRestMock.start(payload);
+    if (!result?.ok) {
+      showToast(result?.error || "Unable to start REST mock server.", "error");
+      return;
+    }
+    setRestMockStatus({ running: true, ...result });
+    showToast(result.message || "REST mock server started.", "success");
+  }
+
+  async function updateRunningRestMockServer() {
+    if (!restMockStatus.running || !window.electronRestMock?.update) return;
+    const result = await window.electronRestMock.update(buildRestMockPayload());
+    if (result?.ok)
+      setRestMockStatus((current) => ({ ...current, ...result, running: result.running ?? current.running }));
+  }
+
+  async function stopRestMockServer() {
+    const result = await window.electronRestMock?.stop?.();
+    setRestMockStatus({ running: false, message: result?.message });
+    showToast(result?.message || "REST mock server stopped.", "info");
+  }
+
   async function startWebSocketMockServer() {
-    if (!activeCollectionRequest || activeCollectionRequest.kind !== "websocket") {
-      showToast("Select a WebSocket request before starting a WS mock server.", "warning");
+    const payload = buildWebSocketMockPayload();
+    if (!payload.scenarios.length) {
+      showToast("Create a WebSocket request before starting a WS mock server.", "warning");
       return;
     }
     if (!window.electronWsMock?.start) {
       showToast("WebSocket mock server is available in the desktop app only.", "warning");
       return;
     }
-    const result = await window.electronWsMock.start(buildWebSocketMockPayload());
+    const result = await window.electronWsMock.start(payload);
     if (!result?.ok) {
       showToast(result?.error || "Unable to start WebSocket mock server.", "error");
       return;
     }
     setWsMockStatus({ running: true, ...result });
-    if (result.port) setWsMockPort(result.port);
-    if (result.path) setWsMockPath(result.path);
-    if (result.url) {
-      setTargetDraft(result.url);
-      updateActiveSession({ baseUrl: result.url, requestUrl: result.url });
-      patchActiveCollectionRequest({ url: result.url });
+    if (result.port) handleWebSocketMockPortChange(result.port);
+    if (activeCollectionRequest?.kind === "websocket") {
+      const scenarioUrl = activeWebSocketMockScenario
+        ? `ws://127.0.0.1:${result.port ?? wsMockServer.port}${activeWebSocketMockScenario.path}`
+        : result.url;
+      if (scenarioUrl) {
+        setTargetDraft(scenarioUrl);
+        updateActiveSession({ baseUrl: scenarioUrl, requestUrl: scenarioUrl });
+        patchActiveCollectionRequest({ url: scenarioUrl });
+      }
     }
     showToast("WebSocket mock server started.", "success");
   }
@@ -2388,7 +3539,7 @@ export default function PlaygroundPage() {
       showToast("WebSocket mock server is available in the desktop app only.", "warning");
       return;
     }
-    const result = await window.electronWsMock.send({ responseText: activeWebSocketMockResponseText });
+    const result = await window.electronWsMock.send({ scenarioId: activeWebSocketMockScenario?.id });
     if (!result?.ok) {
       showToast(result?.error || "Start the WebSocket mock server before sending a message.", "warning");
       return;
@@ -2532,23 +3683,23 @@ export default function PlaygroundPage() {
       showToast("Select a WebSocket request before sending a message.", "warning");
       return;
     }
+
+    const existing = wsClientRef.current;
+    if (
+      existing &&
+      existing.requestId === activeCollectionRequest.id &&
+      existing.socket.readyState === WebSocket.OPEN
+    ) {
+      sendMessageThroughActiveWebSocket(existing);
+      return;
+    }
+
     const url = (targetDraft || activeCollectionRequest.url || activeBaseUrl).trim();
     if (!url || !isWebSocketUrl(url)) {
       showToast("Use a ws:// or wss:// URL before sending a WebSocket message.", "warning");
       return;
     }
     commitTargetDraft(url);
-
-    const existing = wsClientRef.current;
-    if (
-      existing &&
-      existing.requestId === activeCollectionRequest.id &&
-      existing.url === url &&
-      existing.socket.readyState === WebSocket.OPEN
-    ) {
-      sendMessageThroughActiveWebSocket(existing);
-      return;
-    }
 
     if (existing) closeManualWebSocketClient("Switching WebSocket request", false);
     const session = prepareWebSocketClientSession(url);
@@ -2651,46 +3802,59 @@ export default function PlaygroundPage() {
 
   function nextCollectionName() {
     let index = collections.length + 1;
-    let name = collections.length === 0 ? "Untitled WS Collection" : `Untitled WS Collection ${index}`;
+    let name = collections.length === 0 ? "Untitled Collection" : `Untitled Collection ${index}`;
     const names = new Set(collections.map((collection) => collection.name.toLowerCase()));
     while (names.has(name.toLowerCase())) {
       index += 1;
-      name = `Untitled WS Collection ${index}`;
+      name = `Untitled Collection ${index}`;
     }
     return name;
   }
 
-  function nextWebSocketRequestName(collectionId: string) {
+  function nextCollectionRequestName(collectionId: string, kind: ApiRequestKind) {
     const collection = collections.find((item) => item.id === collectionId);
     const names = new Set((collection?.requests ?? []).map((request) => request.name.toLowerCase()));
     let index = (collection?.requests.length ?? 0) + 1;
-    let name = index <= 1 ? "New WebSocket Request" : `New WebSocket Request ${index}`;
+    const base =
+      kind === "rest" ? "New REST Request" : kind === "websocket" ? "New WebSocket Request" : "New gRPC Request";
+    let name = index <= 1 ? base : `${base} ${index}`;
     while (names.has(name.toLowerCase())) {
       index += 1;
-      name = `New WebSocket Request ${index}`;
+      name = `${base} ${index}`;
     }
     return name;
   }
 
-  function openAddWebSocketRequestDialog(collectionId: string) {
+  function openAddCollectionRequestDialog(collectionId: string, kind: "websocket" | "rest") {
     setRequestTargetCollectionId(collectionId);
-    setRequestNameDraft(nextWebSocketRequestName(collectionId));
+    setRequestKindDraft(kind);
+    setRequestNameDraft(nextCollectionRequestName(collectionId, kind));
     setRequestNameDialogOpen(true);
   }
 
-  function confirmAddWebSocketRequest() {
+  function confirmAddCollectionRequest() {
     const name = requestNameDraft.trim();
     if (!requestTargetCollectionId) {
       setRequestNameDialogOpen(false);
       return;
     }
     if (!name) {
-      showToast("WebSocket request name is required.", "warning");
+      showToast(`${requestKindDraft === "rest" ? "REST" : "WebSocket"} request name is required.`, "warning");
       return;
     }
-    addCollectionRequest(requestTargetCollectionId, "websocket", {
+    addCollectionRequest(requestTargetCollectionId, requestKindDraft, {
       name,
-      mockResponse: defaultWebSocketMockResponse(name),
+      method: requestKindDraft === "rest" ? "GET" : undefined,
+      url: requestKindDraft === "rest" ? "http://127.0.0.1:3000" : undefined,
+      body: requestKindDraft === "rest" ? "" : undefined,
+      restBodyType: requestKindDraft === "rest" ? "none" : undefined,
+      restAuth: requestKindDraft === "rest" ? { type: "none" } : undefined,
+      mockResponse:
+        requestKindDraft === "websocket"
+          ? defaultWebSocketMockResponse(name)
+          : requestKindDraft === "rest"
+            ? defaultRestMockResponse(name)
+            : undefined,
     });
     setRequestNameDialogOpen(false);
     setRequestTargetCollectionId("");
@@ -2706,7 +3870,7 @@ export default function PlaygroundPage() {
     const collection: ApiCollection = { id: createId(), name, requests: [], createdAt: now, updatedAt: now };
     setCollections((current) => [collection, ...current]);
     setCollectionDialogOpen(false);
-    showToast("WebSocket collection added.", "success");
+    showToast("Collection added.", "success");
   }
 
   function removeCollection(collectionId: string) {
@@ -2770,27 +3934,187 @@ export default function PlaygroundPage() {
     );
   }
 
+  function renameCollection(collectionId: string) {
+    const collection = collections.find((item) => item.id === collectionId);
+    if (!collection) return;
+    const nextName = window.prompt("Rename collection", collection.name)?.trim();
+    if (nextName === undefined) return;
+    if (!nextName) {
+      showToast("Collection name is required.", "warning");
+      return;
+    }
+    const requestIds = new Set(collection.requests.map((request) => request.id));
+    setCollections((current) =>
+      current.map((item) =>
+        item.id === collectionId ? { ...item, name: nextName, updatedAt: new Date().toISOString() } : item,
+      ),
+    );
+    setRequestSessions((current) =>
+      current.map((session) =>
+        requestIds.has(session.methodKey)
+          ? { ...session, serviceName: nextName, updatedAt: new Date().toISOString() }
+          : session,
+      ),
+    );
+    showToast("Collection renamed.", "success");
+  }
+
+  function renameCollectionRequest(collectionId: string, requestId: string) {
+    const collection = collections.find((item) => item.id === collectionId);
+    const request = collection?.requests.find((item) => item.id === requestId);
+    if (!collection || !request) return;
+    if (request.kind !== "rest" && request.kind !== "websocket") {
+      showToast("Rename from context menu is available for REST and WebSocket requests.", "info");
+      return;
+    }
+    const nextName = window.prompt("Rename request", request.name)?.trim();
+    if (nextName === undefined) return;
+    if (!nextName) {
+      showToast("Request name is required.", "warning");
+      return;
+    }
+    setCollections((current) =>
+      current.map((item) =>
+        item.id === collectionId
+          ? {
+              ...item,
+              requests: item.requests.map((candidate) =>
+                candidate.id === requestId
+                  ? { ...candidate, name: nextName, updatedAt: new Date().toISOString() }
+                  : candidate,
+              ),
+              updatedAt: new Date().toISOString(),
+            }
+          : item,
+      ),
+    );
+    setRequestSessions((current) =>
+      current.map((session) =>
+        session.methodKey === requestId
+          ? { ...session, title: nextName, updatedAt: new Date().toISOString() }
+          : session,
+      ),
+    );
+    if (request.kind === "websocket") {
+      setWsMockServer((current) => ({
+        ...current,
+        scenarios: current.scenarios.map((scenario) =>
+          scenario.requestId === requestId || scenario.id === requestId
+            ? { ...scenario, name: scenario.id === requestId ? `${nextName} scenario` : scenario.name }
+            : scenario,
+        ),
+        updatedAt: new Date().toISOString(),
+      }));
+    }
+    if (request.kind === "rest") {
+      setRestMockServer((current) => ({
+        ...current,
+        scenarios: current.scenarios.map((scenario) =>
+          scenario.requestId === requestId || scenario.id === requestId
+            ? { ...scenario, name: scenario.id === requestId ? `${nextName} success` : scenario.name }
+            : scenario,
+        ),
+        updatedAt: new Date().toISOString(),
+      }));
+    }
+    showToast("Request renamed.", "success");
+  }
+
+  function removeCollectionRequest(collectionId: string, requestId: string) {
+    const collection = collections.find((item) => item.id === collectionId);
+    const request = collection?.requests.find((item) => item.id === requestId);
+    if (!collection || !request) return;
+    if (request.kind !== "rest" && request.kind !== "websocket") {
+      showToast("Delete from context menu is available for REST and WebSocket requests.", "info");
+      return;
+    }
+
+    const nextCollections = collections.map((item) =>
+      item.id === collectionId
+        ? {
+            ...item,
+            requests: item.requests.filter((candidate) => candidate.id !== requestId),
+            updatedAt: new Date().toISOString(),
+          }
+        : item,
+    );
+    const removedSessions = requestSessions.filter((session) => session.methodKey === requestId);
+    const removedSessionIds = new Set(removedSessions.map((session) => session.id));
+    const nextSessions = requestSessions.filter((session) => session.methodKey !== requestId);
+
+    removedSessions.forEach((session) => {
+      requestRunner.cancelRequest(session.id);
+      if (wsClientRef.current?.sessionId === session.id) closeManualWebSocketClient("Request deleted");
+    });
+
+    setCollections(nextCollections);
+    setRequestSessions(nextSessions);
+    if (request.kind === "websocket") {
+      setWsMockServer((current) => {
+        const selectedScenarioIds = { ...current.selectedScenarioIds };
+        delete selectedScenarioIds[requestId];
+        return {
+          ...current,
+          selectedScenarioIds,
+          scenarios: current.scenarios.filter(
+            (scenario) => scenario.requestId !== requestId && scenario.id !== requestId,
+          ),
+          updatedAt: new Date().toISOString(),
+        };
+      });
+    }
+    if (request.kind === "rest") {
+      setRestMockServer((current) => ({
+        ...current,
+        scenarios: current.scenarios.filter(
+          (scenario) => scenario.requestId !== requestId && scenario.id !== requestId,
+        ),
+        updatedAt: new Date().toISOString(),
+      }));
+    }
+
+    const activeViewWasRemoved =
+      Boolean(activeRequestIdRef.current && removedSessionIds.has(activeRequestIdRef.current)) ||
+      activeCollectionRequestId === requestId ||
+      selectedMethodKey === requestId;
+    if (activeViewWasRemoved) {
+      const replacement = nextSessions[0] ?? null;
+      if (replacement) queueMicrotask(() => activateRequestSession(replacement));
+      else queueMicrotask(clearActiveView);
+    }
+    showToast(`${request.name} deleted.`, "success");
+  }
+
   function createCollectionRequest(
     collectionId: string,
     kind: ApiRequestKind,
     overrides: Partial<ApiCollectionRequest> = {},
   ): ApiCollectionRequest {
     const now = new Date().toISOString();
-    const defaultName = kind === "grpc" ? "gRPC Request" : "WebSocket Request";
-    const defaultUrl = kind === "grpc" ? draftEffectiveBaseUrl : "ws://localhost:8080";
+    const defaultName = kind === "grpc" ? "gRPC Request" : kind === "rest" ? "REST Request" : "WebSocket Request";
+    const defaultUrl =
+      kind === "grpc" ? draftEffectiveBaseUrl : kind === "rest" ? "http://127.0.0.1:3000" : "ws://localhost:8080";
     return {
       id: createId(),
       collectionId,
       name: overrides.name ?? defaultName,
       kind,
-      method: overrides.method,
+      method: overrides.method ?? (kind === "rest" ? "GET" : undefined),
       url: overrides.url ?? defaultUrl,
       grpcMethodKey: overrides.grpcMethodKey,
       body: overrides.body ?? (kind === "grpc" ? "{}" : ""),
       headers: overrides.headers ?? [],
+      restParams: overrides.restParams ?? [],
+      restPathParams: overrides.restPathParams ?? [],
+      restAuth: overrides.restAuth ?? (kind === "rest" ? { type: "none" } : undefined),
+      restBodyType: overrides.restBodyType ?? (kind === "rest" ? "none" : undefined),
       mockResponse:
         overrides.mockResponse ??
-        (kind === "websocket" ? defaultWebSocketMockResponse(overrides.name ?? defaultName) : undefined),
+        (kind === "websocket"
+          ? defaultWebSocketMockResponse(overrides.name ?? defaultName)
+          : kind === "rest"
+            ? defaultRestMockResponse(overrides.name ?? defaultName)
+            : undefined),
       createdAt: now,
       updatedAt: now,
     };
@@ -2829,7 +4153,8 @@ export default function PlaygroundPage() {
 
   function createCollectionRequestSession(collection: ApiCollection, request: ApiCollectionRequest): RequestSession {
     const now = new Date().toISOString();
-    const mode: TransportMode = request.kind === "websocket" ? "websocket" : "grpc-web";
+    const mode: TransportMode =
+      request.kind === "websocket" ? "websocket" : request.kind === "rest" ? "rest" : "grpc-web";
     return {
       id: createId(),
       methodKey: request.id,
@@ -2889,9 +4214,10 @@ export default function PlaygroundPage() {
    * Updates the active transport mode.
    */
   function handleTransportModeChange(value: TransportMode) {
-    if (value === "rest") return;
     if (activeIsWebSocket && value !== "websocket") return;
+    if (activeIsRest && value !== "rest") return;
     if (!activeIsWebSocket && value === "websocket") return;
+    if (!activeIsRest && value === "rest") return;
     setTransportMode(value);
     updateActiveSession({ transportMode: value });
   }
@@ -2911,13 +4237,15 @@ export default function PlaygroundPage() {
     if (activeEnvironmentKey !== "default" && activeEnvironmentKey !== "manual") {
       setEnvironments((current) =>
         current.map((env) =>
-          env.key === activeEnvironmentKey ? featureSetEnvironmentTransportTarget(env, activeTransportMode, value) : env,
+          env.key === activeEnvironmentKey
+            ? featureSetEnvironmentTransportTarget(env, activeTransportMode, value)
+            : env,
         ),
       );
       return;
     }
 
-    if (activeIsWebSocket) {
+    if (activeIsWebSocket || activeIsRest) {
       updateActiveSession({ baseUrl: value, requestUrl: value });
       patchActiveCollectionRequest({ url: value });
       return;
@@ -3294,6 +4622,7 @@ export default function PlaygroundPage() {
   function handleMockScenarioSelectChange(method: RpcMethodInfo, scenarioId: string) {
     const key = methodKey(method);
     if (!scenarioId) return;
+    setMockScenarioEditorDraft(null);
     setMockServer((current) => ({
       ...current,
       selectedScenarioIds: { ...current.selectedScenarioIds, [key]: scenarioId },
@@ -3475,12 +4804,17 @@ export default function PlaygroundPage() {
    */
   function handleMockGlobalStreamBaseChange(patch: Partial<MockStreamSettings>) {
     setMockServer((current) => {
+      const previousBase = current.streamDefaults;
       const nextBase = normalizeMockStreamSettings(
         { ...current.streamDefaults, ...patch },
         current.streamDefaults,
       ) as Required<Pick<MockStreamSettings, "intervalMs" | "loop" | "maxLoops">>;
       if (patch.loop === true && patch.maxLoops === undefined && (nextBase.maxLoops ?? 0) <= 1) nextBase.maxLoops = 0;
-      return { ...current, streamDefaults: nextBase, updatedAt: new Date().toISOString() };
+      const changedKeys = (["intervalMs", "loop", "maxLoops"] as Array<
+        keyof Pick<MockStreamSettings, "intervalMs" | "loop" | "maxLoops">
+      >).filter((key) => Object.hasOwn(patch, key) && previousBase[key] !== nextBase[key]);
+      const nextProject = clearInheritedMockStreamOverridesForDefaultChange(current, previousBase, changedKeys);
+      return { ...nextProject, streamDefaults: nextBase, updatedAt: new Date().toISOString() };
     });
   }
 
@@ -3707,7 +5041,8 @@ export default function PlaygroundPage() {
         port: result.port ?? port,
         url: result.url ?? `grpc://${localTarget}`,
         bindHost: result.bindHost,
-        bindAddress: result.bindAddress,        localTarget,
+        bindAddress: result.bindAddress,
+        localTarget,
         apisixTarget: result.apisixTarget,
         reachableTargets: result.reachableTargets,
         scenarioCount: result.scenarioCount ?? parsed.bundle.scenarios.length,
@@ -3717,9 +5052,6 @@ export default function PlaygroundPage() {
         configVersion: result.configVersion,
         updatedAt: new Date().toISOString(),
       });
-      setNativeTarget(localTarget);
-      setTransportMode("native-grpc");
-      updateActiveSession({ transportMode: "native-grpc", nativeTarget: localTarget });
       showToast(
         result.apisixTarget
           ? `Mock server running. APISIX upstream target: ${result.apisixTarget}.`
@@ -4252,6 +5584,52 @@ export default function PlaygroundPage() {
     });
   }
 
+  function buildActiveRestDocsMarkdown() {
+    if (!activeCollectionRequest || activeCollectionRequest.kind !== "rest") return "";
+    return renderRestDocsMarkdown({
+      collectionRequest: activeCollectionRequest,
+      url: previewUrl,
+      latestResult: lastResult,
+    });
+  }
+
+  function publishCurrentRestDoc() {
+    if (!activeCollectionRequest || activeCollectionRequest.kind !== "rest") return;
+    const key = restDocKey(activeCollectionRequest);
+    setMethodDocs((current) =>
+      upsertMethodDoc(current, {
+        methodKey: key,
+        serviceName: activeCollectionRequest.collectionName ?? "REST Collection",
+        methodName: activeCollectionRequest.name,
+        published: true,
+        updatedAt: new Date().toISOString(),
+        generatedMarkdown: buildActiveRestDocsMarkdown(),
+      }),
+    );
+    setSideSection("docs");
+    setSidebarOpen(true);
+    showToast("REST docs published to the Docs sidebar.", "success");
+  }
+
+  function unpublishCurrentRestDoc() {
+    if (!activeCollectionRequest || activeCollectionRequest.kind !== "rest") return;
+    const key = restDocKey(activeCollectionRequest);
+    setMethodDocs((current) =>
+      current.map((doc) =>
+        doc.methodKey === key ? { ...doc, published: false, updatedAt: new Date().toISOString() } : doc,
+      ),
+    );
+    showToast("REST docs unpublished.", "success");
+  }
+
+  function previewCurrentRestDoc() {
+    if (!activeCollectionRequest || activeCollectionRequest.kind !== "rest") return;
+    setDocsPreview({
+      title: `${activeCollectionRequest.collectionName ?? "Collection"}/${activeCollectionRequest.name}`,
+      markdown: buildActiveRestDocsMarkdown(),
+    });
+  }
+
   /**
    * Opens the generated documentation preview for the active method.
    */
@@ -4345,6 +5723,25 @@ export default function PlaygroundPage() {
               latestResult: session?.lastResult ?? null,
             })
           : doc.generatedMarkdown || "# WebSocket docs\n\nRequest not found in this workspace.",
+      });
+      return;
+    }
+
+    if (doc.methodKey.startsWith("rest:")) {
+      const request = findRestRequestForDocKey(collections, doc.methodKey);
+      const session = request ? requestSessions.find((item) => item.methodKey === request.id) : null;
+      const key = request
+        ? `${request.collectionName ?? "Collection"}/${request.name}`
+        : `${doc.serviceName}/${doc.methodName}`;
+      setDocsPreview({
+        title: key,
+        markdown: request
+          ? renderRestDocsMarkdown({
+              collectionRequest: request,
+              url: session?.requestUrl || buildRestRequestUrl(request, session?.baseUrl || request.url),
+              latestResult: session?.lastResult ?? null,
+            })
+          : doc.generatedMarkdown || "# REST docs\n\nRequest not found in this workspace.",
       });
       return;
     }
@@ -4792,7 +6189,7 @@ export default function PlaygroundPage() {
                 onClose={() => setCollectionMenuAnchor(null)}
               >
                 <MenuItem onClick={openAddCollectionDialog}>
-                  <Add fontSize="small" /> Add WS Collection
+                  <Add fontSize="small" /> Add Collection
                 </MenuItem>
                 <Divider />
                 <MenuItem
@@ -4879,9 +6276,12 @@ export default function PlaygroundPage() {
                     }
                     onSelectMethod={(method) => loaded && selectMethod(loaded.root, method)}
                     onSelectCollectionRequest={selectCollectionRequest}
-                    onAddCollectionRequest={openAddWebSocketRequestDialog}
+                    onAddCollectionRequest={openAddCollectionRequestDialog}
                     onImportGrpcRequest={importGrpcRequestIntoCollection}
+                    onRenameCollection={renameCollection}
                     onRemoveCollection={removeCollection}
+                    onRenameCollectionRequest={renameCollectionRequest}
+                    onRemoveCollectionRequest={removeCollectionRequest}
                   />
                 )}
                 {sideSection === "examples" && (
@@ -4913,27 +6313,15 @@ export default function PlaygroundPage() {
                 )}
                 {sideSection === "ws-mocks" && (
                   <WebSocketMockSidebar
-                    request={activeCollectionRequest?.kind === "websocket" ? activeCollectionRequest : null}
-                    mockResponseText={activeWebSocketMockResponseText}
-                    latestResult={activeIsWebSocket ? lastResult : null}
                     status={wsMockStatus}
                     port={wsMockPort}
-                    pathValue={wsMockPath}
-                    intervalMs={wsMockIntervalMs}
-                    loop={wsMockLoop}
-                    maxLoops={wsMockMaxLoops}
-                    streamOnConnect={wsMockStreamOnConnect}
-                    onMockResponseTextChange={updateActiveWebSocketMockResponse}
-                    onPortChange={setWsMockPort}
-                    onPathChange={setWsMockPath}
-                    onIntervalMsChange={setWsMockIntervalMs}
-                    onLoopChange={setWsMockLoop}
-                    onMaxLoopsChange={setWsMockMaxLoops}
-                    onStreamOnConnectChange={setWsMockStreamOnConnect}
+                    rows={wsMockSidebarRows}
+                    activeScenarioId={activeWebSocketMockScenario?.id}
+                    onPortChange={handleWebSocketMockPortChange}
+                    onScenarioChange={updateWebSocketMockScenario}
+                    onOpenScenario={openWebSocketMockScenarioFromSidebar}
                     onStart={() => void startWebSocketMockServer()}
                     onStop={() => void stopWebSocketMockServer()}
-                    onSendOnce={() => void sendWebSocketMockOnce()}
-                    onCopy={copyActiveWebSocketMockResponse}
                   />
                 )}
                 {sideSection === "docs" && (
@@ -5029,683 +6417,957 @@ export default function PlaygroundPage() {
                   elevation={0}
                   sx={{ ...panelSx, flex: "1 1 auto", minHeight: 220, display: "flex", flexDirection: "column" }}
                 >
-              <Stack
-                direction="row"
-                alignItems="center"
-                spacing={1}
-                sx={{ px: 1.4, py: 0.8, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
-              >
-                <Box sx={{ minWidth: 0, flex: 1 }}>
-                  <Stack direction="row" spacing={0.8} alignItems="center">
-                    <Typography
-                      variant="subtitle1"
-                      noWrap
-                      title={
-                        selectedMethod
-                          ? selectedMethod.methodName
-                          : (activeCollectionRequest?.name ?? "Select a collection request")
-                      }
-                    >
-                      {selectedMethod
-                        ? `${selectedMethod.methodName}`
-                        : (activeCollectionRequest?.name ?? "Select a collection request")}
-                    </Typography>
-                    {(selectedMethod || activeCollectionRequest) && (
-                      <Chip
-                        size="small"
-                        variant="outlined"
-                        color={
-                          selectedMethod?.responseStream || activeCollectionRequest?.kind === "websocket"
-                            ? "secondary"
-                            : "primary"
-                        }
-                        label={
-                          selectedMethod
-                            ? methodTypeLabel(selectedMethod)
-                            : activeCollectionRequest?.kind === "websocket"
-                              ? "WebSocket"
-                              : activeCollectionRequest?.kind === "grpc"
-                                ? "gRPC"
-                                : "Request"
-                        }
-                      />
-                    )}
-                  </Stack>
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    noWrap
-                    title={
-                      selectedMethod?.serviceName ??
-                      activeCollectionRequest?.collectionName ??
-                      "Import or add a collection request."
-                    }
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    spacing={1}
+                    sx={{ px: 1.4, py: 0.8, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
                   >
-                    {selectedMethod?.serviceName ??
-                      activeCollectionRequest?.collectionName ??
-                      "Import or add a collection request."}
-                  </Typography>
-                </Box>
-                {activeRunning ? (
-                  <Tooltip title="Stop running request">
-                    <IconButton
-                      size="small"
-                      color="warning"
-                      onClick={() => {
-                        if (wsClientRef.current?.sessionId === activeRequestId) closeManualWebSocketClient();
-                        else requestRunner.cancelRequest();
-                      }}
-                    >
-                      <StopCircle fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                ) : (
-                  <Button
-                    size="small"
-                    variant="contained"
-                    startIcon={<PlayArrow />}
-                    disabled={
-                      (!selectedMethod && !activeCollectionRequest) ||
-                      (activeCollectionRequest?.kind === "grpc" && !selectedMethod) ||
-                      (activeTransportMode === "native-grpc" && !isNativeBridgeAvailable)
-                    }
-                    onClick={() => {
-                      commitTargetDraft();
-                      void requestRunner.runRequest();
-                    }}
-                  >
-                    {activeCollectionRequest?.kind === "websocket"
-                      ? requestJson.trim()
-                        ? "Connect & send"
-                        : "Connect"
-                      : selectedMethod?.responseStream
-                        ? "Start stream"
-                        : "Send"}
-                  </Button>
-                )}
-              </Stack>
-
-              <Stack
-                direction="row"
-                spacing={1}
-                alignItems="center"
-                sx={{ px: 1.4, py: 0.8, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
-              >
-                <Button
-                  size="small"
-                  variant="outlined"
-                  onClick={(event: ButtonClickEvent) => setEnvMenuAnchor(event.currentTarget)}
-                  title={featureEnvironmentLabel(environments, activeEnvironmentKey)}
-                  sx={{ width: 88, minWidth: 88, px: 0.5, justifyContent: "center", flexShrink: 0 }}
-                >
-                  <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {featureEnvironmentShortLabel(environments, activeEnvironmentKey)}
-                  </Box>
-                </Button>
-                <Menu anchorEl={envMenuAnchor} open={Boolean(envMenuAnchor)} onClose={() => setEnvMenuAnchor(null)}>
-                  <MenuItem selected={activeEnvironmentKey === "default"} onClick={() => chooseEnvironment("default")}>
-                    None
-                  </MenuItem>
-                  <MenuItem selected={activeEnvironmentKey === "manual"} onClick={() => chooseEnvironment("manual")}>
-                    Manually Specify
-                  </MenuItem>
-                  <Divider />
-                  {environments.map((env) => {
-                    const target = featureGetEnvironmentTransportTarget(env, activeTransportMode);
-                    return (
-                      <MenuItem
-                        key={env.key}
-                        selected={activeEnvironmentKey === env.key}
-                        onClick={() => chooseEnvironment(env.key)}
-                      >
-                        <ListItemText
-                          primary={env.label}
-                          secondary={target}
-                          primaryTypographyProps={{ noWrap: true, title: env.label }}
-                          secondaryTypographyProps={{ noWrap: true, title: target }}
-                        />
-                        <Tooltip title="Edit environment">
-                          <IconButton
-                            size="small"
-                            aria-label={`Edit ${env.label}`}
-                            onClick={(event: ElementClickEvent) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              openEnvironmentManager(env);
-                            }}
-                            sx={{ ml: 1, flexShrink: 0 }}
-                          >
-                            <Edit sx={{ fontSize: 14 }} />
-                          </IconButton>
-                        </Tooltip>
-                      </MenuItem>
-                    );
-                  })}
-                  <Divider />
-                  <MenuItem onClick={saveCurrentEnvironment}>
-                    <Add sx={{ fontSize: 16, mr: 1 }} /> Save New Environment
-                  </MenuItem>
-                </Menu>
-                <FormControl size="small" sx={{ width: activeIsWebSocket ? 132 : 145 }}>
-                  <Select
-                    value={
-                      activeIsWebSocket
-                        ? "websocket"
-                        : activeTransportMode === "rest"
-                          ? "grpc-web"
-                          : activeTransportMode
-                    }
-                    disabled={activeIsWebSocket}
-                    onChange={(event: SelectInputChangeEvent) =>
-                      handleTransportModeChange(event.target.value as TransportMode)
-                    }
-                  >
-                    {activeIsWebSocket ? (
-                      <MenuItem value="websocket">WebSocket</MenuItem>
-                    ) : (
-                      [
-                        <MenuItem key="grpc-web" value="grpc-web">
-                          gRPC-Web
-                        </MenuItem>,
-                        <MenuItem key="native-grpc" value="native-grpc">
-                          Native gRPC
-                        </MenuItem>,
-                      ]
-                    )}
-                  </Select>
-                </FormControl>
-                <TextField
-                  size="small"
-                  fullWidth
-                  className="workbench-url-input"
-                  value={targetDraft}
-                  onChange={(event: TextInputChangeEvent) => handleTargetDraftChange(event.target.value)}
-                  onBlur={() => commitTargetDraft()}
-                  onKeyDown={(event: TextInputKeyboardEvent) => {
-                    if (event.key === "Enter") commitTargetDraft();
-                  }}
-                  placeholder={
-                    activeIsWebSocket
-                      ? "ws://localhost:8080"
-                      : activeTransportMode === "native-grpc"
-                        ? "localhost:50051"
-                        : "APISIX / Envoy base URL"
-                  }
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        {activeIsWebSocket ? (
-                          <Stream sx={{ fontSize: 16 }} />
-                        ) : activeTransportMode === "native-grpc" ? (
-                          <DesktopWindows sx={{ fontSize: 16 }} />
-                        ) : (
-                          <Language sx={{ fontSize: 16 }} />
-                        )}
-                      </InputAdornment>
-                    ),
-                  }}
-                />
-                <Tooltip title="Copy endpoint">
-                  <IconButton size="small" onClick={copyPreviewUrl}>
-                    <ContentCopy sx={{ fontSize: 16 }} />
-                  </IconButton>
-                </Tooltip>
-              </Stack>
-              <Box
-                sx={{
-                  px: 1.4,
-                  py: 0.8,
-                  borderBottom: "1px solid",
-                  borderColor: "divider",
-                  bgcolor: (theme: CompatTheme) => colorTokens[paletteMode(theme.palette.mode)].surfaceAlt,
-                }}
-              >
-                <Typography
-                  variant="caption"
-                  sx={{ fontFamily: "monospace", wordBreak: "break-all", color: "text.secondary" }}
-                >
-                  {previewUrl}
-                </Typography>
-              </Box>
-
-              <WorkbenchTabs<RequestTab> value={requestTab} onChange={setRequestTab} items={requestTabItems} />
-              <Box sx={{ p: designSystem.space.panelPadding, minHeight: 0, flex: 1, overflow: "auto" }}>
-                {requestTab === "body" &&
-                  (activeIsWebSocket ? (
-                    <Stack spacing={1} sx={{ minHeight: 0 }}>
-                      <Stack
-                        direction="row"
-                        spacing={0.7}
-                        alignItems="center"
-                        justifyContent="space-between"
-                        flexWrap="wrap"
-                        useFlexGap
-                      >
-                        <Box sx={{ minWidth: 0 }}>
-                          <Typography variant="subtitle1">WebSocket send data</Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            Data from this body is sent to the WebSocket after the connection opens. Leave it empty for
-                            connect-only.
-                          </Typography>
-                        </Box>
-                        <Stack direction="row" spacing={0.7} alignItems="center" flexWrap="wrap" useFlexGap>
+                    <Box sx={{ minWidth: 0, flex: 1 }}>
+                      <Stack direction="row" spacing={0.8} alignItems="center">
+                        <Typography
+                          variant="subtitle1"
+                          noWrap
+                          title={
+                            selectedMethod
+                              ? selectedMethod.methodName
+                              : (activeCollectionRequest?.name ?? "Select a collection request")
+                          }
+                        >
+                          {selectedMethod
+                            ? `${selectedMethod.methodName}`
+                            : (activeCollectionRequest?.name ?? "Select a collection request")}
+                        </Typography>
+                        {(selectedMethod || activeCollectionRequest) && (
                           <Chip
                             size="small"
                             variant="outlined"
                             color={
-                              wsClientState.readyState === "open"
-                                ? "success"
-                                : wsClientState.readyState === "connecting"
-                                  ? "warning"
-                                  : "default"
+                              selectedMethod?.responseStream || activeCollectionRequest?.kind === "websocket"
+                                ? "secondary"
+                                : "primary"
                             }
                             label={
-                              wsClientState.readyState === "open"
-                                ? `Connected${wsClientState.messageCount ? ` · ${wsClientState.messageCount} msg` : ""}`
-                                : wsClientState.readyState === "connecting"
-                                  ? "Connecting"
-                                  : "Disconnected"
+                              selectedMethod
+                                ? methodTypeLabel(selectedMethod)
+                                : activeCollectionRequest?.kind === "websocket"
+                                  ? "WebSocket"
+                                  : activeCollectionRequest?.kind === "rest"
+                                    ? (activeCollectionRequest.method ?? "REST")
+                                    : activeCollectionRequest?.kind === "grpc"
+                                      ? "gRPC"
+                                      : "Request"
                             }
                           />
-                          {wsClientState.readyState === "open" && (
-                            <Button size="small" variant="outlined" onClick={() => closeManualWebSocketClient()}>
-                              Disconnect
-                            </Button>
-                          )}
-                          <Button
-                            size="small"
-                            variant="contained"
-                            startIcon={<PlayArrow />}
-                            onClick={handleSendWebSocketMessage}
-                            disabled={
-                              !activeCollectionRequest ||
-                              activeCollectionRequest.kind !== "websocket" ||
-                              wsClientState.readyState === "connecting"
-                            }
-                          >
-                            Send
-                          </Button>
-                        </Stack>
+                        )}
                       </Stack>
-                      <FeatureCodeTextField
-                        value={requestJson}
-                        onChange={handleRequestJsonChange}
-                        minRows={7}
-                        maxRows={12}
-                        language="json"
-                        onFormat={prettifyRequestJson}
-                        formatDisabled={!requestJson.trim()}
-                        formatAriaLabel="Prettier JSON"
-                        fullscreenTitle="WebSocket send data editor"
-                      />
-                    </Stack>
-                  ) : (
-                    <Stack spacing={1} sx={{ minHeight: 0 }}>
-                      <Stack
-                        direction="row"
-                        spacing={0.7}
-                        alignItems="center"
-                        justifyContent="space-between"
-                        flexWrap="wrap"
-                        useFlexGap
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        noWrap
+                        title={
+                          selectedMethod?.serviceName ??
+                          activeCollectionRequest?.collectionName ??
+                          "Import or add a collection request."
+                        }
                       >
-                        <Stack direction="row" spacing={0.7} alignItems="center" flexWrap="wrap" useFlexGap>
-                          {selectedMethod && currentMockScenarios.length > 0 && (
-                            <FormControl size="small" sx={{ width: 220 }}>
-                              <Select
-                                value={currentMockActiveScenario?.id ?? currentMockScenarios[0]?.id ?? ""}
-                                onChange={(event: SelectInputChangeEvent) =>
-                                  handleMockScenarioSelectChange(selectedMethod, String(event.target.value))
+                        {selectedMethod?.serviceName ??
+                          activeCollectionRequest?.collectionName ??
+                          "Import or add a collection request."}
+                      </Typography>
+                    </Box>
+                    {activeRunning && !(activeIsWebSocket && wsClientState.readyState === "open") ? (
+                      <Tooltip title="Stop running request">
+                        <IconButton
+                          size="small"
+                          color="warning"
+                          onClick={() => {
+                            if (wsClientRef.current?.sessionId === activeRequestId) closeManualWebSocketClient();
+                            else requestRunner.cancelRequest();
+                          }}
+                        >
+                          <StopCircle fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    ) : (
+                      <Button
+                        size="small"
+                        variant="contained"
+                        startIcon={<PlayArrow />}
+                        disabled={
+                          (!selectedMethod && !activeCollectionRequest) ||
+                          (activeCollectionRequest?.kind === "grpc" && !selectedMethod) ||
+                          (activeTransportMode === "native-grpc" && !isNativeBridgeAvailable)
+                        }
+                        onClick={() => {
+                          if (activeCollectionRequest?.kind === "websocket") {
+                            handleSendWebSocketMessage();
+                            return;
+                          }
+                          commitTargetDraft();
+                          void requestRunner.runRequest();
+                        }}
+                      >
+                        {activeCollectionRequest?.kind === "websocket"
+                          ? wsClientState.readyState === "open"
+                            ? "Send"
+                            : requestJson.trim()
+                              ? "Connect & send"
+                              : "Connect"
+                          : activeCollectionRequest?.kind === "rest"
+                            ? "Send"
+                            : selectedMethod?.responseStream
+                              ? "Start stream"
+                              : "Send"}
+                      </Button>
+                    )}
+                  </Stack>
+
+                  <Stack
+                    direction="row"
+                    spacing={1}
+                    alignItems="center"
+                    sx={{ px: 1.4, py: 0.8, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+                  >
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={(event: ButtonClickEvent) => setEnvMenuAnchor(event.currentTarget)}
+                      title={featureEnvironmentLabel(environments, activeEnvironmentKey)}
+                      sx={{ width: 88, minWidth: 88, px: 0.5, justifyContent: "center", flexShrink: 0 }}
+                    >
+                      <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {featureEnvironmentShortLabel(environments, activeEnvironmentKey)}
+                      </Box>
+                    </Button>
+                    <Menu anchorEl={envMenuAnchor} open={Boolean(envMenuAnchor)} onClose={() => setEnvMenuAnchor(null)}>
+                      <MenuItem
+                        selected={activeEnvironmentKey === "default"}
+                        onClick={() => chooseEnvironment("default")}
+                      >
+                        None
+                      </MenuItem>
+                      <MenuItem
+                        selected={activeEnvironmentKey === "manual"}
+                        onClick={() => chooseEnvironment("manual")}
+                      >
+                        Manually Specify
+                      </MenuItem>
+                      <Divider />
+                      {environments.map((env) => {
+                        const target = featureGetEnvironmentTransportTarget(env, activeTransportMode);
+                        return (
+                          <MenuItem
+                            key={env.key}
+                            selected={activeEnvironmentKey === env.key}
+                            onClick={() => chooseEnvironment(env.key)}
+                          >
+                            <ListItemText
+                              primary={env.label}
+                              secondary={target}
+                              primaryTypographyProps={{ noWrap: true, title: env.label }}
+                              secondaryTypographyProps={{ noWrap: true, title: target }}
+                            />
+                            <Tooltip title="Edit environment">
+                              <IconButton
+                                size="small"
+                                aria-label={`Edit ${env.label}`}
+                                onClick={(event: ElementClickEvent) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  openEnvironmentManager(env);
+                                }}
+                                sx={{ ml: 1, flexShrink: 0 }}
+                              >
+                                <Edit sx={{ fontSize: 14 }} />
+                              </IconButton>
+                            </Tooltip>
+                          </MenuItem>
+                        );
+                      })}
+                      <Divider />
+                      <MenuItem onClick={saveCurrentEnvironment}>
+                        <Add sx={{ fontSize: 16, mr: 1 }} /> Save New Environment
+                      </MenuItem>
+                    </Menu>
+                    <FormControl size="small" sx={{ width: activeIsWebSocket || activeIsRest ? 132 : 145 }}>
+                      <Select
+                        value={activeIsWebSocket ? "websocket" : activeIsRest ? "rest" : activeTransportMode}
+                        disabled={activeIsWebSocket || activeIsRest}
+                        onChange={(event: SelectInputChangeEvent) =>
+                          handleTransportModeChange(event.target.value as TransportMode)
+                        }
+                      >
+                        {activeIsWebSocket ? (
+                          <MenuItem value="websocket">WebSocket</MenuItem>
+                        ) : activeIsRest ? (
+                          <MenuItem value="rest">REST</MenuItem>
+                        ) : (
+                          [
+                            <MenuItem key="grpc-web" value="grpc-web">
+                              gRPC-Web
+                            </MenuItem>,
+                            <MenuItem key="native-grpc" value="native-grpc">
+                              Native gRPC
+                            </MenuItem>,
+                          ]
+                        )}
+                      </Select>
+                    </FormControl>
+                    {activeIsRest && (
+                      <FormControl size="small" sx={{ width: 108, flexShrink: 0 }}>
+                        <Select
+                          value={activeCollectionRequest?.method ?? activeSession?.httpMethod ?? "GET"}
+                          onChange={(event: SelectInputChangeEvent) => updateActiveRestMethod(event.target.value)}
+                        >
+                          {restMethods.map((method) => (
+                            <MenuItem key={method} value={method}>
+                              {method}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    )}
+                    <TextField
+                      size="small"
+                      fullWidth
+                      className="workbench-url-input"
+                      value={targetDraft}
+                      onChange={(event: TextInputChangeEvent) => handleTargetDraftChange(event.target.value)}
+                      onBlur={() => commitTargetDraft()}
+                      onKeyDown={(event: TextInputKeyboardEvent) => {
+                        if (event.key === "Enter") commitTargetDraft();
+                      }}
+                      placeholder={
+                        activeIsWebSocket
+                          ? "ws://localhost:8080"
+                          : activeIsRest
+                            ? "https://api.example.com/users/:id"
+                            : activeTransportMode === "native-grpc"
+                              ? "localhost:50051"
+                              : "APISIX / Envoy base URL"
+                      }
+                      InputProps={{
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            {activeIsWebSocket ? (
+                              <Stream sx={{ fontSize: 16 }} />
+                            ) : activeTransportMode === "native-grpc" ? (
+                              <DesktopWindows sx={{ fontSize: 16 }} />
+                            ) : (
+                              <Language sx={{ fontSize: 16 }} />
+                            )}
+                          </InputAdornment>
+                        ),
+                      }}
+                    />
+                    <Tooltip title="Copy endpoint">
+                      <IconButton size="small" onClick={copyPreviewUrl}>
+                        <ContentCopy sx={{ fontSize: 16 }} />
+                      </IconButton>
+                    </Tooltip>
+                  </Stack>
+                  <Box
+                    sx={{
+                      px: 1.4,
+                      py: 0.8,
+                      borderBottom: "1px solid",
+                      borderColor: "divider",
+                      bgcolor: (theme: CompatTheme) => colorTokens[paletteMode(theme.palette.mode)].surfaceAlt,
+                    }}
+                  >
+                    <Typography
+                      variant="caption"
+                      sx={{ fontFamily: "monospace", wordBreak: "break-all", color: "text.secondary" }}
+                    >
+                      {previewUrl}
+                    </Typography>
+                  </Box>
+
+                  <WorkbenchTabs<RequestTab> value={requestTab} onChange={setRequestTab} items={requestTabItems} />
+                  <Box sx={{ p: designSystem.space.panelPadding, minHeight: 0, flex: 1, overflow: "auto" }}>
+                    {requestTab === "body" &&
+                      (activeIsWebSocket ? (
+                        <Stack spacing={1} sx={{ minHeight: 0 }}>
+                          <Stack
+                            direction="row"
+                            spacing={0.7}
+                            alignItems="center"
+                            justifyContent="space-between"
+                            flexWrap="wrap"
+                            useFlexGap
+                          >
+                            <Box sx={{ minWidth: 0 }}>
+                              <Typography variant="subtitle1">WebSocket send data</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                Data from this body is sent to the WebSocket after the connection opens. Leave it empty
+                                for connect-only.
+                              </Typography>
+                            </Box>
+                            <Stack direction="row" spacing={0.7} alignItems="center" flexWrap="wrap" useFlexGap>
+                              <Chip
+                                size="small"
+                                variant="outlined"
+                                color={
+                                  wsClientState.readyState === "open"
+                                    ? "success"
+                                    : wsClientState.readyState === "connecting"
+                                      ? "warning"
+                                      : "default"
+                                }
+                                label={
+                                  wsClientState.readyState === "open"
+                                    ? `Connected${wsClientState.messageCount ? ` · ${wsClientState.messageCount} msg` : ""}`
+                                    : wsClientState.readyState === "connecting"
+                                      ? "Connecting"
+                                      : "Disconnected"
+                                }
+                              />
+                              {wsClientState.readyState === "open" && (
+                                <Button size="small" variant="outlined" onClick={() => closeManualWebSocketClient()}>
+                                  Disconnect
+                                </Button>
+                              )}
+                              <Button
+                                size="small"
+                                variant="contained"
+                                startIcon={<PlayArrow />}
+                                onClick={handleSendWebSocketMessage}
+                                disabled={
+                                  !activeCollectionRequest ||
+                                  activeCollectionRequest.kind !== "websocket" ||
+                                  wsClientState.readyState === "connecting"
                                 }
                               >
-                                {currentMockScenarios.map((scenario) => (
-                                  <MenuItem key={scenario.id} value={scenario.id}>
-                                    {scenario.id}
-                                  </MenuItem>
+                                Send
+                              </Button>
+                            </Stack>
+                          </Stack>
+                          <FeatureCodeTextField
+                            value={requestJson}
+                            onChange={handleRequestJsonChange}
+                            minRows={7}
+                            maxRows={12}
+                            language="json"
+                            onFormat={prettifyRequestJson}
+                            formatDisabled={!requestJson.trim()}
+                            formatAriaLabel="Prettier JSON"
+                            fullscreenTitle="WebSocket send data editor"
+                          />
+                        </Stack>
+                      ) : activeIsRest ? (
+                        <Stack spacing={1} sx={{ minHeight: 0 }}>
+                          <Stack spacing={0.25}>
+                            <Typography variant="subtitle1">REST body</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              Configure body mode for this REST request. Use the Headers and Auth & Params tabs for the
+                              rest of the request.
+                            </Typography>
+                          </Stack>
+                          <FormControl size="small" sx={{ width: 220 }}>
+                            <Select
+                              value={activeCollectionRequest?.restBodyType ?? "none"}
+                              onChange={(event: SelectInputChangeEvent) =>
+                                updateActiveRestBodyType(event.target.value as RestBodyType)
+                              }
+                            >
+                              <MenuItem value="none">No body</MenuItem>
+                              <MenuItem value="json">JSON</MenuItem>
+                              <MenuItem value="text">Raw text</MenuItem>
+                              <MenuItem value="form-url-encoded">x-www-form-urlencoded</MenuItem>
+                            </Select>
+                          </FormControl>
+                          {(activeCollectionRequest?.restBodyType ?? "none") === "none" ? (
+                            <Alert severity="info" variant="outlined">
+                              This REST request will be sent without a body.
+                            </Alert>
+                          ) : (
+                            <FeatureCodeTextField
+                              value={requestJson}
+                              onChange={handleRequestJsonChange}
+                              minRows={7}
+                              maxRows={12}
+                              language={(activeCollectionRequest?.restBodyType ?? "json") === "json" ? "json" : "text"}
+                              onFormat={prettifyRequestJson}
+                              formatDisabled={!requestJson.trim()}
+                              formatAriaLabel={
+                                (activeCollectionRequest?.restBodyType ?? "json") === "json"
+                                  ? "Prettier JSON"
+                                  : "Format body"
+                              }
+                              fullscreenTitle="REST request body editor"
+                            />
+                          )}
+                        </Stack>
+                      ) : (
+                        <Stack spacing={1} sx={{ minHeight: 0 }}>
+                          <Stack
+                            direction="row"
+                            spacing={0.7}
+                            alignItems="center"
+                            justifyContent="space-between"
+                            flexWrap="wrap"
+                            useFlexGap
+                          >
+                            <Stack direction="row" spacing={0.7} alignItems="center" flexWrap="wrap" useFlexGap>
+                              {selectedMethod && currentMockScenarios.length > 0 && (
+                                <FormControl size="small" sx={{ width: 220 }}>
+                                  <Select
+                                    value={currentMockActiveScenario?.id ?? currentMockScenarios[0]?.id ?? ""}
+                                    onChange={(event: SelectInputChangeEvent) =>
+                                      handleMockScenarioSelectChange(selectedMethod, String(event.target.value))
+                                    }
+                                  >
+                                    {currentMockScenarios.map((scenario) => (
+                                      <MenuItem key={scenario.id} value={scenario.id}>
+                                        {scenario.id}
+                                      </MenuItem>
+                                    ))}
+                                  </Select>
+                                </FormControl>
+                              )}
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                onClick={generateRequestJsonFromSelectedScenario}
+                                disabled={!selectedMethod || currentMockScenarios.length === 0}
+                              >
+                                Generate from scenario
+                              </Button>
+                            </Stack>
+                            <Stack direction="row" spacing={0.7} alignItems="center">
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                onClick={generateRandomRequestJson}
+                                disabled={!selectedMethod}
+                              >
+                                Generate random
+                              </Button>
+                            </Stack>
+                          </Stack>
+                          <FeatureCodeTextField
+                            value={requestJson}
+                            onChange={handleRequestJsonChange}
+                            minRows={7}
+                            maxRows={12}
+                            language="json"
+                            onFormat={prettifyRequestJson}
+                            formatDisabled={!requestJson.trim()}
+                            formatAriaLabel="Prettier JSON"
+                            fullscreenTitle="Request body editor"
+                          />
+                        </Stack>
+                      ))}
+                    {requestTab === "metadata" &&
+                      (activeIsWebSocket ? (
+                        <Stack spacing={1.1}>
+                          <Stack spacing={0.25}>
+                            <Typography variant="subtitle1">WebSocket subprotocol</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              Optional WebSocket subprotocol. Message data is sent from the Message tab.
+                            </Typography>
+                          </Stack>
+                          <TextField
+                            size="small"
+                            label="Sec-WebSocket-Protocol"
+                            fullWidth
+                            value={webSocketSubprotocolValue}
+                            onChange={(event: TextInputChangeEvent) => updateWebSocketSubprotocol(event.target.value)}
+                            placeholder="json, chat.v1"
+                            helperText="Comma-separated subprotocols, for example json, chat.v1."
+                          />
+                        </Stack>
+                      ) : (
+                        <Stack spacing={1}>
+                          <Stack direction="row" justifyContent="space-between" alignItems="center">
+                            <Typography variant="subtitle1">{activeIsRest ? "Headers" : "Metadata"}</Typography>
+                            <Button size="small" startIcon={<Add />} onClick={addMetadataRow}>
+                              Add row
+                            </Button>
+                          </Stack>
+                          <TableContainer component={Paper} variant="outlined">
+                            <Table size="small">
+                              <TableHead>
+                                <TableRow>
+                                  <TableCell>Key</TableCell>
+                                  <TableCell>Value</TableCell>
+                                  <TableCell width={56}>Action</TableCell>
+                                </TableRow>
+                              </TableHead>
+                              <TableBody>
+                                {metadata.map((item, index) => (
+                                  <TableRow key={`${item.key}-${item.value}`}>
+                                    <TableCell>
+                                      <TextField
+                                        size="small"
+                                        fullWidth
+                                        value={item.key}
+                                        onChange={(event: TextInputChangeEvent) =>
+                                          updateMetadataRow(index, "key", event.target.value)
+                                        }
+                                      />
+                                    </TableCell>
+                                    <TableCell>
+                                      <TextField
+                                        size="small"
+                                        fullWidth
+                                        value={item.value}
+                                        onChange={(event: TextInputChangeEvent) =>
+                                          updateMetadataRow(index, "value", event.target.value)
+                                        }
+                                      />
+                                    </TableCell>
+                                    <TableCell>
+                                      <IconButton size="small" color="error" onClick={() => removeMetadataRow(index)}>
+                                        <Delete sx={{ fontSize: 16 }} />
+                                      </IconButton>
+                                    </TableCell>
+                                  </TableRow>
                                 ))}
+                              </TableBody>
+                            </Table>
+                          </TableContainer>
+                        </Stack>
+                      ))}
+                    {requestTab === "schema" &&
+                      (activeIsRest ? (
+                        <Stack spacing={1.2}>
+                          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                            <FormControl size="small" sx={{ width: 180 }}>
+                              <Select
+                                value={activeCollectionRequest?.restAuth?.type ?? "none"}
+                                onChange={(event: SelectInputChangeEvent) => {
+                                  const type = event.target.value as RestAuthConfig["type"];
+                                  updateActiveRestAuth(
+                                    type === "bearer"
+                                      ? { type, token: "" }
+                                      : type === "basic"
+                                        ? { type, username: "", password: "" }
+                                        : type === "api-key"
+                                          ? { type, key: "x-api-key", value: "", in: "header" }
+                                          : { type: "none" },
+                                  );
+                                }}
+                              >
+                                <MenuItem value="none">No auth</MenuItem>
+                                <MenuItem value="bearer">Bearer token</MenuItem>
+                                <MenuItem value="basic">Basic auth</MenuItem>
+                                <MenuItem value="api-key">API key</MenuItem>
                               </Select>
                             </FormControl>
-                          )}
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            onClick={generateRequestJsonFromSelectedScenario}
-                            disabled={!selectedMethod || currentMockScenarios.length === 0}
-                          >
-                            Generate from scenario
-                          </Button>
-                        </Stack>
-                        <Stack direction="row" spacing={0.7} alignItems="center">
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            onClick={generateRandomRequestJson}
-                            disabled={!selectedMethod}
-                          >
-                            Generate random
-                          </Button>
-                        </Stack>
-                      </Stack>
-                      <FeatureCodeTextField
-                        value={requestJson}
-                        onChange={handleRequestJsonChange}
-                        minRows={7}
-                        maxRows={12}
-                        language="json"
-                        onFormat={prettifyRequestJson}
-                        formatDisabled={!requestJson.trim()}
-                        formatAriaLabel="Prettier JSON"
-                        fullscreenTitle="Request body editor"
-                      />
-                    </Stack>
-                  ))}
-                {requestTab === "metadata" &&
-                  (activeIsWebSocket ? (
-                    <Stack spacing={1.1}>
-                      <Stack spacing={0.25}>
-                        <Typography variant="subtitle1">WebSocket subprotocol</Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          Optional WebSocket subprotocol. Message data is sent from the Message tab.
-                        </Typography>
-                      </Stack>
-                      <TextField
-                        size="small"
-                        label="Sec-WebSocket-Protocol"
-                        fullWidth
-                        value={webSocketSubprotocolValue}
-                        onChange={(event: TextInputChangeEvent) => updateWebSocketSubprotocol(event.target.value)}
-                        placeholder="json, chat.v1"
-                        helperText="Comma-separated subprotocols, for example json, chat.v1."
-                      />
-                    </Stack>
-                  ) : (
-                    <Stack spacing={1}>
-                      <Stack direction="row" justifyContent="space-between" alignItems="center">
-                        <Typography variant="subtitle1">Metadata</Typography>
-                        <Button size="small" startIcon={<Add />} onClick={addMetadataRow}>
-                          Add row
-                        </Button>
-                      </Stack>
-                      <TableContainer component={Paper} variant="outlined">
-                        <Table size="small">
-                          <TableHead>
-                            <TableRow>
-                              <TableCell>Key</TableCell>
-                              <TableCell>Value</TableCell>
-                              <TableCell width={56}>Action</TableCell>
-                            </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            {metadata.map((item, index) => (
-                              <TableRow key={`${item.key}-${item.value}`}>
-                                <TableCell>
-                                  <TextField
-                                    size="small"
-                                    fullWidth
-                                    value={item.key}
-                                    onChange={(event: TextInputChangeEvent) =>
-                                      updateMetadataRow(index, "key", event.target.value)
+                            {activeCollectionRequest?.restAuth?.type === "bearer" && (
+                              <TextField
+                                size="small"
+                                label="Token"
+                                value={activeCollectionRequest.restAuth.token}
+                                onChange={(event: TextInputChangeEvent) =>
+                                  updateActiveRestAuth({ type: "bearer", token: event.target.value })
+                                }
+                                sx={{ minWidth: 260, flex: 1 }}
+                              />
+                            )}
+                            {activeCollectionRequest?.restAuth?.type === "basic" && (
+                              <>
+                                <TextField
+                                  size="small"
+                                  label="Username"
+                                  value={activeCollectionRequest.restAuth.username}
+                                  onChange={(event: TextInputChangeEvent) =>
+                                    updateActiveRestAuth({
+                                      type: "basic",
+                                      username: event.target.value,
+                                      password:
+                                        activeCollectionRequest.restAuth?.type === "basic"
+                                          ? activeCollectionRequest.restAuth.password
+                                          : "",
+                                    })
+                                  }
+                                  sx={{ minWidth: 180 }}
+                                />
+                                <TextField
+                                  size="small"
+                                  label="Password"
+                                  type="password"
+                                  value={activeCollectionRequest.restAuth.password}
+                                  onChange={(event: TextInputChangeEvent) =>
+                                    updateActiveRestAuth({
+                                      type: "basic",
+                                      username:
+                                        activeCollectionRequest.restAuth?.type === "basic"
+                                          ? activeCollectionRequest.restAuth.username
+                                          : "",
+                                      password: event.target.value,
+                                    })
+                                  }
+                                  sx={{ minWidth: 180 }}
+                                />
+                              </>
+                            )}
+                            {activeCollectionRequest?.restAuth?.type === "api-key" && (
+                              <>
+                                <TextField
+                                  size="small"
+                                  label="Key"
+                                  value={activeCollectionRequest.restAuth.key}
+                                  onChange={(event: TextInputChangeEvent) =>
+                                    updateActiveRestAuth({
+                                  type: "api-key",
+                                  key: event.target.value,
+                                  value:
+                                    activeCollectionRequest.restAuth?.type === "api-key"
+                                      ? activeCollectionRequest.restAuth.value
+                                      : "",
+                                  in:
+                                    activeCollectionRequest.restAuth?.type === "api-key"
+                                      ? activeCollectionRequest.restAuth.in
+                                      : "header",
+                                })
+                              }
+                                  sx={{ minWidth: 180 }}
+                                />
+                                <TextField
+                                  size="small"
+                                  label="Value"
+                                  value={activeCollectionRequest.restAuth.value}
+                                  onChange={(event: TextInputChangeEvent) =>
+                                    updateActiveRestAuth({
+                                  type: "api-key",
+                                  key:
+                                    activeCollectionRequest.restAuth?.type === "api-key"
+                                      ? activeCollectionRequest.restAuth.key
+                                      : "x-api-key",
+                                  value: event.target.value,
+                                  in:
+                                    activeCollectionRequest.restAuth?.type === "api-key"
+                                      ? activeCollectionRequest.restAuth.in
+                                      : "header",
+                                })
+                              }
+                                  sx={{ minWidth: 220 }}
+                                />
+                                <FormControl size="small" sx={{ width: 130 }}>
+                                  <Select
+                                    value={activeCollectionRequest.restAuth.in}
+                                    onChange={(event: SelectInputChangeEvent) =>
+                                  updateActiveRestAuth({
+                                    type: "api-key",
+                                    key:
+                                      activeCollectionRequest.restAuth?.type === "api-key"
+                                        ? activeCollectionRequest.restAuth.key
+                                        : "x-api-key",
+                                    value:
+                                      activeCollectionRequest.restAuth?.type === "api-key"
+                                        ? activeCollectionRequest.restAuth.value
+                                        : "",
+                                    in: event.target.value === "query" ? "query" : "header",
+                                  })
                                     }
-                                  />
-                                </TableCell>
-                                <TableCell>
-                                  <TextField
-                                    size="small"
-                                    fullWidth
-                                    value={item.value}
-                                    onChange={(event: TextInputChangeEvent) =>
-                                      updateMetadataRow(index, "value", event.target.value)
-                                    }
-                                  />
-                                </TableCell>
-                                <TableCell>
-                                  <IconButton size="small" color="error" onClick={() => removeMetadataRow(index)}>
-                                    <Delete sx={{ fontSize: 16 }} />
-                                  </IconButton>
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </TableContainer>
-                    </Stack>
-                  ))}
-                {requestTab === "schema" && (
-                  <Stack spacing={1.2}>
-                    <FeatureSchemaTable
-                      title="Request schema"
-                      typeName={selectedMethod?.requestType}
-                      fields={requestFields}
-                    />
-                    <FeatureSchemaTable
-                      title="Response schema"
-                      typeName={selectedMethod?.responseType}
-                      fields={responseFields}
-                    />
-                  </Stack>
-                )}
-                {requestTab === "history" && (
-                  <FeatureHistoryTable
-                    history={currentHistory}
-                    filterQuery={deferredResponseFilter}
-                    onClear={clearHistory}
-                  />
-                )}
-                {requestTab === "docs" &&
-                  (activeIsWebSocket ? (
-                    <WebSocketDocsPanel
-                      collectionRequest={activeCollectionRequest}
-                      url={targetDraft}
-                      message={requestJson}
-                      examples={currentExamples}
-                      latestResult={lastResult}
-                      doc={currentWebSocketDoc}
-                      onPreview={previewCurrentWebSocketDoc}
-                      onPublish={publishCurrentWebSocketDoc}
-                      onUnpublish={unpublishCurrentWebSocketDoc}
-                      onExport={() =>
-                        activeCollectionRequest &&
-                        downloadTextFile(
-                          `layang-ws-docs-${slugify(activeCollectionRequest.name)}-${timestampForFile()}.md`,
-                          buildActiveWebSocketDocsMarkdown(),
-                          "text/markdown",
-                        )
-                      }
-                    />
-                  ) : (
-                    <FeatureMethodDocsPanel
-                      selectedMethod={selectedMethod}
-                      doc={currentMethodDoc}
-                      examples={currentExamples}
-                      docsResult={activeDocsResult}
-                      onPreview={previewCurrentMethodDoc}
-                      onSaveResult={saveCurrentResultForDocs}
-                      onExportPublic={exportPublicDocs}
-                      onPublish={publishCurrentMethodDoc}
-                      onUnpublish={unpublishCurrentMethodDoc}
-                      onDelete={deleteCurrentMethodDoc}
-                    />
-                  ))}
-                {requestTab === "benchmark" &&
-                  (activeIsWebSocket ? (
-                    <WebSocketBenchmarkPanel
-                      request={activeCollectionRequest}
-                      iterations={wsBenchmarkIterations}
-                      onIterationsChange={setWsBenchmarkIterations}
-                      running={wsBenchmarkRunning}
-                      results={wsBenchmarkResults}
-                      lastResult={lastResult}
-                      onRun={() => void runWebSocketBenchmark()}
-                      onStop={stopWebSocketBenchmark}
-                      onExport={exportWebSocketBenchmark}
-                    />
-                  ) : (
-                    <FeatureBenchmarkPanel
-                      selectedMethod={selectedMethod}
-                      iterations={benchmark.iterations}
-                      onIterationsChange={benchmark.setIterations}
-                      periodMs={benchmark.periodMs}
-                      onPeriodMsChange={benchmark.setPeriodMs}
-                      running={benchmark.running}
-                      results={benchmark.results}
-                      onRun={() => void benchmark.runBenchmark()}
-                      onStop={benchmark.stopBenchmark}
-                      onExportBenchmark={exportCurrentBenchmark}
-                    />
-                  ))}
-                {requestTab === "examples" && (
-                  <ExamplesPanel
-                    examples={currentExamples}
-                    selectedMethod={selectedMethod}
-                    canSave={Boolean(selectedMethod || activeCollectionRequest)}
-                    onSave={saveCurrentExample}
-                    onImport={() => exampleInputRef.current?.click()}
-                    onExport={exportCurrentMethodExamples}
-                    onLoad={loadExample}
-                    onRun={(example) => void runExample(example)}
-                    onDelete={(id) => setExamples((current) => current.filter((item) => item.id !== id))}
-                  />
-                )}
-                {requestTab === "mock" &&
-                  (activeIsWebSocket ? (
-                    <WebSocketMockPanel
-                      request={activeCollectionRequest}
-                      mockResponseText={activeWebSocketMockResponseText}
-                      onMockResponseTextChange={updateActiveWebSocketMockResponse}
-                      latestResult={lastResult}
-                      status={wsMockStatus}
-                      port={wsMockPort}
-                      pathValue={wsMockPath}
-                      intervalMs={wsMockIntervalMs}
-                      loop={wsMockLoop}
-                      maxLoops={wsMockMaxLoops}
-                      streamOnConnect={wsMockStreamOnConnect}
-                      onPortChange={setWsMockPort}
-                      onPathChange={setWsMockPath}
-                      onIntervalMsChange={setWsMockIntervalMs}
-                      onLoopChange={setWsMockLoop}
-                      onMaxLoopsChange={setWsMockMaxLoops}
-                      onStreamOnConnectChange={setWsMockStreamOnConnect}
-                      onStart={() => void startWebSocketMockServer()}
-                      onStop={() => void stopWebSocketMockServer()}
-                      onSendOnce={() => void sendWebSocketMockOnce()}
-                      onCopy={copyActiveWebSocketMockResponse}
-                    />
-                  ) : (
-                    <MockServerPanel
-                      selectedMethod={selectedMethod}
-                      status={mockServerStatus}
-                      currentFile={currentMockFile}
-                      currentParseResult={currentMockParse}
-                      editorText={currentMockEditorText}
-                      streamDefaults={mockServer.streamDefaults}
-                      mappingRows={mockMappingRows}
-                      onScenarioTextChange={handleMockScenarioTextChange}
-                      onFormatChange={handleMockFormatChange}
-                      onFormat={formatMockScenarioEditor}
-                      onAddScenario={addMockScenarioFromCurrent}
-                      onScenarioSelectChange={handleMockScenarioSelectChange}
-                      onMethodEnabledChange={handleMockMethodEnabledChange}
-                      onScenarioStreamSettingsChange={handleMockScenarioStreamSettingsChange}
-                      onEditScenario={openMockScenarioManager}
-                      onImport={() => mockScenarioInputRef.current?.click()}
-                      onExport={exportMockScenarioFile}
-                      onOpenFolder={() => void openMockScenarioFolder()}
-                      onOpenSettings={() => setMockSettingsOpen(true)}
-                    />
-                  ))}
-              </Box>
-            </Paper>
+                                  >
+                                    <MenuItem value="header">Header</MenuItem>
+                                    <MenuItem value="query">Query</MenuItem>
+                                  </Select>
+                                </FormControl>
+                              </>
+                            )}
+                          </Stack>
+                          <RestPairEditor
+                            title="Path params"
+                            rows={activeCollectionRequest?.restPathParams ?? []}
+                            onAdd={() => addRestPairRow("restPathParams")}
+                            onUpdate={(index, field, value) => updateRestPairRow("restPathParams", index, field, value)}
+                            onRemove={(index) => removeRestPairRow("restPathParams", index)}
+                          />
+                          <RestPairEditor
+                            title="Query params"
+                            rows={activeCollectionRequest?.restParams ?? []}
+                            onAdd={() => addRestPairRow("restParams")}
+                            onUpdate={(index, field, value) => updateRestPairRow("restParams", index, field, value)}
+                            onRemove={(index) => removeRestPairRow("restParams", index)}
+                          />
+                        </Stack>
+                      ) : (
+                        <Stack spacing={1.2}>
+                          <FeatureSchemaTable
+                            title="Request schema"
+                            typeName={selectedMethod?.requestType}
+                            fields={requestFields}
+                          />
+                          <FeatureSchemaTable
+                            title="Response schema"
+                            typeName={selectedMethod?.responseType}
+                            fields={responseFields}
+                          />
+                        </Stack>
+                      ))}
+                    {requestTab === "history" && (
+                      <FeatureHistoryTable
+                        history={currentHistory}
+                        filterQuery={deferredResponseFilter}
+                        onClear={clearHistory}
+                      />
+                    )}
+                    {requestTab === "docs" &&
+                      (activeIsWebSocket ? (
+                        <WebSocketDocsPanel
+                          collectionRequest={activeCollectionRequest}
+                          url={targetDraft}
+                          message={requestJson}
+                          examples={currentExamples}
+                          latestResult={lastResult}
+                          doc={currentWebSocketDoc}
+                          onPreview={previewCurrentWebSocketDoc}
+                          onPublish={publishCurrentWebSocketDoc}
+                          onUnpublish={unpublishCurrentWebSocketDoc}
+                          onExport={() =>
+                            activeCollectionRequest &&
+                            downloadTextFile(
+                              `layang-ws-docs-${slugify(activeCollectionRequest.name)}-${timestampForFile()}.md`,
+                              buildActiveWebSocketDocsMarkdown(),
+                              "text/markdown",
+                            )
+                          }
+                        />
+                      ) : activeIsRest ? (
+                        <RestDocsPanel
+                          collectionRequest={activeCollectionRequest}
+                          url={previewUrl}
+                          latestResult={lastResult}
+                          doc={currentRestDoc}
+                          onPreview={previewCurrentRestDoc}
+                          onPublish={publishCurrentRestDoc}
+                          onUnpublish={unpublishCurrentRestDoc}
+                          onExport={() =>
+                            activeCollectionRequest &&
+                            downloadTextFile(
+                              `layang-rest-docs-${slugify(activeCollectionRequest.name)}-${timestampForFile()}.md`,
+                              buildActiveRestDocsMarkdown(),
+                              "text/markdown",
+                            )
+                          }
+                        />
+                      ) : (
+                        <FeatureMethodDocsPanel
+                          selectedMethod={selectedMethod}
+                          doc={currentMethodDoc}
+                          examples={currentExamples}
+                          docsResult={activeDocsResult}
+                          onPreview={previewCurrentMethodDoc}
+                          onSaveResult={saveCurrentResultForDocs}
+                          onExportPublic={exportPublicDocs}
+                          onPublish={publishCurrentMethodDoc}
+                          onUnpublish={unpublishCurrentMethodDoc}
+                          onDelete={deleteCurrentMethodDoc}
+                        />
+                      ))}
+                    {requestTab === "benchmark" &&
+                      (activeIsWebSocket ? (
+                        <WebSocketBenchmarkPanel
+                          request={activeCollectionRequest}
+                          iterations={wsBenchmarkIterations}
+                          onIterationsChange={setWsBenchmarkIterations}
+                          running={wsBenchmarkRunning}
+                          results={wsBenchmarkResults}
+                          lastResult={lastResult}
+                          onRun={() => void runWebSocketBenchmark()}
+                          onStop={stopWebSocketBenchmark}
+                          onExport={exportWebSocketBenchmark}
+                        />
+                      ) : (
+                        <FeatureBenchmarkPanel
+                          selectedMethod={selectedMethod}
+                          iterations={benchmark.iterations}
+                          onIterationsChange={benchmark.setIterations}
+                          periodMs={benchmark.periodMs}
+                          onPeriodMsChange={benchmark.setPeriodMs}
+                          running={benchmark.running}
+                          results={benchmark.results}
+                          onRun={() => void benchmark.runBenchmark()}
+                          onStop={benchmark.stopBenchmark}
+                          onExportBenchmark={exportCurrentBenchmark}
+                        />
+                      ))}
+                    {requestTab === "examples" && (
+                      <ExamplesPanel
+                        examples={currentExamples}
+                        selectedMethod={selectedMethod}
+                        canSave={Boolean(selectedMethod || activeCollectionRequest)}
+                        onSave={saveCurrentExample}
+                        onImport={() => exampleInputRef.current?.click()}
+                        onExport={exportCurrentMethodExamples}
+                        onLoad={loadExample}
+                        onRun={(example) => void runExample(example)}
+                        onDelete={(id) => setExamples((current) => current.filter((item) => item.id !== id))}
+                      />
+                    )}
+                    {requestTab === "mock" &&
+                      (activeIsWebSocket ? (
+                        <WebSocketMockPanel
+                          request={activeCollectionRequest}
+                          mockResponseText={activeWebSocketMockResponseText}
+                          onMockResponseTextChange={updateActiveWebSocketMockResponse}
+                          status={wsMockStatus}
+                          port={wsMockPort}
+                          pathValue={wsMockPath}
+                          intervalMs={wsMockIntervalMs}
+                          loop={wsMockLoop}
+                          maxLoops={wsMockMaxLoops}
+                          streamOnConnect={wsMockStreamOnConnect}
+                          scenarios={activeWebSocketMockScenarios}
+                          activeScenario={activeWebSocketMockScenario}
+                          requestPaths={wsMockStatus.requestPaths}
+                          onPortChange={handleWebSocketMockPortChange}
+                          onPathChange={(value) => updateActiveWebSocketMockScenario({ path: value })}
+                          onIntervalMsChange={(value) => updateActiveWebSocketMockScenario({ intervalMs: value })}
+                          onLoopChange={(value) => updateActiveWebSocketMockScenario({ loop: value })}
+                          onMaxLoopsChange={(value) => updateActiveWebSocketMockScenario({ maxLoops: value })}
+                          onStreamOnConnectChange={(value) =>
+                            updateActiveWebSocketMockScenario({ streamOnConnect: value })
+                          }
+                          onScenarioSelect={selectWebSocketMockScenario}
+                          onScenarioChange={updateActiveWebSocketMockScenario}
+                          onAddScenario={addWebSocketMockScenario}
+                          onStart={() => void startWebSocketMockServer()}
+                          onStop={() => void stopWebSocketMockServer()}
+                          onSendOnce={() => void sendWebSocketMockOnce()}
+                          onCopy={copyActiveWebSocketMockResponse}
+                        />
+                      ) : activeIsRest ? (
+                        <RestMockPanel
+                          request={activeCollectionRequest?.kind === "rest" ? activeCollectionRequest : null}
+                          scenarios={activeRestMockScenarios}
+                          activeScenario={activeRestMockScenario}
+                          mockResponseText={activeRestMockResponseText}
+                          status={restMockStatus}
+                          project={restMockServer}
+                          onMockResponseTextChange={updateActiveRestMockResponse}
+                          onPortChange={handleRestMockPortChange}
+                          onBindHostChange={handleRestMockBindHostChange}
+                          onScenarioSelect={setRestMockScenarioId}
+                          onScenarioChange={updateActiveRestMockScenario}
+                          onScenarioPairAdd={addRestMockScenarioPair}
+                          onScenarioPairUpdate={updateRestMockScenarioPair}
+                          onScenarioPairRemove={removeRestMockScenarioPair}
+                          onAddScenario={addRestMockScenario}
+                          onStart={() => void startRestMockServer()}
+                          onStop={() => void stopRestMockServer()}
+                        />
+                      ) : (
+                        <MockServerPanel
+                          selectedMethod={selectedMethod}
+                          status={mockServerStatus}
+                          currentFile={currentMockFile}
+                          currentParseResult={currentMockParse}
+                          editorInstanceKey={currentMockEditorKey}
+                          editorText={currentMockEditorText}
+                          streamDefaults={mockServer.streamDefaults}
+                          mappingRows={mockMappingRows}
+                          onScenarioTextChange={handleMockScenarioTextChange}
+                          onFormatChange={handleMockFormatChange}
+                          onFormat={formatMockScenarioEditor}
+                          onAddScenario={addMockScenarioFromCurrent}
+                          onScenarioSelectChange={handleMockScenarioSelectChange}
+                          onMethodEnabledChange={handleMockMethodEnabledChange}
+                          onScenarioStreamSettingsChange={handleMockScenarioStreamSettingsChange}
+                          onEditScenario={openMockScenarioManager}
+                          onImport={() => mockScenarioInputRef.current?.click()}
+                          onExport={exportMockScenarioFile}
+                          onOpenFolder={() => void openMockScenarioFolder()}
+                          onOpenSettings={() => setMockSettingsOpen(true)}
+                        />
+                      ))}
+                  </Box>
+                </Paper>
 
-            <Box
-              onMouseDown={beginResponseResize}
-              sx={{
-                height: 6,
-                flexShrink: 0,
-                cursor: "row-resize",
-                borderRadius: 999,
-                bgcolor: "divider",
-                opacity: 0.55,
-                "&:hover": { bgcolor: "primary.main", opacity: 0.85 },
-              }}
-            />
+                <Box
+                  onMouseDown={beginResponseResize}
+                  sx={{
+                    height: 6,
+                    flexShrink: 0,
+                    cursor: "row-resize",
+                    borderRadius: 999,
+                    bgcolor: "divider",
+                    opacity: 0.55,
+                    "&:hover": { bgcolor: "primary.main", opacity: 0.85 },
+                  }}
+                />
 
-            <Paper
-              elevation={0}
-              sx={{
-                ...panelSx,
-                flex: `0 0 ${responseHeight}px`,
-                minHeight: minResponseHeight,
-                display: "flex",
-                flexDirection: "column",
-              }}
-            >
-              <ResponseToolbar
-                filter={responseFilter}
-                hasEvents={events.length > 0}
-                hasLastResult={Boolean(lastResult)}
-                onFilterChange={handleResponseFilterChange}
-                onClearFilter={clearResponseFilter}
-                onExport={exportResponseStable}
-                onSaveDocs={saveCurrentResultForDocsStable}
-                onClearResponse={clearActiveResponseStable}
-              />
-              <ResponseWorkbenchTabs value={responseTab} onChange={handleResponseTabChange} />
-              <Box
-                ref={responseBodyRef}
-                className="response-selectable"
-                onScroll={handleResponseBodyScroll}
-                sx={{
-                  p: designSystem.space.panelPadding,
-                  flex: 1,
-                  minHeight: 0,
-                  overflow: "auto",
-                  position: "relative",
-                }}
-              >
-                {responseTab === "messages" && (
-                  <FeatureMessageTable
-                    empty="Run a request to see messages."
-                    events={messageEvents}
-                    filterQuery={deferredResponseFilter}
+                <Paper
+                  elevation={0}
+                  sx={{
+                    ...panelSx,
+                    flex: `0 0 ${responseHeight}px`,
+                    minHeight: minResponseHeight,
+                    display: "flex",
+                    flexDirection: "column",
+                  }}
+                >
+                  <ResponseToolbar
+                    filter={responseFilter}
+                    hasEvents={events.length > 0}
+                    hasLastResult={Boolean(lastResult)}
+                    onFilterChange={handleResponseFilterChange}
+                    onClearFilter={clearResponseFilter}
+                    onExport={exportResponseStable}
+                    onSaveDocs={saveCurrentResultForDocsStable}
+                    onClearResponse={clearActiveResponseStable}
                   />
-                )}
-                {responseTab === "messages" && showMessageTopButton && (
-                  <Tooltip title="Top message">
-                    <IconButton
-                      size="small"
-                      color="primary"
-                      aria-label="Scroll to top message"
-                      onClick={scrollMessagesToTop}
-                      sx={{
-                        position: "fixed",
-                        right: 24,
-                        bottom: 76,
-                        zIndex: 60,
-                        bgcolor: "background.paper",
-                        borderColor: "divider",
-                        boxShadow: "0 12px 32px rgba(15, 23, 42, 0.22)",
-                      }}
-                    >
-                      <KeyboardArrowUp fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                )}
-                {responseTab === "raw" && (
-                  <FeatureJsonBlock value={lastResult ?? events} highlightQuery={deferredResponseFilter} />
-                )}
-                {responseTab === "history" && (
-                  <FeatureHistoryTable
-                    history={currentHistory}
-                    filterQuery={deferredResponseFilter}
-                    onClear={clearHistory}
-                  />
-                )}
-                {responseTab === "report" && (
-                  <FeatureJsonBlock value={reportPayload} highlightQuery={deferredResponseFilter} />
-                )}
-              </Box>
-            </Paper>
+                  <ResponseWorkbenchTabs value={responseTab} onChange={handleResponseTabChange} />
+                  <Box
+                    ref={responseBodyRef}
+                    className="response-selectable"
+                    onScroll={handleResponseBodyScroll}
+                    sx={{
+                      p: designSystem.space.panelPadding,
+                      flex: 1,
+                      minHeight: 0,
+                      overflow: "auto",
+                      position: "relative",
+                    }}
+                  >
+                    {responseTab === "messages" && (
+                      <FeatureMessageTable
+                        empty="Run a request to see messages."
+                        events={messageEvents}
+                        filterQuery={deferredResponseFilter}
+                      />
+                    )}
+                    {responseTab === "messages" && showMessageTopButton && (
+                      <Tooltip title="Top message">
+                        <IconButton
+                          size="small"
+                          color="primary"
+                          aria-label="Scroll to top message"
+                          onClick={scrollMessagesToTop}
+                          sx={{
+                            position: "fixed",
+                            right: 24,
+                            bottom: 76,
+                            zIndex: 60,
+                            bgcolor: "background.paper",
+                            borderColor: "divider",
+                            boxShadow: "0 12px 32px rgba(15, 23, 42, 0.22)",
+                          }}
+                        >
+                          <KeyboardArrowUp fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                    {responseTab === "raw" && (
+                      <FeatureJsonBlock value={lastResult ?? events} highlightQuery={deferredResponseFilter} />
+                    )}
+                    {responseTab === "history" && (
+                      <FeatureHistoryTable
+                        history={currentHistory}
+                        filterQuery={deferredResponseFilter}
+                        onClear={clearHistory}
+                      />
+                    )}
+                    {responseTab === "report" && (
+                      <FeatureJsonBlock value={reportPayload} highlightQuery={deferredResponseFilter} />
+                    )}
+                  </Box>
+                </Paper>
               </>
             )}
           </Stack>
@@ -5727,6 +7389,38 @@ export default function PlaygroundPage() {
           onStop={() => void stopMockServer()}
         />
 
+        <Dialog open={workspaceSetupOpen} onClose={() => undefined} fullWidth maxWidth="sm">
+          <DialogTitle>Choose Workspace Folder</DialogTitle>
+          <DialogContent sx={{ pt: 1 }}>
+            <Stack spacing={1.5}>
+              <Typography variant="body2" color="text.secondary">
+                Layang stores requests, mocks, docs, environments, and history in a workspace folder on disk.
+              </Typography>
+              <Paper variant="outlined" sx={{ p: 1.25, borderRadius: 2 }}>
+                <Typography variant="subtitle2">Default location</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {workspaceSetupDefaultPath || "Documents\\Layang\\Workspace"}
+                </Typography>
+              </Paper>
+              <Typography variant="caption" color="text.secondary">
+                You can keep the default Documents location or choose another folder before the first workspace is
+                created.
+              </Typography>
+            </Stack>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => void chooseCustomWorkspacePreference()} disabled={workspaceSetupPending}>
+              Choose custom folder
+            </Button>
+            <Button
+              variant="contained"
+              onClick={() => void applyWorkspacePreference()}
+              disabled={workspaceSetupPending}
+            >
+              Use default folder
+            </Button>
+          </DialogActions>
+        </Dialog>
         <Dialog open={mockScenarioDialogOpen} onClose={() => setMockScenarioDialogOpen(false)} fullWidth maxWidth="xs">
           <DialogTitle>Edit Scenario</DialogTitle>
           <DialogContent sx={{ pt: 1 }}>
@@ -5739,9 +7433,6 @@ export default function PlaygroundPage() {
                 onChange={(event: TextInputChangeEvent) => setMockScenarioDraftId(event.target.value)}
                 placeholder="sayhello-success"
               />
-              <Typography variant="caption" color="text.secondary">
-                This only renames or deletes the selected scenario for the current method file.
-              </Typography>
             </Stack>
           </DialogContent>
           <DialogActions>
@@ -5757,63 +7448,53 @@ export default function PlaygroundPage() {
         </Dialog>
 
         <Dialog open={collectionDialogOpen} onClose={() => setCollectionDialogOpen(false)} fullWidth maxWidth="xs">
-          <DialogTitle>Add WS Collection</DialogTitle>
+          <DialogTitle>Add Collection</DialogTitle>
           <DialogContent sx={{ pt: 1 }}>
             <Stack spacing={1.2} sx={{ mt: 0.5 }}>
-              <Alert severity="warning" variant="outlined">
-                WebSocket is a beta version and is not stable yet.
-              </Alert>
               <TextField
                 autoFocus
                 size="small"
-                label="WebSocket collection name"
+                label="Collection name"
                 value={collectionNameDraft}
                 onChange={(event: TextInputChangeEvent) => setCollectionNameDraft(event.target.value)}
                 onKeyDown={(event: TextInputKeyboardEvent) => {
                   if (event.key === "Enter") confirmAddCollection();
                 }}
-                placeholder="Sample WebSocket Collection"
+                placeholder="Sample API Collection"
               />
               <Typography variant="caption" color="text.secondary">
-                After this collection is created, use the + button in its row to add WebSocket requests. Import proto
-                files when you need gRPC.
+                Use the row buttons to add REST or WebSocket requests.
               </Typography>
             </Stack>
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setCollectionDialogOpen(false)}>Cancel</Button>
             <Button variant="contained" onClick={confirmAddCollection}>
-              Add WS Collection
+              Add Collection
             </Button>
           </DialogActions>
         </Dialog>
 
         <Dialog open={requestNameDialogOpen} onClose={() => setRequestNameDialogOpen(false)} fullWidth maxWidth="xs">
-          <DialogTitle>Add WebSocket Request</DialogTitle>
+          <DialogTitle>{requestKindDraft === "rest" ? "Add REST Request" : "Add WebSocket Request"}</DialogTitle>
           <DialogContent sx={{ pt: 1 }}>
             <Stack spacing={1.2} sx={{ mt: 0.5 }}>
-              <Alert severity="warning" variant="outlined">
-                WebSocket is a beta version and is not stable yet.
-              </Alert>
               <TextField
                 autoFocus
                 size="small"
-                label="WebSocket request name"
+                label={requestKindDraft === "rest" ? "REST request name" : "WebSocket request name"}
                 value={requestNameDraft}
                 onChange={(event: TextInputChangeEvent) => setRequestNameDraft(event.target.value)}
                 onKeyDown={(event: TextInputKeyboardEvent) => {
-                  if (event.key === "Enter") confirmAddWebSocketRequest();
+                  if (event.key === "Enter") confirmAddCollectionRequest();
                 }}
-                placeholder="Chat stream"
+                placeholder={requestKindDraft === "rest" ? "List users" : "Chat stream"}
               />
-              <Typography variant="caption" color="text.secondary">
-                The name is used for the tab, history, examples, docs, and WebSocket mock response template.
-              </Typography>
             </Stack>
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setRequestNameDialogOpen(false)}>Cancel</Button>
-            <Button variant="contained" onClick={confirmAddWebSocketRequest}>
+            <Button variant="contained" onClick={confirmAddCollectionRequest}>
               Add Request
             </Button>
           </DialogActions>
@@ -5839,9 +7520,7 @@ export default function PlaygroundPage() {
                 placeholder={transportTargetPlaceholder(activeTransportMode)}
               />
               <Typography variant="caption" color="text.secondary">
-                {envDialogMode === "edit"
-                  ? "Update the selected environment for the active transport. Use the edit icon in the environment menu to update or remove environments."
-                  : "Saved environment will be attached to the active method tab and can be reused from the environment menu."}
+                {envDialogMode === "edit" ? "Update the selected environment." : "Save this environment for reuse."}
               </Typography>
             </Stack>
           </DialogContent>

@@ -1,12 +1,16 @@
 import type { ChangeEvent } from "react";
 
-import { ContentCopy, Download, PlayArrow, StopCircle } from "@/components/shadcn/icons";
+import { ContentCopy, Download, Edit, PlayArrow, StopCircle } from "@/components/shadcn/icons";
 import {
   Alert,
   Box,
   Button,
   Chip,
+  FormControl,
+  IconButton,
+  MenuItem,
   Paper,
+  Select,
   Stack,
   Switch,
   Table,
@@ -16,6 +20,7 @@ import {
   TableHead,
   TableRow,
   TextField,
+  Tooltip,
   Typography,
 } from "@/components/shadcn/compat";
 import type { GrpcResult } from "@/lib/types";
@@ -30,81 +35,78 @@ import type {
   MethodDoc,
   SavedExample,
   WebSocketMockStatus,
+  WebSocketMockScenario,
 } from "../../shared/workbench-types";
 
 type TextInputChangeEvent = ChangeEvent<HTMLInputElement | HTMLTextAreaElement>;
-type SwitchInputChangeEvent = ChangeEvent<HTMLInputElement>;
+type SelectInputChangeEvent = ChangeEvent<HTMLSelectElement>;
+
+type WebSocketRequestPathRow = {
+  id: string;
+  requestId?: string;
+  name: string;
+  path: string;
+  enabled: boolean;
+  url: string;
+  intervalMs?: number;
+  loop?: boolean;
+  maxLoops?: number;
+};
+
+type WebSocketSidebarRequestRow = WebSocketRequestPathRow & {
+  scenarioId: string;
+  requestName: string;
+  clientCount?: number;
+};
 
 export function WebSocketMockSidebar({
-  request,
-  mockResponseText,
-  latestResult: _latestResult,
   status,
   port,
-  pathValue,
-  intervalMs,
-  loop,
-  maxLoops,
-  streamOnConnect,
-  onMockResponseTextChange,
+  rows,
+  activeScenarioId,
   onPortChange,
-  onPathChange,
-  onIntervalMsChange,
-  onLoopChange,
-  onMaxLoopsChange,
-  onStreamOnConnectChange,
+  onScenarioChange,
+  onOpenScenario,
   onStart,
   onStop,
-  onSendOnce,
-  onCopy,
 }: {
-  request: (ApiCollectionRequest & { collectionName?: string }) | null;
-  mockResponseText: string;
-  latestResult: GrpcResult | null;
   status: WebSocketMockStatus;
   port: number;
-  pathValue: string;
-  intervalMs: number;
-  loop: boolean;
-  maxLoops: number;
-  streamOnConnect: boolean;
-  onMockResponseTextChange: (value: string) => void;
+  rows: WebSocketSidebarRequestRow[];
+  activeScenarioId?: string;
   onPortChange: (value: number) => void;
-  onPathChange: (value: string) => void;
-  onIntervalMsChange: (value: number) => void;
-  onLoopChange: (value: boolean) => void;
-  onMaxLoopsChange: (value: number) => void;
-  onStreamOnConnectChange: (value: boolean) => void;
+  onScenarioChange: (scenarioId: string, patch: Partial<WebSocketMockScenario>) => void;
+  onOpenScenario: (requestId: string | undefined, scenarioId: string) => void;
   onStart: () => void;
   onStop: () => void;
-  onSendOnce: () => void;
-  onCopy: () => void;
 }) {
+  const host = "127.0.0.1";
+  const pathCounts = rows.reduce<Record<string, number>>((acc, row) => {
+    const key = row.path || "/";
+    acc[key] = (acc[key] ?? 0) + 1;
+    return acc;
+  }, {});
   return (
     <Stack spacing={1.1}>
-      <Alert severity={request ? "info" : "warning"}>
-        {request
-          ? "WS Mock is a real local WebSocket server/listener."
-          : "Select or create a WebSocket request to edit and run its mock server/listener."}
-      </Alert>
       <Paper variant="outlined" sx={{ p: 1, borderRadius: 2 }}>
-        <Stack spacing={0.8}>
+        <Stack spacing={0.9}>
           <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
             <Box sx={{ minWidth: 0 }}>
-              <Typography variant="body2" fontWeight={600} noWrap title={request?.name ?? "No WebSocket request"}>
-                {request?.name ?? "No WebSocket request"}
+              <Typography variant="body2" fontWeight={600} noWrap>
+                WebSocket mock server
               </Typography>
-              <Typography variant="caption" color="text.secondary" noWrap title={status.url ?? request?.url ?? ""}>
-                {status.running ? status.url : (request?.url ?? "Open a WS request first")}
+              <Typography variant="caption" color="text.secondary" noWrap title={`ws://${host}:${port}`}>
+                {status.running ? `Running · ${status.clientCount ?? 0} client` : "Stopped"}
               </Typography>
             </Box>
             <Chip
               size="small"
-              label={status.running ? `${status.clientCount ?? 0} client` : "Stopped"}
+              label={status.running ? "Running" : "Stopped"}
               color={status.running ? "success" : "default"}
             />
           </Stack>
-          <Stack direction="row" spacing={0.6} flexWrap="wrap" useFlexGap>
+          <Stack direction="row" spacing={0.7} alignItems="end" flexWrap="wrap" useFlexGap>
+            <TextField size="small" label="IP" value={host} disabled sx={{ width: 118 }} />
             <TextField
               size="small"
               type="number"
@@ -114,86 +116,140 @@ export function WebSocketMockSidebar({
                 onPortChange(Math.max(1, Math.floor(Number(event.target.value) || 8090)))
               }
               disabled={status.running}
-              sx={{ width: 96 }}
+              sx={{ width: 92 }}
             />
-            <TextField
-              size="small"
-              label="Path"
-              value={pathValue}
-              onChange={(event: TextInputChangeEvent) => onPathChange(event.target.value)}
-              disabled={status.running}
-              sx={{ width: 130 }}
-            />
-          </Stack>
-          <Stack direction="row" spacing={0.6} flexWrap="wrap" useFlexGap>
-            <TextField
-              size="small"
-              type="number"
-              label="Interval"
-              value={String(intervalMs)}
-              onChange={(event: TextInputChangeEvent) =>
-                onIntervalMsChange(Math.max(1, Math.floor(Number(event.target.value) || 1000)))
-              }
-              sx={{ width: 105 }}
-            />
-            <TextField
-              size="small"
-              type="number"
-              label="Max loops"
-              value={String(maxLoops)}
-              onChange={(event: TextInputChangeEvent) =>
-                onMaxLoopsChange(Math.max(0, Math.floor(Number(event.target.value) || 0)))
-              }
-              helperText="0 = infinite"
-              sx={{ width: 110 }}
-            />
-          </Stack>
-          <Stack direction="row" alignItems="center" spacing={0.8} flexWrap="wrap" useFlexGap>
-            <Stack direction="row" alignItems="center" spacing={0.5}>
-              <Switch
-                checked={streamOnConnect}
-                onChange={(event: SwitchInputChangeEvent) => onStreamOnConnectChange(event.target.checked)}
-              />
-              <Typography variant="caption">Periodic send</Typography>
-            </Stack>
-            <Stack direction="row" alignItems="center" spacing={0.5}>
-              <Switch checked={loop} onChange={(event: SwitchInputChangeEvent) => onLoopChange(event.target.checked)} />
-              <Typography variant="caption">Loop</Typography>
-            </Stack>
-          </Stack>
-          <FeatureCodeTextField
-            value={mockResponseText}
-            onChange={onMockResponseTextChange}
-            minRows={7}
-            maxRows={12}
-            language="json"
-          />
-          <Stack direction="row" spacing={0.7} flexWrap="wrap" useFlexGap>
             {status.running ? (
-              <Button size="small" variant="outlined" color="warning" startIcon={<StopCircle />} onClick={onStop}>
-                Stop WS mock
+              <Button size="small" color="warning" variant="outlined" startIcon={<StopCircle />} onClick={onStop}>
+                Stop
               </Button>
             ) : (
-              <Button size="small" variant="contained" startIcon={<PlayArrow />} onClick={onStart} disabled={!request}>
-                Start WS mock
+              <Button
+                size="small"
+                variant="contained"
+                startIcon={<PlayArrow />}
+                onClick={onStart}
+                disabled={rows.length === 0}
+              >
+                Start
               </Button>
             )}
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={<PlayArrow />}
-              onClick={onSendOnce}
-              disabled={!status.running}
-            >
-              Send one message
-            </Button>
-            <Button size="small" variant="outlined" startIcon={<ContentCopy />} onClick={onCopy} disabled={!request}>
-              Copy
-            </Button>
           </Stack>
         </Stack>
       </Paper>
-      
+
+      <Paper variant="outlined" sx={{ p: 1, borderRadius: 2 }}>
+        <Stack spacing={0.8}>
+          <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+            <Typography variant="body2" fontWeight={600}>
+              Active requests
+            </Typography>
+            <Chip size="small" label={rows.length} />
+          </Stack>
+          {rows.length === 0 ? (
+            <Alert severity="info" variant="outlined">
+              Create a WebSocket request, then configure its Mock tab.
+            </Alert>
+          ) : (
+            <Stack spacing={0.65}>
+              {rows.map((row) => {
+                const duplicatePath = (pathCounts[row.path || "/"] ?? 0) > 1;
+                return (
+                  <Box
+                    key={`ws-active-row-${row.scenarioId}`}
+                    sx={{
+                      p: 0.35,
+                      borderRadius: 1,
+                      bgcolor: activeScenarioId === row.scenarioId ? "action.selected" : "transparent",
+                      "&:hover": { bgcolor: "action.hover" },
+                    }}
+                  >
+                    <Stack spacing={0.45}>
+                      <Stack direction="row" spacing={0.55} alignItems="center" sx={{ minWidth: 0 }}>
+                        <Switch
+                          checked={row.enabled}
+                          onChange={(event: { target: { checked: boolean } }) =>
+                            onScenarioChange(row.scenarioId, { enabled: event.target.checked })
+                          }
+                          aria-label={row.enabled ? "Disable mock request" : "Enable mock request"}
+                          title={row.enabled ? "On" : "Off"}
+                        />
+                        <Typography
+                          variant="caption"
+                          fontWeight={600}
+                          noWrap
+                          title={row.requestName || row.name}
+                          sx={{ minWidth: 0, flex: 1 }}
+                        >
+                          {row.requestName || row.name}
+                        </Typography>
+                        <Tooltip title="Edit scenario">
+                          <IconButton
+                            size="small"
+                            aria-label="Edit scenario"
+                            onClick={() => onOpenScenario(row.requestId, row.scenarioId)}
+                            sx={{ flexShrink: 0 }}
+                          >
+                            <Edit sx={{ fontSize: 15 }} />
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
+                      <Stack direction="row" spacing={0.55} alignItems="end" flexWrap="wrap" useFlexGap>
+                        <TextField
+                          size="small"
+                          label="Path"
+                          value={row.path}
+                          onChange={(event: TextInputChangeEvent) =>
+                            onScenarioChange(row.scenarioId, { path: event.target.value })
+                          }
+                          disabled={status.running}
+                          error={duplicatePath}
+                          title={duplicatePath ? "Duplicate path" : row.path}
+                          sx={{ width: 132 }}
+                        />
+                        <TextField
+                          size="small"
+                          type="number"
+                          label="Interval"
+                          value={String(row.intervalMs ?? 1000)}
+                          onChange={(event: TextInputChangeEvent) =>
+                            onScenarioChange(row.scenarioId, {
+                              intervalMs: Math.max(1, Math.floor(Number(event.target.value) || 1000)),
+                            })
+                          }
+                          sx={{ width: 78 }}
+                        />
+                        <FormControl size="small" sx={{ width: 70 }}>
+                          <Select
+                            value={row.loop ? "yes" : "no"}
+                            onChange={(event: SelectInputChangeEvent) =>
+                              onScenarioChange(row.scenarioId, { loop: event.target.value === "yes" })
+                            }
+                          >
+                            <MenuItem value="no">No</MenuItem>
+                            <MenuItem value="yes">Loop</MenuItem>
+                          </Select>
+                        </FormControl>
+                        <TextField
+                          size="small"
+                          type="number"
+                          label="Max"
+                          value={String(row.maxLoops ?? 0)}
+                          onChange={(event: TextInputChangeEvent) =>
+                            onScenarioChange(row.scenarioId, {
+                              maxLoops: Math.max(0, Math.floor(Number(event.target.value) || 0)),
+                            })
+                          }
+                          sx={{ width: 64 }}
+                        />
+                      </Stack>
+                    </Stack>
+                  </Box>
+                );
+              })}
+            </Stack>
+          )}
+        </Stack>
+      </Paper>
     </Stack>
   );
 }
@@ -322,8 +378,7 @@ export function WebSocketDocsPanel({
         </Stack>
       </Stack>
       <Alert severity="warning" variant="outlined">
-        WebSocket docs are beta and may change. Publish when the request, examples, and latest response snapshot are
-        ready.
+        Publish when the request is ready.
       </Alert>
       <FeatureMarkdownPreview markdown={markdown} />
     </Stack>
@@ -334,7 +389,6 @@ export function WebSocketMockPanel({
   request,
   mockResponseText,
   onMockResponseTextChange,
-  latestResult,
   status,
   port,
   pathValue,
@@ -342,12 +396,18 @@ export function WebSocketMockPanel({
   loop,
   maxLoops,
   streamOnConnect,
-  onPortChange,
+  scenarios,
+  activeScenario,
+  requestPaths: _requestPaths,
+  onPortChange: _onPortChange,
   onPathChange,
   onIntervalMsChange,
   onLoopChange,
   onMaxLoopsChange,
-  onStreamOnConnectChange,
+  onStreamOnConnectChange: _onStreamOnConnectChange,
+  onScenarioSelect,
+  onScenarioChange,
+  onAddScenario,
   onStart,
   onStop,
   onSendOnce,
@@ -356,7 +416,6 @@ export function WebSocketMockPanel({
   request: (ApiCollectionRequest & { collectionName?: string }) | null;
   mockResponseText: string;
   onMockResponseTextChange: (value: string) => void;
-  latestResult: GrpcResult | null;
   status: WebSocketMockStatus;
   port: number;
   pathValue: string;
@@ -364,12 +423,18 @@ export function WebSocketMockPanel({
   loop: boolean;
   maxLoops: number;
   streamOnConnect: boolean;
+  scenarios: WebSocketMockScenario[];
+  activeScenario: WebSocketMockScenario | null;
+  requestPaths?: WebSocketRequestPathRow[];
   onPortChange: (value: number) => void;
   onPathChange: (value: string) => void;
   onIntervalMsChange: (value: number) => void;
   onLoopChange: (value: boolean) => void;
   onMaxLoopsChange: (value: number) => void;
   onStreamOnConnectChange: (value: boolean) => void;
+  onScenarioSelect: (scenarioId: string) => void;
+  onScenarioChange: (patch: Partial<WebSocketMockScenario>) => void;
+  onAddScenario: () => void;
   onStart: () => void;
   onStop: () => void;
   onSendOnce: () => void;
@@ -377,127 +442,220 @@ export function WebSocketMockPanel({
 }) {
   return (
     <Stack spacing={1.2}>
-      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1} flexWrap="wrap" useFlexGap>
         <Box sx={{ minWidth: 0 }}>
-          <Typography variant="subtitle1">WebSocket mock server</Typography>
+          <Typography variant="subtitle1" noWrap title={request?.name ?? "WebSocket mock"}>
+            WebSocket mock{request ? ` · ${request.name}` : ""}
+          </Typography>
           <Typography variant="caption" color="text.secondary" noWrap title={status.url ?? request?.url ?? ""}>
-            {status.running ? status.url : "Start a real local WS mock server, then connect the request to it."}
+            Configure this request mock here. Use the sidebar for server control.
           </Typography>
         </Box>
-        <Chip
-          size="small"
-          label={status.running ? `${status.clientCount ?? 0} client` : request ? "WS" : "No request"}
-          color={status.running ? "success" : request ? "primary" : "default"}
-        />
+        <Stack direction="row" spacing={0.6} alignItems="center" flexWrap="wrap" justifyContent="flex-end" useFlexGap>
+          <Chip
+            size="small"
+            label={status.running ? `${status.clientCount ?? 0} client` : request ? `Port ${port}` : "No request"}
+            color={status.running ? "success" : request ? "primary" : "default"}
+          />
+          {status.running ? (
+            <Button size="small" variant="outlined" color="warning" startIcon={<StopCircle />} onClick={onStop}>
+              Stop
+            </Button>
+          ) : (
+            <Button size="small" variant="contained" startIcon={<PlayArrow />} onClick={onStart} disabled={!request}>
+              Start
+            </Button>
+          )}
+        </Stack>
       </Stack>
-      <Alert severity="info">
-        The mock runs as a real WebSocket server/listener in the desktop app. It does not echo client messages; it sends
-        the body data one-by-one or as a periodic stream without touching gRPC stream mocks.
-      </Alert>
+
       <Paper variant="outlined" sx={{ p: 1.1, borderRadius: 2 }}>
         <Stack spacing={1.1}>
-          <Stack direction="row" spacing={0.8} flexWrap="wrap" useFlexGap>
-            <TextField
-              size="small"
-              type="number"
-              label="Port"
-              value={String(port)}
-              onChange={(event: TextInputChangeEvent) =>
-                onPortChange(Math.max(1, Math.floor(Number(event.target.value) || 8090)))
-              }
-              disabled={status.running}
-              sx={{ width: 110 }}
-            />
-            <TextField
-              size="small"
-              label="Path"
-              value={pathValue}
-              onChange={(event: TextInputChangeEvent) => onPathChange(event.target.value)}
-              disabled={status.running}
-              sx={{ width: 180 }}
-            />
-            <TextField
-              size="small"
-              type="number"
-              label="Interval ms"
-              value={String(intervalMs)}
-              onChange={(event: TextInputChangeEvent) =>
-                onIntervalMsChange(Math.max(1, Math.floor(Number(event.target.value) || 1000)))
-              }
-              sx={{ width: 130 }}
-            />
-            <TextField
-              size="small"
-              type="number"
-              label="Max loops"
-              value={String(maxLoops)}
-              onChange={(event: TextInputChangeEvent) =>
-                onMaxLoopsChange(Math.max(0, Math.floor(Number(event.target.value) || 0)))
-              }
-              helperText="0 = infinite"
-              sx={{ width: 130 }}
-            />
-          </Stack>
-          <Stack direction="row" alignItems="center" spacing={1.3} flexWrap="wrap" useFlexGap>
-            <Stack direction="row" alignItems="center" spacing={0.5}>
-              <Switch
-                checked={streamOnConnect}
-                onChange={(event: SwitchInputChangeEvent) => onStreamOnConnectChange(event.target.checked)}
-              />
-              <Typography variant="body2">Periodic send after connect</Typography>
-            </Stack>
-            <Stack direction="row" alignItems="center" spacing={0.5}>
-              <Switch checked={loop} onChange={(event: SwitchInputChangeEvent) => onLoopChange(event.target.checked)} />
-              <Typography variant="body2">Loop stream</Typography>
-            </Stack>
-          </Stack>
-          <Stack direction="row" spacing={0.7} flexWrap="wrap" useFlexGap>
-            {status.running ? (
-              <Button size="small" variant="outlined" color="warning" startIcon={<StopCircle />} onClick={onStop}>
-                Stop WS mock
-              </Button>
-            ) : (
-              <Button size="small" variant="contained" startIcon={<PlayArrow />} onClick={onStart} disabled={!request}>
-                Start WS mock
-              </Button>
-            )}
+          <Stack direction="row" spacing={0.8} alignItems="center" flexWrap="wrap" useFlexGap>
+            <FormControl size="small" sx={{ minWidth: 240 }}>
+              <Select
+                value={activeScenario?.id ?? ""}
+                onChange={(event: SelectInputChangeEvent) => onScenarioSelect(String(event.target.value))}
+              >
+                {scenarios.map((scenario) => (
+                  <MenuItem key={`ws-panel-scenario-${scenario.id}`} value={scenario.id}>
+                    {scenario.name || scenario.path}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <Button size="small" variant="outlined" onClick={onAddScenario} disabled={!request}>
+              Add scenario
+            </Button>
             <Button
               size="small"
               variant="outlined"
               startIcon={<PlayArrow />}
               onClick={onSendOnce}
-              disabled={!status.running}
+              disabled={!status.running || !activeScenario}
             >
-              Send one message
+              Send one
             </Button>
             <Button size="small" variant="outlined" startIcon={<ContentCopy />} onClick={onCopy} disabled={!request}>
-              Copy mock body
+              Copy body
             </Button>
           </Stack>
+
+          {request && activeScenario ? (
+            <>
+              <Stack direction="row" spacing={0.8} alignItems="center" flexWrap="wrap" useFlexGap>
+                <TextField
+                  size="small"
+                  label="Scenario name"
+                  value={activeScenario.name ?? ""}
+                  onChange={(event: TextInputChangeEvent) => onScenarioChange({ name: event.target.value })}
+                  sx={{ minWidth: 220, flex: 1 }}
+                />
+                <FormControl size="small" sx={{ width: 132 }}>
+                  <Select
+                    value={activeScenario.enabled === false ? "disabled" : "enabled"}
+                    onChange={(event: SelectInputChangeEvent) =>
+                      onScenarioChange({ enabled: event.target.value === "enabled" })
+                    }
+                  >
+                    <MenuItem value="enabled">Enabled</MenuItem>
+                    <MenuItem value="disabled">Disabled</MenuItem>
+                  </Select>
+                </FormControl>
+              </Stack>
+
+              <Paper variant="outlined" sx={{ p: 1, borderRadius: 1.5 }}>
+                <Stack spacing={0.9}>
+                  <Typography variant="body2" fontWeight={560}>
+                    Scenario settings
+                  </Typography>
+                  <Stack direction="row" spacing={0.8} alignItems="end" flexWrap="wrap" useFlexGap>
+                    <TextField
+                      size="small"
+                      label="Path"
+                      value={pathValue}
+                      onChange={(event: TextInputChangeEvent) => onPathChange(event.target.value)}
+                      disabled={status.running}
+                      sx={{ minWidth: 180, maxWidth: 240 }}
+                    />
+                    <FormControl size="small" sx={{ width: 160 }}>
+                      <Select
+                        value={streamOnConnect ? "periodic" : activeScenario.sendOnMessage ? "incoming" : "manual"}
+                        onChange={(event: SelectInputChangeEvent) => {
+                          const value = event.target.value;
+                          onScenarioChange({
+                            streamOnConnect: value === "periodic",
+                            sendOnMessage: value === "incoming",
+                          });
+                        }}
+                      >
+                        <MenuItem value="manual">Send one only</MenuItem>
+                        <MenuItem value="periodic">Periodic</MenuItem>
+                        <MenuItem value="incoming">On incoming match</MenuItem>
+                      </Select>
+                    </FormControl>
+                    <TextField
+                      size="small"
+                      type="number"
+                      label="Interval"
+                      value={String(intervalMs)}
+                      onChange={(event: TextInputChangeEvent) =>
+                        onIntervalMsChange(Math.max(1, Math.floor(Number(event.target.value) || 1000)))
+                      }
+                      sx={{ width: 104 }}
+                    />
+                    <FormControl size="small" sx={{ width: 104 }}>
+                      <Select
+                        value={loop ? "yes" : "no"}
+                        onChange={(event: SelectInputChangeEvent) => onLoopChange(event.target.value === "yes")}
+                      >
+                        <MenuItem value="no">No loop</MenuItem>
+                        <MenuItem value="yes">Loop</MenuItem>
+                      </Select>
+                    </FormControl>
+                    <TextField
+                      size="small"
+                      type="number"
+                      label="Max"
+                      value={String(maxLoops)}
+                      onChange={(event: TextInputChangeEvent) =>
+                        onMaxLoopsChange(Math.max(0, Math.floor(Number(event.target.value) || 0)))
+                      }
+                      sx={{ width: 90 }}
+                    />
+                  </Stack>
+                  {activeScenario.sendOnMessage ? (
+                    <Stack direction="row" spacing={0.8} alignItems="end" flexWrap="wrap" useFlexGap>
+                      <FormControl size="small" sx={{ width: 150 }}>
+                        <Select
+                          value={activeScenario.matchMode ?? "always"}
+                          onChange={(event: SelectInputChangeEvent) =>
+                            onScenarioChange({ matchMode: event.target.value as WebSocketMockScenario["matchMode"] })
+                          }
+                        >
+                          <MenuItem value="always">Always</MenuItem>
+                          <MenuItem value="contains">Contains</MenuItem>
+                          <MenuItem value="regex">Regex</MenuItem>
+                          <MenuItem value="jsonPath">JSON path</MenuItem>
+                        </Select>
+                      </FormControl>
+                      {activeScenario.matchMode === "jsonPath" ? (
+                        <TextField
+                          size="small"
+                          label="JSON path"
+                          value={activeScenario.matchJsonPath || "$.method"}
+                          onChange={(event: TextInputChangeEvent) =>
+                            onScenarioChange({ matchJsonPath: event.target.value })
+                          }
+                          sx={{ width: 150 }}
+                        />
+                      ) : null}
+                      {activeScenario.matchMode === "always" ? null : (
+                        <TextField
+                          size="small"
+                          label={activeScenario.matchMode === "regex" ? "Regex" : "Expected value"}
+                          value={activeScenario.matchValue || ""}
+                          onChange={(event: TextInputChangeEvent) =>
+                            onScenarioChange({ matchValue: event.target.value })
+                          }
+                          sx={{ minWidth: 180, flex: 1 }}
+                        />
+                      )}
+                    </Stack>
+                  ) : null}
+                  <Typography variant="caption" color="text.secondary">
+                    Send manually, periodically after connect, or when an incoming message matches.
+                  </Typography>
+                </Stack>
+              </Paper>
+
+              <Stack spacing={0.6}>
+                <Typography variant="body2" fontWeight={560}>
+                  Scenario code / mock message body
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Template variables: <code>{"{{count}}"}</code>, <code>{"{{loopIndex}}"}</code>,{" "}
+                  <code>{"{{incoming}}"}</code>, <code>{"{{incoming.method}}"}</code>, <code>{"{{path}}"}</code>,{" "}
+                  <code>{"{{uuid}}"}</code>, and <code>{"{{now}}"}</code>.
+                </Typography>
+                <FeatureCodeTextField
+                  value={mockResponseText}
+                  onChange={onMockResponseTextChange}
+                  minRows={9}
+                  maxRows={16}
+                  language="json"
+                  formatAriaLabel="Prettier JSON"
+                  fullscreenTitle="WebSocket mock scenario editor"
+                />
+              </Stack>
+            </>
+          ) : (
+            <Alert severity="info" variant="outlined">
+              Select a WebSocket request to edit its mock scenarios.
+            </Alert>
+          )}
         </Stack>
       </Paper>
-      <Stack spacing={0.6}>
-        <Typography variant="body2" fontWeight={560}>
-          Mock message body
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          Use a JSON object for one message or a JSON array to send messages one-by-one. Template variables:{" "}
-          <code>{"{{count}}"}</code>, <code>{"{{index}}"}</code>, and <code>{"{{now}}"}</code>.
-        </Typography>
-        <FeatureCodeTextField
-          value={mockResponseText}
-          onChange={onMockResponseTextChange}
-          minRows={9}
-          maxRows={16}
-          language="json"
-        />
-      </Stack>
-      <Stack spacing={0.8}>
-        <Typography variant="body2" fontWeight={560}>
-          Latest WebSocket response
-        </Typography>
-        <FeatureJsonBlock value={latestResult ?? { message: "Connect a WebSocket request to capture a response." }} />
-      </Stack>
     </Stack>
   );
 }
@@ -532,7 +690,7 @@ export function WebSocketBenchmarkPanel({
             WebSocket benchmark
           </Typography>
           <Typography variant="caption" color="text.secondary" noWrap title={request?.url ?? ""}>
-            Opens a connection, sends the message when provided, and records first response/close latency.
+            Records connection and response latency.
           </Typography>
         </Box>
         <Stack direction="row" spacing={0.6}>
