@@ -31,6 +31,23 @@ declare global {
       ensureDefaultFolder?: (
         bundle: unknown,
       ) => Promise<{ ok: boolean; created?: boolean; directoryPath?: string; bundle?: unknown; error?: string }>;
+      ensureFolder?: (
+        bundle: unknown,
+        directoryPath: string,
+      ) => Promise<{ ok: boolean; created?: boolean; directoryPath?: string; bundle?: unknown; error?: string }>;
+      getPreference?: () => Promise<{
+        ok: boolean;
+        directoryPath?: string;
+        defaultDirectoryPath?: string;
+        hasCustomPreference?: boolean;
+        error?: string;
+      }>;
+      setPreference?: (
+        directoryPath?: string,
+      ) => Promise<{ ok: boolean; directoryPath?: string; hasCustomPreference?: boolean; error?: string }>;
+      chooseFolder?: (
+        title?: string,
+      ) => Promise<{ ok: boolean; cancelled?: boolean; directoryPath?: string; error?: string }>;
       openPath?: (
         directoryPath: string,
         relativePath?: string,

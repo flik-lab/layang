@@ -25,3 +25,8 @@ pnpm run docs:dev
 ## Publish
 
 The repository workflow at `.github/workflows/pages.yml` publishes this folder directly to GitHub Pages. You can also copy the folder contents into a `gh-pages` branch manually.
+
+## Custom domain
+
+- `CNAME` is configured for `layang.mff.web.id`.
+- `index.html`, `robots.txt`, and `sitemap.xml` use the same canonical production URL for search indexing.
