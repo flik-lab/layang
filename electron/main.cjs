@@ -20,12 +20,18 @@ const { createWindow } = require("./window/create-window.cjs");
 const { readJsonIfExists, walkDirectory, writeTextInside } = require("./utils/file-utils.cjs");
 const { windowFromEvent } = require("./utils/ipc-utils.cjs");
 const { safePathSegment, safeRelativePath } = require("./utils/path-utils.cjs");
+const WINDOWS_APP_USER_MODEL_ID = "fliklab.layang.desktop";
+const workspaceSettingsFileName = "layang-settings.json";
 
 registerWindowIpc();
 registerNativeGrpcIpc();
 registerGrpcMockIpc();
 registerWebSocketMockIpc();
 registerRestMockIpc();
+
+if (process.platform === "win32") {
+  app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
+}
 
 // Allow HTTPS endpoints with self-signed or otherwise untrusted certificates.
 // This is intended for the local/trusted desktop API workbench use case.
@@ -60,20 +66,58 @@ app.on("before-quit", () => {
 });
 
 ipcMain.handle("workspace:get-default-folder", async () => {
-  return { ok: true, directoryPath: getDefaultWorkspaceDirectory() };
+  return { ok: true, directoryPath: getConfiguredWorkspaceDirectory() };
 });
 
 ipcMain.handle("workspace:ensure-default-folder", async (_event, payload) => {
-  const directoryPath = getDefaultWorkspaceDirectory();
-  const snapshotPath = path.join(directoryPath, "layang.workspace.json");
-  const existingSnapshot = await readJsonIfExists(snapshotPath).catch(() => null);
-  if (existingSnapshot && typeof existingSnapshot === "object") {
-    const bundle = await readWorkspaceFolder(directoryPath);
-    return { ok: true, directoryPath, created: false, bundle };
-  }
+  return ensureWorkspaceFolder(
+    getConfiguredWorkspaceDirectory(),
+    payload?.bundle ? payload.bundle : {},
+  );
+});
 
-  await writeWorkspaceFolder(directoryPath, payload?.bundle ? payload.bundle : {});
-  return { ok: true, directoryPath, created: true };
+ipcMain.handle("workspace:ensure-folder", async (_event, payload) => {
+  const directoryPath =
+    payload && typeof payload.directoryPath === "string" && payload.directoryPath.trim()
+      ? payload.directoryPath.trim()
+      : "";
+  if (!directoryPath) return { ok: false, error: "Missing workspace folder path." };
+
+  return ensureWorkspaceFolder(directoryPath, payload?.bundle ? payload.bundle : {});
+});
+
+ipcMain.handle("workspace:get-preference", async () => {
+  const preference = await readWorkspacePreference();
+  const defaultDirectoryPath = getDefaultWorkspaceDirectory();
+  return {
+    ok: true,
+    directoryPath: preference.workspaceDirectoryPath || defaultDirectoryPath,
+    defaultDirectoryPath,
+    hasCustomPreference: Boolean(preference.workspaceDirectoryPath),
+  };
+});
+
+ipcMain.handle("workspace:set-preference", async (_event, payload) => {
+  const directoryPath =
+    payload && typeof payload.directoryPath === "string" && payload.directoryPath.trim()
+      ? payload.directoryPath.trim()
+      : "";
+  await writeWorkspacePreference({ workspaceDirectoryPath: directoryPath });
+  return {
+    ok: true,
+    directoryPath: directoryPath || getDefaultWorkspaceDirectory(),
+    hasCustomPreference: Boolean(directoryPath),
+  };
+});
+
+ipcMain.handle("workspace:choose-folder", async (event, payload) => {
+  const win = windowFromEvent(event);
+  const title =
+    payload && typeof payload.title === "string" && payload.title.trim()
+      ? payload.title.trim()
+      : "Choose Layang workspace folder";
+  const directoryPath = await chooseWorkspaceDirectory(win, title);
+  return directoryPath ? { ok: true, directoryPath } : { ok: false, cancelled: true };
 });
 
 ipcMain.handle("workspace:save-folder", async (event, payload) => {
@@ -142,6 +186,54 @@ ipcMain.handle("workspace:open-folder", async (event, payload) => {
 function getDefaultWorkspaceDirectory() {
   const documentsDir = app.getPath("documents") || app.getPath("home");
   return path.join(documentsDir, "Layang", "Workspace");
+}
+
+function getWorkspaceSettingsPath() {
+  return path.join(app.getPath("userData"), workspaceSettingsFileName);
+}
+
+async function readWorkspacePreference() {
+  const settings = await readJsonIfExists(getWorkspaceSettingsPath()).catch(() => null);
+  const workspaceDirectoryPath =
+    settings && typeof settings.workspaceDirectoryPath === "string" ? settings.workspaceDirectoryPath.trim() : "";
+  return { workspaceDirectoryPath };
+}
+
+async function writeWorkspacePreference(preference) {
+  await writeJson(getWorkspaceSettingsPath(), {
+    workspaceDirectoryPath:
+      preference && typeof preference.workspaceDirectoryPath === "string"
+        ? preference.workspaceDirectoryPath.trim()
+        : "",
+  });
+}
+
+function getConfiguredWorkspaceDirectory() {
+  const settingsPath = getWorkspaceSettingsPath();
+  try {
+    if (fsSync.existsSync(settingsPath)) {
+      const raw = fsSync.readFileSync(settingsPath, "utf8");
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.workspaceDirectoryPath === "string" && parsed.workspaceDirectoryPath.trim()) {
+        return parsed.workspaceDirectoryPath.trim();
+      }
+    }
+  } catch {
+    // Fall back to the default per-user documents folder when settings are unreadable.
+  }
+  return getDefaultWorkspaceDirectory();
+}
+
+async function ensureWorkspaceFolder(directoryPath, bundle) {
+  const snapshotPath = path.join(directoryPath, "layang.workspace.json");
+  const existingSnapshot = await readJsonIfExists(snapshotPath).catch(() => null);
+  if (existingSnapshot && typeof existingSnapshot === "object") {
+    const storedBundle = await readWorkspaceFolder(directoryPath);
+    return { ok: true, directoryPath, created: false, bundle: storedBundle };
+  }
+
+  await writeWorkspaceFolder(directoryPath, bundle);
+  return { ok: true, directoryPath, created: true };
 }
 
 /**

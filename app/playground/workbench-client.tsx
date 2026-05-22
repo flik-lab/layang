@@ -1063,6 +1063,9 @@ export default function PlaygroundPage() {
   const [requestTargetCollectionId, setRequestTargetCollectionId] = useState("");
   const pendingCollectionImportRef = useRef<string>("");
   const [workspaceFolderPath, setWorkspaceFolderPath] = useState("");
+  const [workspaceSetupOpen, setWorkspaceSetupOpen] = useState(false);
+  const [workspaceSetupDefaultPath, setWorkspaceSetupDefaultPath] = useState("");
+  const [workspaceSetupPending, setWorkspaceSetupPending] = useState(false);
   const [envMenuAnchor, setEnvMenuAnchor] = useState<HTMLElement | null>(null);
   const [envDialogOpen, setEnvDialogOpen] = useState(false);
   const [envDialogMode, setEnvDialogMode] = useState<"create" | "edit">("create");
@@ -1161,9 +1164,17 @@ export default function PlaygroundPage() {
       return nextLayout;
     }
 
+    function rememberWorkspaceFolder(nextPath: string) {
+      setWorkspaceFolderPath(nextPath);
+      window.localStorage.setItem(workspaceFolderStorageKey, nextPath);
+    }
+
     async function loadInitialWorkspace() {
       const cachedLayout = applyCachedLayout();
       const cachedProject = readStoredProject();
+      const workspacePreference = window.electronWorkspace?.getPreference
+        ? await window.electronWorkspace.getPreference().catch(() => null)
+        : null;
 
       if (storedWorkspacePath && window.electronWorkspace?.openFolder) {
         try {
@@ -1177,8 +1188,7 @@ export default function PlaygroundPage() {
 
             if (localDraftIsNewer) {
               const nextPath = result.directoryPath ?? storedWorkspacePath;
-              setWorkspaceFolderPath(nextPath);
-              window.localStorage.setItem(workspaceFolderStorageKey, nextPath);
+              rememberWorkspaceFolder(nextPath);
               applyProject(cachedProject);
               setHydrated(true);
               return;
@@ -1187,8 +1197,7 @@ export default function PlaygroundPage() {
             const imported = applyWorkspaceBundle(result.bundle);
             if (imported) {
               const nextPath = result.directoryPath ?? storedWorkspacePath;
-              setWorkspaceFolderPath(nextPath);
-              window.localStorage.setItem(workspaceFolderStorageKey, nextPath);
+              rememberWorkspaceFolder(nextPath);
               setHydrated(true);
               return;
             }
@@ -1199,6 +1208,16 @@ export default function PlaygroundPage() {
       }
 
       if (cancelled) return;
+
+      if (!storedWorkspacePath && workspacePreference?.ok && !workspacePreference.hasCustomPreference) {
+        setWorkspaceSetupDefaultPath(
+          workspacePreference.defaultDirectoryPath ?? workspacePreference.directoryPath ?? "",
+        );
+        applyProject(cachedProject);
+        setHydrated(true);
+        setWorkspaceSetupOpen(true);
+        return;
+      }
 
       if (window.electronWorkspace?.ensureDefaultFolder) {
         try {
@@ -1213,8 +1232,7 @@ export default function PlaygroundPage() {
           };
           const result = await window.electronWorkspace.ensureDefaultFolder(defaultWorkspaceBundle);
           if (!cancelled && result.ok && result.directoryPath) {
-            setWorkspaceFolderPath(result.directoryPath);
-            window.localStorage.setItem(workspaceFolderStorageKey, result.directoryPath);
+            rememberWorkspaceFolder(result.directoryPath);
             if (result.bundle && !result.created) {
               const imported = applyWorkspaceBundle(result.bundle);
               if (imported) {
@@ -1238,6 +1256,53 @@ export default function PlaygroundPage() {
       cancelled = true;
     };
   }, [prefersDark]);
+
+  async function applyWorkspacePreference(directoryPath?: string) {
+    if (!window.electronWorkspace?.ensureFolder) return;
+
+    setWorkspaceSetupPending(true);
+    try {
+      if (directoryPath) {
+        await window.electronWorkspace.setPreference?.(directoryPath);
+      } else {
+        await window.electronWorkspace.setPreference?.("");
+      }
+
+      const targetPath = directoryPath || workspaceSetupDefaultPath;
+      const result = await window.electronWorkspace.ensureFolder(getWorkspaceExportBundle(), targetPath);
+      if (!result.ok || !result.directoryPath) {
+        showToast(result.error || "Workspace folder setup failed.", "error");
+        return;
+      }
+
+      if (result.bundle && !result.created) {
+        const imported = applyWorkspaceBundle(result.bundle);
+        if (!imported) {
+          showToast("The selected folder does not contain supported workspace data.", "warning");
+        }
+      }
+
+      setWorkspaceSetupOpen(false);
+      setWorkspaceFolderPath(result.directoryPath);
+      window.localStorage.setItem(workspaceFolderStorageKey, result.directoryPath);
+      showToast("Workspace folder configured.", "success");
+    } catch (err) {
+      showToast(`Workspace folder setup failed: ${toErrorMessage(err)}`, "error");
+    } finally {
+      setWorkspaceSetupPending(false);
+    }
+  }
+
+  async function chooseCustomWorkspacePreference() {
+    if (!window.electronWorkspace?.chooseFolder) return;
+    try {
+      const result = await window.electronWorkspace.chooseFolder("Choose Layang workspace folder");
+      if (!result.ok || result.cancelled || !result.directoryPath) return;
+      await applyWorkspacePreference(result.directoryPath);
+    } catch (err) {
+      showToast(`Open workspace folder failed: ${toErrorMessage(err)}`, "error");
+    }
+  }
 
   useEffect(() => {
     return () => {
@@ -7324,6 +7389,38 @@ export default function PlaygroundPage() {
           onStop={() => void stopMockServer()}
         />
 
+        <Dialog open={workspaceSetupOpen} onClose={() => undefined} fullWidth maxWidth="sm">
+          <DialogTitle>Choose Workspace Folder</DialogTitle>
+          <DialogContent sx={{ pt: 1 }}>
+            <Stack spacing={1.5}>
+              <Typography variant="body2" color="text.secondary">
+                Layang stores requests, mocks, docs, environments, and history in a workspace folder on disk.
+              </Typography>
+              <Paper variant="outlined" sx={{ p: 1.25, borderRadius: 2 }}>
+                <Typography variant="subtitle2">Default location</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {workspaceSetupDefaultPath || "Documents\\Layang\\Workspace"}
+                </Typography>
+              </Paper>
+              <Typography variant="caption" color="text.secondary">
+                You can keep the default Documents location or choose another folder before the first workspace is
+                created.
+              </Typography>
+            </Stack>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => void chooseCustomWorkspacePreference()} disabled={workspaceSetupPending}>
+              Choose custom folder
+            </Button>
+            <Button
+              variant="contained"
+              onClick={() => void applyWorkspacePreference()}
+              disabled={workspaceSetupPending}
+            >
+              Use default folder
+            </Button>
+          </DialogActions>
+        </Dialog>
         <Dialog open={mockScenarioDialogOpen} onClose={() => setMockScenarioDialogOpen(false)} fullWidth maxWidth="xs">
           <DialogTitle>Edit Scenario</DialogTitle>
           <DialogContent sx={{ pt: 1 }}>

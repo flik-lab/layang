@@ -502,7 +502,7 @@ function startWebSocketMockPeriodicStream(state, client, scenarioOverride) {
   const tick = () => {
     if (client.closed) return;
     const scenario = getLiveWebSocketMockStreamScenario(state, client);
-    if (!scenario || !scenario.streamOnConnect) {
+    if (!scenario?.streamOnConnect) {
       client.timer = null;
       return;
     }
