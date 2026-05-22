@@ -39,6 +39,9 @@ importers:
       '@electron-forge/maker-squirrel':
         specifier: 7.11.1
         version: 7.11.1
+      '@electron-forge/maker-wix':
+        specifier: 7.11.1
+        version: 7.11.1
       '@electron-forge/maker-zip':
         specifier: 7.11.1
         version: 7.11.1
@@ -162,6 +165,9 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@bitdisaster/exe-icon-extractor@1.0.10':
+    resolution: {integrity: sha512-iTZ8cVGZ5dglNRyFdSj8U60mHIrC8XNIuOHN/NkM5/dQP4nsmpyqeQTAADLLQgoFCNJD+DiwQCv8dR2cCeWP4g==}
+
   '@electron-forge/cli@7.11.1':
     resolution: {integrity: sha512-pk8AoLsr7t7LBAt0cFD06XFA6uxtPdvtLx06xeal7O9o7GHGCbj29WGwFoJ8Br/ENM0Ho868S3PrAn1PtBXt5g==}
     engines: {node: '>= 16.4.0'}
@@ -193,6 +199,10 @@ packages:
 
   '@electron-forge/maker-squirrel@7.11.1':
     resolution: {integrity: sha512-oSg7fgad6l+X0DjtRkSpMzB0AjzyDO4mb2gzM4kTodkP1ADeiMi08bxy0ZeCESqLm5+fG72cAPmEr3BAPvI1yw==}
+    engines: {node: '>= 16.4.0'}
+
+  '@electron-forge/maker-wix@7.11.1':
+    resolution: {integrity: sha512-yKsnfPQVBrjyjWndmSB0rqQSXAiIukwz5fuVyoCTnYpfJQojrEEMUN/eXSHA08d+rOPbB/hkMAR+QJcjJ8vO2Q==}
     engines: {node: '>= 16.4.0'}
 
   '@electron-forge/maker-zip@7.11.1':
@@ -1167,6 +1177,10 @@ packages:
   cross-dirname@0.1.0:
     resolution: {integrity: sha512-+R08/oI0nl3vfPcqftZRpytksBXDzOUveBq/NBVx0sUp1axwzPQrKinNx5yd5sxPu8j1wIy8AfnVQ+5eFdha6Q==}
 
+  cross-spawn-windows-exe@1.2.0:
+    resolution: {integrity: sha512-mkLtJJcYbDCxEG7Js6eUnUNndWjyUZwJ3H7bErmmtOYU/Zb99DyUkpamuIZE0b3bhmJyZ7D90uS6f+CGxRRjOw==}
+    engines: {node: '>= 10'}
+
   cross-spawn@6.0.6:
     resolution: {integrity: sha512-VqCUuhcd1iB+dsv8gxPttb5iZh/D0iubSP21g36KXdEuf6I5JiioesUVjpCdHV9MZRUfVFlvwtIUyPfxo5trtw==}
     engines: {node: '>=4.8'}
@@ -1269,6 +1283,10 @@ packages:
   electron-winstaller@5.4.0:
     resolution: {integrity: sha512-bO3y10YikuUwUuDUQRM4KfwNkKhnpVO7IPdbsrejwN9/AABJzzTQ4GeHwyzNSrVO+tEH3/Np255a3sVZpZDjvg==}
     engines: {node: '>=8.0.0'}
+
+  electron-wix-msi@5.1.3:
+    resolution: {integrity: sha512-EYj1cm1nZoVHmIIx3o0aKt784lxdEpJnXbEnyypklUCnglqSb7ni+1xi1Vp/gtrGS/mzIxnWBT+x5fIfuDjhvA==}
+    engines: {node: '>=14.0.0'}
 
   electron@42.1.0:
     resolution: {integrity: sha512-0szNwC/0dWtkvNce5j3ThiuL0TxBNrZN/BZhdOiGwbLreiD/+u3MGpkct4hA5Ycagb8MXjpEr5/oosi+FwuKRQ==}
@@ -1653,6 +1671,11 @@ packages:
     resolution: {integrity: sha512-evOr8xfXKxE6qSR0hSXL2r3sd7ALj8+7jQEUvPYcm5sgZFdJ+AYzT6yNmJenvIYQBgIGwfwz08sL8zoL7yq2BA==}
     engines: {node: '>= 0.4'}
 
+  is-docker@2.2.1:
+    resolution: {integrity: sha512-F+i2BKsFrH66iaUFc0woD8sLy8getkwTwtOBjvs56Cx4CgJDeKQeqfz8wAYiSb8JOprWhHH5p77PbmYCvvUuXQ==}
+    engines: {node: '>=8'}
+    hasBin: true
+
   is-extglob@2.1.1:
     resolution: {integrity: sha512-SbKbANkN603Vi4jEZv49LeVJMn4yGwsbzZworEoyEiutsN3nJYdbO36zfhGJ6QEDpOZIFkDtnq5JRxmvl3jsoQ==}
     engines: {node: '>=0.10.0'}
@@ -1696,6 +1719,10 @@ packages:
   is-unicode-supported@0.1.0:
     resolution: {integrity: sha512-knxG2q4UC3u8stRGyAVJCOdxFmv5DZiRcdlIaAQXAbSfJya+OhopNotLQrstBhququ4ZpuKbDc/8S6mgXgPFPw==}
     engines: {node: '>=10'}
+
+  is-wsl@2.2.0:
+    resolution: {integrity: sha512-fKzAra0rGJUUBwGBgNkHZuToZcn+TtXHpeCgmkMJMMYx1sQDYaCSyjJBSCa2nH1DGm7s3n1oBnohoVTBaN7Lww==}
+    engines: {node: '>=8'}
 
   isbinaryfile@4.0.10:
     resolution: {integrity: sha512-iHrqe5shvBUcFbmZq9zOQHBoeOhZJu6RQGrDpBgenUm/Am+F3JM2MgQj+rK3Z601fzrL5gLZWtAPH2OBaSVcyw==}
@@ -1741,6 +1768,10 @@ packages:
 
   keyv@4.5.4:
     resolution: {integrity: sha512-oxVHkHR/EJf2CNXnWxRLW6mg7JyCCUcG0DtEGmL2ctUo1PNTin1PUil+r/+4r5MpVgC/fn1kjsx7mjSujKqIpw==}
+
+  klaw@4.1.0:
+    resolution: {integrity: sha512-1zGZ9MF9H22UnkpVeuaGKOjfA2t6WrfdrJmGjy16ykcjnKQDmHVX+KI477rpbGevz/5FD4MC3xf1oxylBgcaQw==}
+    engines: {node: '>=14.14.0'}
 
   lightningcss-android-arm64@1.32.0:
     resolution: {integrity: sha512-YK7/ClTt4kAK0vo6w3X+Pnm0D2cf2vPHbhOXdoNti1Ga0al1P4TBZhwjATvjNwLEBCnKvjJc2jQgHXH0NEwlAg==}
@@ -2247,6 +2278,14 @@ packages:
 
   random-path@0.1.2:
     resolution: {integrity: sha512-4jY0yoEaQ5v9StCl5kZbNIQlg1QheIDBrdkDn53EynpPb9FgO6//p3X/tgMnrC45XN6QZCzU1Xz/+pSSsJBpRw==}
+
+  rcedit@4.0.1:
+    resolution: {integrity: sha512-bZdaQi34krFWhrDn+O53ccBDw0MkAT2Vhu75SqhtvhQu4OPyFM4RoVheyYiVQYdjhUi6EJMVWQ0tR6bCIYVkUg==}
+    engines: {node: '>= 14.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
+
+  rcinfo@0.1.3:
+    resolution: {integrity: sha512-c2XV2aYgY7x3BscO+/B/nCTtMvnclZ8w5D7R6zgK4sGOQnE0MjlXhOPynno7yp6Iw1RPNSXBwXwB1svZVRfcSw==}
 
   react-dom@19.2.6:
     resolution: {integrity: sha512-0prMI+hvBbPjsWnxDLxlCGyM8PN6UuWjEUCYmZhO67xIV9Xasa/r/vDnq+Xyq4Lo27g8QSbO5YzARu0D1Sps3g==}
@@ -2839,6 +2878,9 @@ snapshots:
   '@biomejs/cli-win32-x64@2.4.15':
     optional: true
 
+  '@bitdisaster/exe-icon-extractor@1.0.10':
+    optional: true
+
   '@electron-forge/cli@7.11.1(encoding@0.1.13)(postcss@8.5.14)':
     dependencies:
       '@electron-forge/core': 7.11.1(encoding@0.1.13)(postcss@8.5.14)
@@ -2989,6 +3031,20 @@ snapshots:
       fs-extra: 10.1.0
     optionalDependencies:
       electron-winstaller: 5.4.0
+    transitivePeerDependencies:
+      - bluebird
+      - supports-color
+
+  '@electron-forge/maker-wix@7.11.1':
+    dependencies:
+      '@electron-forge/core-utils': 7.11.1
+      '@electron-forge/maker-base': 7.11.1
+      '@electron-forge/shared-types': 7.11.1
+      chalk: 4.1.2
+      electron-wix-msi: 5.1.3
+      log-symbols: 4.1.0
+      parse-author: 2.0.0
+      semver: 7.8.0
     transitivePeerDependencies:
       - bluebird
       - supports-color
@@ -3502,7 +3558,6 @@ snapshots:
   '@malept/cross-spawn-promise@1.1.1':
     dependencies:
       cross-spawn: 7.0.6
-    optional: true
 
   '@malept/cross-spawn-promise@2.0.0':
     dependencies:
@@ -4118,6 +4173,12 @@ snapshots:
 
   cross-dirname@0.1.0: {}
 
+  cross-spawn-windows-exe@1.2.0:
+    dependencies:
+      '@malept/cross-spawn-promise': 1.1.1
+      is-wsl: 2.2.0
+      which: 2.0.2
+
   cross-spawn@6.0.6:
     dependencies:
       nice-try: 1.0.5
@@ -4264,6 +4325,21 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
     optional: true
+
+  electron-wix-msi@5.1.3:
+    dependencies:
+      '@electron/windows-sign': 1.2.2
+      debug: 4.4.3
+      fs-extra: 10.1.0
+      klaw: 4.1.0
+      lodash: 4.18.1
+      rcedit: 4.0.1
+      rcinfo: 0.1.3
+      semver: 7.8.0
+    optionalDependencies:
+      '@bitdisaster/exe-icon-extractor': 1.0.10
+    transitivePeerDependencies:
+      - supports-color
 
   electron@42.1.0:
     dependencies:
@@ -4699,6 +4775,8 @@ snapshots:
     dependencies:
       hasown: 2.0.3
 
+  is-docker@2.2.1: {}
+
   is-extglob@2.1.1: {}
 
   is-fullwidth-code-point@3.0.0: {}
@@ -4733,6 +4811,10 @@ snapshots:
   is-stream@1.1.0: {}
 
   is-unicode-supported@0.1.0: {}
+
+  is-wsl@2.2.0:
+    dependencies:
+      is-docker: 2.2.1
 
   isbinaryfile@4.0.10: {}
 
@@ -4781,6 +4863,8 @@ snapshots:
   keyv@4.5.4:
     dependencies:
       json-buffer: 3.0.1
+
+  klaw@4.1.0: {}
 
   lightningcss-android-arm64@1.32.0:
     optional: true
@@ -5255,6 +5339,12 @@ snapshots:
       base32-encode: 1.2.0
       murmur-32: 0.2.0
     optional: true
+
+  rcedit@4.0.1:
+    dependencies:
+      cross-spawn-windows-exe: 1.2.0
+
+  rcinfo@0.1.3: {}
 
   react-dom@19.2.6(react@19.2.6):
     dependencies:

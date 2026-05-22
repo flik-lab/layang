@@ -4,6 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
+const windowsAppUserModelId = "fliklab.layang.desktop";
+const windowsUpgradeCode = "1dd84257-e27c-4a72-abcb-12c8f88ecf42";
 
 function ensureElectronWinstaller7z() {
   const vendorDir = path.join(rootDir, "node_modules", "electron-winstaller", "vendor");
@@ -23,7 +25,7 @@ export default {
   packagerConfig: {
     name: "Layang",
     executableName: "layang",
-    appBundleId: "fliklab.layang.desktop",
+    appBundleId: windowsAppUserModelId,
     appCategoryType: "public.app-category.developer-tools",
     icon: path.join(rootDir, "electron", "assets", "icon"),
     asar: true,
@@ -46,11 +48,31 @@ export default {
   },
   makers: [
     {
+      name: "@electron-forge/maker-wix",
+      platforms: ["win32"],
+      config: {
+        name: "Layang",
+        shortName: "Layang",
+        exe: "layang.exe",
+        manufacturer: "Flik and Layang contributors",
+        description: "Local-first gRPC and mock server workbench.",
+        appUserModelId: windowsAppUserModelId,
+        upgradeCode: windowsUpgradeCode,
+        icon: path.join(rootDir, "electron", "assets", "icon.ico"),
+        shortcutFolderName: "Layang",
+        shortcutName: "Layang",
+        programFilesFolderName: "Layang",
+        ui: {
+          chooseDirectory: true,
+        },
+      },
+    },
+    {
       name: "@electron-forge/maker-squirrel",
       platforms: ["win32"],
       config: {
         name: "Layang",
-        authors: "Flik & Layang contributors",
+        authors: "Flik and Layang contributors",
         description: "Local-first gRPC and mock server workbench.",
         setupIcon: path.join(rootDir, "electron", "assets", "icon.ico"),
       },
@@ -72,7 +94,7 @@ export default {
       platforms: ["linux"],
       config: {
         options: {
-          maintainer: "Flik & Layang contributors <fliklabdev@gmail.com>",
+          maintainer: "Flik and Layang contributors <fliklabdev@gmail.com>",
           homepage: "https://github.com/flik-lab/layang",
           icon: path.join(rootDir, "electron", "assets", "icon.png"),
           categories: ["Development"],
