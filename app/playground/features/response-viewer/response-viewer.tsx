@@ -80,7 +80,7 @@ export function MessageTable({
   }
   return (
     <TableContainer component={Paper} variant="outlined">
-      <Table size="small">
+      <Table size="small" sx={{ tableLayout: "fixed", width: "100%" }}>
         <TableHead>
           <TableRow>
             <TableCell>No.</TableCell>
@@ -96,10 +96,10 @@ export function MessageTable({
               <Fragment key={event.id}>
                 <TableRow sx={{ cursor: "pointer" }} onClick={() => setExpandedId(expanded ? null : event.id)}>
                   <TableCell sx={{ whiteSpace: "nowrap", width: 58 }}>#{messageNumber}</TableCell>
-                  <TableCell sx={{ whiteSpace: "nowrap", width: 190 }}>
+                  <TableCell sx={{ whiteSpace: "nowrap", width: 168 }}>
                     {formatTimestampShort(event.timestamp)}
                   </TableCell>
-                  <TableCell sx={{ minWidth: 0 }}>
+                  <TableCell sx={{ minWidth: 0, width: "100%" }}>
                     <Box
                       title={summary}
                       sx={{
@@ -322,16 +322,18 @@ export function LatestResponseJsonViewer({
   value,
   empty = "Run a request to see the latest response payload.",
   filterQuery = "",
+  fullHeight = false,
 }: {
   value: unknown;
   empty?: string;
   filterQuery?: string;
+  fullHeight?: boolean;
 }) {
   if (value === undefined) {
     return <EmptyState title="No latest response" body={empty} />;
   }
 
-  return <JsonBlock value={value} highlightQuery={filterQuery} />;
+  return <JsonBlock value={value} highlightQuery={filterQuery} fullHeight={fullHeight} />;
 }
 
 /** Renders an object as formatted JSON with optional text highlighting. */
@@ -339,10 +341,12 @@ export function JsonBlock({
   value,
   compact = false,
   highlightQuery = "",
+  fullHeight = false,
 }: {
   value: unknown;
   compact?: boolean;
   highlightQuery?: string;
+  fullHeight?: boolean;
 }) {
   const truncated = safePrettyJson(value, {
     parseString: true,
@@ -350,7 +354,15 @@ export function JsonBlock({
     truncatedLabel: "... truncated ...",
   });
   return (
-    <pre className={`code-viewer ${compact ? "code-viewer--compact" : ""}`}>
+    <pre
+      className={[
+        "code-viewer",
+        compact ? "code-viewer--compact" : "",
+        fullHeight ? "code-viewer--fill" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
       <code>
         <HighlightedCodeText text={truncated} query={highlightQuery} />
       </code>

@@ -5,12 +5,12 @@
 # Layang
 
 [![Website](https://img.shields.io/badge/website-layang.mff.web.id-blue)](https://layang.mff.web.id/)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/flik-lab/layang/releases)
+[![Version](https://img.shields.io/badge/version-1.0.1-blue)](https://github.com/flik-lab/layang/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Layang is a workspace-based API workbench for testing, mocking, benchmarking, documenting, and automating APIs across gRPC, gRPC-Web, WebSocket, and REST.
 
-Layang `1.0.0` is the first official stable release. It includes the full workspace workflow for REST, WebSocket, and gRPC APIs, with local mocks, scenario matching, response templates, request logs, generated docs, benchmarking, and CLI automation.
+Layang `1.0.1` is the first official stable release. It includes the full workspace workflow for REST, WebSocket, and gRPC APIs, with local mocks, scenario matching, response templates, request logs, generated docs, benchmarking, and CLI automation.
 
 ![Layang workbench](github-pages/assets/layang-app-screenshot.png)
 

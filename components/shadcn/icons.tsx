@@ -22,6 +22,8 @@ import {
   Minus,
   Monitor,
   Moon,
+  PanelBottom as PanelBottomIcon,
+  PanelRight as PanelRightIcon,
   Pencil,
   Pin,
   Play,
@@ -110,6 +112,8 @@ export const iconSourceMap = {
   StopCircle: "CircleStop",
   Stream: "Podcast",
   MockServer: "RadioTower",
+  PanelBottom: "PanelBottom",
+  PanelRight: "PanelRight",
   Terminal: "ArrowUpDown",
   UploadFile: "Upload",
 } as const;
@@ -145,5 +149,7 @@ export const Storage = createCompatIcon(FileCodeCorner);
 export const StopCircle = createCompatIcon(CircleStop);
 export const Stream = createCompatIcon(Podcast);
 export const MockServer = createCompatIcon(RadioTower);
+export const PanelBottom = createCompatIcon(PanelBottomIcon);
+export const PanelRight = createCompatIcon(PanelRightIcon);
 export const Terminal = createCompatIcon(ArrowUpDown);
 export const UploadFile = createCompatIcon(Upload);

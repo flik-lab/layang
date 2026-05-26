@@ -30,6 +30,8 @@ import {
   Language,
   LightMode,
   MockServer,
+  PanelBottom,
+  PanelRight,
   PlayArrow,
   Search,
   Storage,
@@ -242,6 +244,7 @@ import type {
   MockServerStatus,
   MockStreamSettings,
   ProjectData,
+  RequestResponseLayoutMode,
   RequestSession,
   RequestTab,
   ResponseTab,
@@ -265,6 +268,9 @@ import type {
 import type { GrpcEvent, GrpcResult, LoadedProto, MetadataPair, ProtoSourceFile, RpcMethodInfo } from "@/lib/types";
 
 type CompatTheme = ReturnType<typeof createTheme>;
+
+const defaultResponseWidth = 420;
+const minResponseWidth = 300;
 
 type WebSocketClientState = {
   readyState: "closed" | "connecting" | "open";
@@ -1003,6 +1009,8 @@ export default function PlaygroundPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarWidthPx, setSidebarWidthPx] = useState(sidebarWidth);
   const [responseHeight, setResponseHeight] = useState(defaultResponseHeight);
+  const [responseWidth, setResponseWidth] = useState(defaultResponseWidth);
+  const [requestResponseLayout, setRequestResponseLayout] = useState<RequestResponseLayoutMode>("horizontal");
   const [_requestCollapsed, setRequestCollapsed] = useState(false);
   const [transportMode, setTransportMode] = useState<TransportMode>("grpc-web");
   const [baseUrl, setBaseUrl] = useState("http://localhost:9080/grpc/web");
@@ -1114,6 +1122,7 @@ export default function PlaygroundPage() {
   });
   const mockRuntimeUpdateSeqRef = useRef(0);
   const mockRuntimeAppliedSeqRef = useRef(0);
+  const mockRuntimeLastSyncSignatureRef = useRef("");
   const protoInputRef = useRef<HTMLInputElement | null>(null);
   const protoFolderInputRef = useRef<HTMLInputElement | null>(null);
   const projectInputRef = useRef<HTMLInputElement | null>(null);
@@ -1136,17 +1145,25 @@ export default function PlaygroundPage() {
      * Applies locally cached layout only when no workspace folder can be loaded from disk.
      */
     function applyCachedLayout(): WorkspaceLayoutSnapshot {
-      const nextLayout: WorkspaceLayoutSnapshot = { sidebarOpen, sidebarWidthPx, responseHeight };
+      const nextLayout: WorkspaceLayoutSnapshot = {
+        sidebarOpen,
+        sidebarWidthPx,
+        responseHeight,
+        responseWidth,
+        requestResponseLayout,
+      };
       try {
         const rawLayout =
           window.localStorage.getItem(layoutStorageKey) ?? window.localStorage.getItem(legacyLayoutStorageKey);
         const layout = rawLayout
           ? (JSON.parse(rawLayout) as Partial<{
-              sidebarOpen: boolean;
-              sidebarWidthPx: number;
-              responseHeight: number;
-              requestCollapsed: boolean;
-            }>)
+            sidebarOpen: boolean;
+            sidebarWidthPx: number;
+            responseHeight: number;
+            responseWidth: number;
+            requestResponseLayout: RequestResponseLayoutMode;
+            requestCollapsed: boolean;
+          }>)
           : {};
         if (typeof layout.sidebarOpen === "boolean") {
           nextLayout.sidebarOpen = layout.sidebarOpen;
@@ -1159,6 +1176,14 @@ export default function PlaygroundPage() {
         if (typeof layout.responseHeight === "number") {
           nextLayout.responseHeight = Math.max(minResponseHeight, layout.responseHeight);
           setResponseHeight(nextLayout.responseHeight);
+        }
+        if (typeof layout.responseWidth === "number") {
+          nextLayout.responseWidth = Math.max(minResponseWidth, layout.responseWidth);
+          setResponseWidth(nextLayout.responseWidth);
+        }
+        if (layout.requestResponseLayout === "vertical" || layout.requestResponseLayout === "horizontal") {
+          nextLayout.requestResponseLayout = layout.requestResponseLayout;
+          setRequestResponseLayout(layout.requestResponseLayout);
         }
         setRequestCollapsed(false);
       } catch {
@@ -1438,11 +1463,14 @@ export default function PlaygroundPage() {
     if (!hydrated) return;
     const timeout = window.setTimeout(() => {
       runWhenIdle(() =>
-        window.localStorage.setItem(layoutStorageKey, JSON.stringify({ sidebarOpen, sidebarWidthPx, responseHeight })),
+        window.localStorage.setItem(
+          layoutStorageKey,
+          JSON.stringify({ sidebarOpen, sidebarWidthPx, responseHeight, responseWidth, requestResponseLayout }),
+        ),
       );
     }, 300);
     return () => window.clearTimeout(timeout);
-  }, [hydrated, sidebarOpen, sidebarWidthPx, responseHeight]);
+  }, [hydrated, sidebarOpen, sidebarWidthPx, responseHeight, responseWidth, requestResponseLayout]);
 
   useEffect(() => {
     if (!hydrated || !workspaceFolderPath || !window.electronWorkspace?.saveFolder) return;
@@ -1510,6 +1538,8 @@ export default function PlaygroundPage() {
     sidebarOpen,
     sidebarWidthPx,
     responseHeight,
+    responseWidth,
+    requestResponseLayout,
     themeMode,
   ]);
 
@@ -1541,12 +1571,18 @@ export default function PlaygroundPage() {
       }
 
       if (responseResizeRef.current) {
-        const reservedTop = 260;
-        const maxHeight = Math.max(
-          minResponseHeight,
-          window.innerHeight - designSystem.size.titlebarHeight - reservedTop,
-        );
-        setResponseHeight(clamp(window.innerHeight - event.clientY - 10, minResponseHeight, maxHeight));
+        if (requestResponseLayout === "horizontal") {
+          const activeShellLeft = railWidth + (sidebarOpen ? sidebarWidthPx : 0);
+          const maxWidth = Math.max(minResponseWidth, window.innerWidth - activeShellLeft - 420);
+          setResponseWidth(clamp(window.innerWidth - event.clientX - 10, minResponseWidth, maxWidth));
+        } else {
+          const reservedTop = 260;
+          const maxHeight = Math.max(
+            minResponseHeight,
+            window.innerHeight - designSystem.size.titlebarHeight - reservedTop,
+          );
+          setResponseHeight(clamp(window.innerHeight - event.clientY - 10, minResponseHeight, maxHeight));
+        }
       }
     }
 
@@ -1556,7 +1592,7 @@ export default function PlaygroundPage() {
       window.removeEventListener("mousemove", handleResizeMove);
       window.removeEventListener("mouseup", stopResize);
     };
-  }, []);
+  }, [requestResponseLayout, sidebarOpen, sidebarWidthPx]);
 
   const theme = useMemo(() => {
     const modeColors = colorTokens[paletteMode(themeMode)];
@@ -1994,7 +2030,7 @@ export default function PlaygroundPage() {
     if (!mockServerStatus.running || !loaded || !window.electronMock?.update) return;
     const timer = window.setTimeout(() => {
       void syncRunningMockServerFromEditor();
-    }, 120);
+    }, 350);
     return () => window.clearTimeout(timer);
   }, [mockServer, loaded, protoFiles, mockServerStatus.running]);
 
@@ -2118,9 +2154,9 @@ export default function PlaygroundPage() {
   const previewUrl =
     activeIsRest && activeCollectionRequest
       ? buildRestRequestUrl(
-          { ...activeCollectionRequest, url: targetDraft || activeCollectionRequest.url },
-          draftEffectiveBaseUrl,
-        )
+        { ...activeCollectionRequest, url: targetDraft || activeCollectionRequest.url },
+        draftEffectiveBaseUrl,
+      )
       : selectedMethod
         ? activeTransportMode === "native-grpc"
           ? `${draftEffectiveNativeTarget.replace(/\/+$/, "")}/${selectedMethod.serviceName}/${selectedMethod.methodName}`
@@ -2131,13 +2167,16 @@ export default function PlaygroundPage() {
 
   const messageEvents = events.filter((event) => event.kind === "message");
   const latestResponsePayload = useMemo(() => {
-    const resultMessages = lastResult?.messages ?? [];
-    if (resultMessages.length > 0) return resultMessages[resultMessages.length - 1];
-
+    // Live stream events are the freshest source while a request is still running.
+    // A completed lastResult can be from the previous run, so do not let it make
+    // the Latest JSON tab look stale or "jump back" during active mock streams.
     for (let index = events.length - 1; index >= 0; index -= 1) {
       const event = events[index];
       if (event.kind === "message") return event.payload;
     }
+
+    const resultMessages = lastResult?.messages ?? [];
+    if (resultMessages.length > 0) return resultMessages[resultMessages.length - 1];
 
     return undefined;
   }, [events, lastResult]);
@@ -2170,31 +2209,31 @@ export default function PlaygroundPage() {
     () =>
       activeIsWebSocket
         ? [
-            { value: "body", label: "Message" },
-            { value: "metadata", label: "Headers" },
-            { value: "examples", label: currentExamples.length ? `Examples ${currentExamples.length}` : "Examples" },
-            { value: "mock", label: "Mock" },
-            { value: "docs", label: "Docs" },
-            { value: "benchmark", label: "Benchmark" },
-          ]
+          { value: "body", label: "Message" },
+          { value: "metadata", label: "Headers" },
+          { value: "examples", label: currentExamples.length ? `Examples ${currentExamples.length}` : "Examples" },
+          { value: "mock", label: "Mock" },
+          { value: "docs", label: "Docs" },
+          { value: "benchmark", label: "Benchmark" },
+        ]
         : activeIsRest
           ? [
-              { value: "body", label: "Body" },
-              { value: "metadata", label: "Headers" },
-              { value: "schema", label: "Auth & Params" },
-              { value: "docs", label: "Docs" },
-              { value: "examples", label: currentExamples.length ? `Examples ${currentExamples.length}` : "Examples" },
-              { value: "mock", label: "Mock" },
-            ]
+            { value: "body", label: "Body" },
+            { value: "metadata", label: "Headers" },
+            { value: "schema", label: "Auth & Params" },
+            { value: "docs", label: "Docs" },
+            { value: "examples", label: currentExamples.length ? `Examples ${currentExamples.length}` : "Examples" },
+            { value: "mock", label: "Mock" },
+          ]
           : [
-              { value: "body", label: "Body" },
-              { value: "metadata", label: "Metadata" },
-              { value: "schema", label: "Schema" },
-              { value: "docs", label: "Docs" },
-              { value: "benchmark", label: "Benchmark" },
-              { value: "examples", label: currentExamples.length ? `Examples ${currentExamples.length}` : "Examples" },
-              { value: "mock", label: "Mock" },
-            ],
+            { value: "body", label: "Body" },
+            { value: "metadata", label: "Metadata" },
+            { value: "schema", label: "Schema" },
+            { value: "docs", label: "Docs" },
+            { value: "benchmark", label: "Benchmark" },
+            { value: "examples", label: currentExamples.length ? `Examples ${currentExamples.length}` : "Examples" },
+            { value: "mock", label: "Mock" },
+          ],
     [activeIsWebSocket, activeIsRest, currentExamples.length],
   );
 
@@ -2414,7 +2453,13 @@ export default function PlaygroundPage() {
    * Applies layout preferences imported from a portable workspace bundle.
    */
   function applyWorkspaceLayout(layout: Partial<WorkspaceLayoutSnapshot>) {
-    applyWorkspaceLayoutSnapshot(layout, { setSidebarOpen, setSidebarWidthPx, setResponseHeight });
+    applyWorkspaceLayoutSnapshot(layout, {
+      setSidebarOpen,
+      setSidebarWidthPx,
+      setResponseHeight,
+      setResponseWidth,
+      setRequestResponseLayout,
+    });
     window.localStorage.setItem(
       layoutStorageKey,
       JSON.stringify({
@@ -2427,6 +2472,14 @@ export default function PlaygroundPage() {
           typeof layout.responseHeight === "number"
             ? Math.max(minResponseHeight, layout.responseHeight)
             : responseHeight,
+        responseWidth:
+          typeof layout.responseWidth === "number"
+            ? Math.max(minResponseWidth, layout.responseWidth)
+            : responseWidth,
+        requestResponseLayout:
+          layout.requestResponseLayout === "vertical" || layout.requestResponseLayout === "horizontal"
+            ? layout.requestResponseLayout
+            : requestResponseLayout,
       }),
     );
   }
@@ -2439,6 +2492,8 @@ export default function PlaygroundPage() {
       sidebarOpen,
       sidebarWidthPx,
       responseHeight,
+      responseWidth,
+      requestResponseLayout,
     };
   }
 
@@ -3940,9 +3995,8 @@ export default function PlaygroundPage() {
 
     showToast(
       removedSessions.length
-        ? `${collection.name} deleted. Closed ${removedSessions.length} open tab${
-            removedSessions.length === 1 ? "" : "s"
-          }.`
+        ? `${collection.name} deleted. Closed ${removedSessions.length} open tab${removedSessions.length === 1 ? "" : "s"
+        }.`
         : `${collection.name} deleted.`,
       "success",
     );
@@ -3991,14 +4045,14 @@ export default function PlaygroundPage() {
       current.map((item) =>
         item.id === collectionId
           ? {
-              ...item,
-              requests: item.requests.map((candidate) =>
-                candidate.id === requestId
-                  ? { ...candidate, name: nextName, updatedAt: new Date().toISOString() }
-                  : candidate,
-              ),
-              updatedAt: new Date().toISOString(),
-            }
+            ...item,
+            requests: item.requests.map((candidate) =>
+              candidate.id === requestId
+                ? { ...candidate, name: nextName, updatedAt: new Date().toISOString() }
+                : candidate,
+            ),
+            updatedAt: new Date().toISOString(),
+          }
           : item,
       ),
     );
@@ -4046,10 +4100,10 @@ export default function PlaygroundPage() {
     const nextCollections = collections.map((item) =>
       item.id === collectionId
         ? {
-            ...item,
-            requests: item.requests.filter((candidate) => candidate.id !== requestId),
-            updatedAt: new Date().toISOString(),
-          }
+          ...item,
+          requests: item.requests.filter((candidate) => candidate.id !== requestId),
+          updatedAt: new Date().toISOString(),
+        }
         : item,
     );
     const removedSessions = requestSessions.filter((session) => session.methodKey === requestId);
@@ -4544,8 +4598,8 @@ export default function PlaygroundPage() {
           const parsed = parseMockScenarioText(previousFile.scenarioText, previousFile.format, current.port);
           const existingScenarios = parsed.ok
             ? parsed.bundle.scenarios.filter(
-                (scenario) => scenario.service === method.serviceName && scenario.method === method.methodName,
-              )
+              (scenario) => scenario.service === method.serviceName && scenario.method === method.methodName,
+            )
             : [];
           if (!selectedScenarioIds[key] && existingScenarios.length) selectedScenarioIds[key] = existingScenarios[0].id;
           if (!(key in enabledMethods)) enabledMethods[key] = existingScenarios.length > 0;
@@ -4967,7 +5021,27 @@ export default function PlaygroundPage() {
       loaded.methods,
       mockServer.selectedScenarioIds,
     );
-    const uiRuntimeRevision = (mockRuntimeUpdateSeqRef.current += 1);
+    const syncSignature = JSON.stringify({
+      port: normalizeMockPort(mockServer.port, defaultMockPort),
+      bindHost: normalizeMockBindHost(mockServer.bindHost),
+      protoFiles: protoFiles.map((file) => [file.name, file.text]),
+      methods: loaded.methods.map((method) => [
+        method.serviceName,
+        method.methodName,
+        method.requestStream,
+        method.responseStream,
+        method.requestType,
+        method.responseType,
+      ]),
+      scenarios: parsed.bundle.scenarios,
+      streamDefaults: mockServer.streamDefaults,
+      activeScenarioIds,
+      enabledMethods: mockServer.enabledMethods,
+    });
+    if (syncSignature === mockRuntimeLastSyncSignatureRef.current) return;
+    mockRuntimeLastSyncSignatureRef.current = syncSignature;
+    mockRuntimeUpdateSeqRef.current += 1;
+    const uiRuntimeRevision = mockRuntimeUpdateSeqRef.current;
     const result = await window.electronMock.update({
       port: normalizeMockPort(mockServer.port, defaultMockPort),
       bindHost: normalizeMockBindHost(mockServer.bindHost),
@@ -4991,21 +5065,21 @@ export default function PlaygroundPage() {
     setMockServerStatus((current) =>
       current.running
         ? {
-            ...current,
-            scenarioCount: result.scenarioCount ?? parsed.bundle.scenarios.length,
-            activeScenarioIds: result.activeScenarioIds ?? activeScenarioIds,
-            configVersion: result.configVersion ?? current.configVersion,
-            updatedAt: result.updatedAt ?? current.updatedAt,
-            port: result.port ?? current.port,
-            url: result.url ?? current.url,
-            bindHost: result.bindHost ?? current.bindHost,
-            bindAddress: result.bindAddress ?? current.bindAddress,
-            localTarget: result.localTarget ?? current.localTarget,
-            apisixTarget: result.apisixTarget ?? current.apisixTarget,
-            reachableTargets: result.reachableTargets ?? current.reachableTargets,
-            methodCount: result.methodCount ?? current.methodCount,
-            message: result.message ?? (result.restarted ? "Mock runtime reloaded." : "Mock config updated."),
-          }
+          ...current,
+          scenarioCount: result.scenarioCount ?? parsed.bundle.scenarios.length,
+          activeScenarioIds: result.activeScenarioIds ?? activeScenarioIds,
+          configVersion: result.configVersion ?? current.configVersion,
+          updatedAt: result.updatedAt ?? current.updatedAt,
+          port: result.port ?? current.port,
+          url: result.url ?? current.url,
+          bindHost: result.bindHost ?? current.bindHost,
+          bindAddress: result.bindAddress ?? current.bindAddress,
+          localTarget: result.localTarget ?? current.localTarget,
+          apisixTarget: result.apisixTarget ?? current.apisixTarget,
+          reachableTargets: result.reachableTargets ?? current.reachableTargets,
+          methodCount: result.methodCount ?? current.methodCount,
+          message: result.message ?? (result.restarted ? "Mock runtime reloaded." : "Mock config updated."),
+        }
         : current,
     );
   }
@@ -5038,6 +5112,7 @@ export default function PlaygroundPage() {
         loaded.methods,
         mockServer.selectedScenarioIds,
       );
+      mockRuntimeLastSyncSignatureRef.current = "";
       const result = await window.electronMock.start({
         port,
         bindHost: normalizeMockBindHost(mockServer.bindHost),
@@ -5087,6 +5162,7 @@ export default function PlaygroundPage() {
   async function stopMockServer() {
     try {
       const result = await window.electronMock?.stop?.();
+      mockRuntimeLastSyncSignatureRef.current = "";
       setMockServerStatus({ running: false, message: result?.message });
       showToast("Mock server stopped.", "success");
     } catch (err) {
@@ -5358,7 +5434,7 @@ export default function PlaygroundPage() {
   function beginResponseResize(event: ReactMouseEvent<HTMLDivElement>) {
     event.preventDefault();
     responseResizeRef.current = true;
-    document.body.style.cursor = "row-resize";
+    document.body.style.cursor = requestResponseLayout === "horizontal" ? "col-resize" : "row-resize";
     document.body.style.userSelect = "none";
   }
 
@@ -5369,6 +5445,13 @@ export default function PlaygroundPage() {
     const next = themeMode === "dark" ? "light" : "dark";
     setThemeMode(next);
     window.localStorage.setItem("layang-theme", next);
+  }
+
+  /**
+   * Switches the request body and response viewer between top-bottom and side-by-side layouts.
+   */
+  function toggleRequestResponseLayout() {
+    setRequestResponseLayout((current) => (current === "vertical" ? "horizontal" : "vertical"));
   }
 
   /**
@@ -5734,12 +5817,12 @@ export default function PlaygroundPage() {
         title: key,
         markdown: request
           ? renderWebSocketDocsMarkdown({
-              collectionRequest: request,
-              url: session?.baseUrl || request.url,
-              message: session?.requestJson || request.body || "",
-              examples: requestExamples,
-              latestResult: session?.lastResult ?? null,
-            })
+            collectionRequest: request,
+            url: session?.baseUrl || request.url,
+            message: session?.requestJson || request.body || "",
+            examples: requestExamples,
+            latestResult: session?.lastResult ?? null,
+          })
           : doc.generatedMarkdown || "# WebSocket docs\n\nRequest not found in this workspace.",
       });
       return;
@@ -5755,10 +5838,10 @@ export default function PlaygroundPage() {
         title: key,
         markdown: request
           ? renderRestDocsMarkdown({
-              collectionRequest: request,
-              url: session?.requestUrl || buildRestRequestUrl(request, session?.baseUrl || request.url),
-              latestResult: session?.lastResult ?? null,
-            })
+            collectionRequest: request,
+            url: session?.requestUrl || buildRestRequestUrl(request, session?.baseUrl || request.url),
+            latestResult: session?.lastResult ?? null,
+          })
           : doc.generatedMarkdown || "# REST docs\n\nRequest not found in this workspace.",
       });
       return;
@@ -5819,20 +5902,20 @@ export default function PlaygroundPage() {
       }
       const session: RequestSession = existing
         ? {
-            ...existing,
-            requestJson: example.requestJson,
-            metadata: example.metadata.map((item) => ({ ...item })),
-            assertionJson: example.expectedJson,
-            updatedAt: new Date().toISOString(),
-          }
+          ...existing,
+          requestJson: example.requestJson,
+          metadata: example.metadata.map((item) => ({ ...item })),
+          assertionJson: example.expectedJson,
+          updatedAt: new Date().toISOString(),
+        }
         : createRequestSession(loaded.root, found, {
-            requestJson: example.requestJson,
-            metadata: example.metadata,
-            transportMode: activeTransportMode,
-            baseUrl: activeBaseUrl,
-            nativeTarget: activeNativeTarget,
-            assertionJson: example.expectedJson,
-          });
+          requestJson: example.requestJson,
+          metadata: example.metadata,
+          transportMode: activeTransportMode,
+          baseUrl: activeBaseUrl,
+          nativeTarget: activeNativeTarget,
+          assertionJson: example.expectedJson,
+        });
 
       upsertRequestSessionPreservingOrder(session);
       activateRequestSession(session);
@@ -5855,17 +5938,17 @@ export default function PlaygroundPage() {
       }
       const session: RequestSession = existing
         ? {
-            ...existing,
-            requestJson: example.requestJson,
-            metadata: example.metadata.map((item) => ({ ...item })),
-            assertionJson: example.expectedJson,
-            updatedAt: new Date().toISOString(),
-          }
+          ...existing,
+          requestJson: example.requestJson,
+          metadata: example.metadata.map((item) => ({ ...item })),
+          assertionJson: example.expectedJson,
+          updatedAt: new Date().toISOString(),
+        }
         : createCollectionRequestSession(collection, {
-            ...request,
-            body: example.requestJson,
-            headers: example.metadata.map((item) => ({ ...item })),
-          });
+          ...request,
+          body: example.requestJson,
+          headers: example.metadata.map((item) => ({ ...item })),
+        });
       upsertRequestSessionPreservingOrder(session);
       activateRequestSession(session);
       patchActiveCollectionRequest({ body: example.requestJson, headers: example.metadata });
@@ -6152,15 +6235,38 @@ export default function PlaygroundPage() {
               justifyContent: "center",
             }}
           >
-            <Tooltip title={`Switch to ${themeMode === "dark" ? "light" : "dark"} mode`} placement="right">
-              <IconButton size="small" aria-label="Toggle theme" onClick={toggleTheme} sx={iconButtonSx}>
-                {themeMode === "dark" ? (
-                  <DarkMode sx={{ fontSize: 16 }} color="primary" />
-                ) : (
-                  <LightMode sx={{ fontSize: 16 }} color="primary" />
-                )}
-              </IconButton>
-            </Tooltip>
+            <Stack spacing={0.7} alignItems="center">
+              <Tooltip
+                title={
+                  requestResponseLayout === "vertical"
+                    ? "Switch body and response to side-by-side"
+                    : "Switch body and response to top-bottom"
+                }
+                placement="right"
+              >
+                <IconButton
+                  size="small"
+                  aria-label="Toggle body/response layout"
+                  onClick={toggleRequestResponseLayout}
+                  sx={iconButtonSx}
+                >
+                  {requestResponseLayout === "vertical" ? (
+                    <PanelRight sx={{ fontSize: 16 }} color="primary" />
+                  ) : (
+                    <PanelBottom sx={{ fontSize: 16 }} color="primary" />
+                  )}
+                </IconButton>
+              </Tooltip>
+              <Tooltip title={`Switch to ${themeMode === "dark" ? "light" : "dark"} mode`} placement="right">
+                <IconButton size="small" aria-label="Toggle theme" onClick={toggleTheme} sx={iconButtonSx}>
+                  {themeMode === "dark" ? (
+                    <DarkMode sx={{ fontSize: 16 }} color="primary" />
+                  ) : (
+                    <LightMode sx={{ fontSize: 16 }} color="primary" />
+                  )}
+                </IconButton>
+              </Tooltip>
+            </Stack>
           </Box>
         </Box>
 
@@ -6382,7 +6488,11 @@ export default function PlaygroundPage() {
             overflow: "hidden",
           }}
         >
-          <Stack spacing={0.8} sx={{ height: "100%", minHeight: 0, overflow: "hidden" }}>
+          <Stack
+            direction={requestResponseLayout === "horizontal" ? "row" : "column"}
+            spacing={0.8}
+            sx={{ height: "100%", minHeight: 0, overflow: "hidden" }}
+          >
             {showEmptyWorkbench ? (
               <Paper
                 elevation={0}
@@ -6433,7 +6543,14 @@ export default function PlaygroundPage() {
               <>
                 <Paper
                   elevation={0}
-                  sx={{ ...panelSx, flex: "1 1 auto", minHeight: 220, display: "flex", flexDirection: "column" }}
+                  sx={{
+                    ...panelSx,
+                    flex: "1 1 auto",
+                    minHeight: requestResponseLayout === "horizontal" ? 0 : 220,
+                    minWidth: requestResponseLayout === "horizontal" ? 360 : 0,
+                    display: "flex",
+                    flexDirection: "column",
+                  }}
                 >
                   <Stack
                     direction="row"
@@ -7030,18 +7147,18 @@ export default function PlaygroundPage() {
                                   value={activeCollectionRequest.restAuth.key}
                                   onChange={(event: TextInputChangeEvent) =>
                                     updateActiveRestAuth({
-                                  type: "api-key",
-                                  key: event.target.value,
-                                  value:
-                                    activeCollectionRequest.restAuth?.type === "api-key"
-                                      ? activeCollectionRequest.restAuth.value
-                                      : "",
-                                  in:
-                                    activeCollectionRequest.restAuth?.type === "api-key"
-                                      ? activeCollectionRequest.restAuth.in
-                                      : "header",
-                                })
-                              }
+                                      type: "api-key",
+                                      key: event.target.value,
+                                      value:
+                                        activeCollectionRequest.restAuth?.type === "api-key"
+                                          ? activeCollectionRequest.restAuth.value
+                                          : "",
+                                      in:
+                                        activeCollectionRequest.restAuth?.type === "api-key"
+                                          ? activeCollectionRequest.restAuth.in
+                                          : "header",
+                                    })
+                                  }
                                   sx={{ minWidth: 180 }}
                                 />
                                 <TextField
@@ -7050,36 +7167,36 @@ export default function PlaygroundPage() {
                                   value={activeCollectionRequest.restAuth.value}
                                   onChange={(event: TextInputChangeEvent) =>
                                     updateActiveRestAuth({
-                                  type: "api-key",
-                                  key:
-                                    activeCollectionRequest.restAuth?.type === "api-key"
-                                      ? activeCollectionRequest.restAuth.key
-                                      : "x-api-key",
-                                  value: event.target.value,
-                                  in:
-                                    activeCollectionRequest.restAuth?.type === "api-key"
-                                      ? activeCollectionRequest.restAuth.in
-                                      : "header",
-                                })
-                              }
+                                      type: "api-key",
+                                      key:
+                                        activeCollectionRequest.restAuth?.type === "api-key"
+                                          ? activeCollectionRequest.restAuth.key
+                                          : "x-api-key",
+                                      value: event.target.value,
+                                      in:
+                                        activeCollectionRequest.restAuth?.type === "api-key"
+                                          ? activeCollectionRequest.restAuth.in
+                                          : "header",
+                                    })
+                                  }
                                   sx={{ minWidth: 220 }}
                                 />
                                 <FormControl size="small" sx={{ width: 130 }}>
                                   <Select
                                     value={activeCollectionRequest.restAuth.in}
                                     onChange={(event: SelectInputChangeEvent) =>
-                                  updateActiveRestAuth({
-                                    type: "api-key",
-                                    key:
-                                      activeCollectionRequest.restAuth?.type === "api-key"
-                                        ? activeCollectionRequest.restAuth.key
-                                        : "x-api-key",
-                                    value:
-                                      activeCollectionRequest.restAuth?.type === "api-key"
-                                        ? activeCollectionRequest.restAuth.value
-                                        : "",
-                                    in: event.target.value === "query" ? "query" : "header",
-                                  })
+                                      updateActiveRestAuth({
+                                        type: "api-key",
+                                        key:
+                                          activeCollectionRequest.restAuth?.type === "api-key"
+                                            ? activeCollectionRequest.restAuth.key
+                                            : "x-api-key",
+                                        value:
+                                          activeCollectionRequest.restAuth?.type === "api-key"
+                                            ? activeCollectionRequest.restAuth.value
+                                            : "",
+                                        in: event.target.value === "query" ? "query" : "header",
+                                      })
                                     }
                                   >
                                     <MenuItem value="header">Header</MenuItem>
@@ -7300,9 +7417,10 @@ export default function PlaygroundPage() {
                 <Box
                   onMouseDown={beginResponseResize}
                   sx={{
-                    height: 6,
+                    width: requestResponseLayout === "horizontal" ? 6 : "auto",
+                    height: requestResponseLayout === "horizontal" ? "auto" : 6,
                     flexShrink: 0,
-                    cursor: "row-resize",
+                    cursor: requestResponseLayout === "horizontal" ? "col-resize" : "row-resize",
                     borderRadius: 999,
                     bgcolor: "divider",
                     opacity: 0.55,
@@ -7314,8 +7432,12 @@ export default function PlaygroundPage() {
                   elevation={0}
                   sx={{
                     ...panelSx,
-                    flex: `0 0 ${responseHeight}px`,
-                    minHeight: minResponseHeight,
+                    flex:
+                      requestResponseLayout === "horizontal"
+                        ? `0 0 ${responseWidth}px`
+                        : `0 0 ${responseHeight}px`,
+                    minHeight: requestResponseLayout === "horizontal" ? 0 : minResponseHeight,
+                    minWidth: requestResponseLayout === "horizontal" ? minResponseWidth : 0,
                     display: "flex",
                     flexDirection: "column",
                   }}
@@ -7339,8 +7461,18 @@ export default function PlaygroundPage() {
                       p: designSystem.space.panelPadding,
                       flex: 1,
                       minHeight: 0,
-                      overflow: "auto",
+                      overflow:
+                        requestResponseLayout === "horizontal" &&
+                          (responseTab === "latest" || responseTab === "raw" || responseTab === "report")
+                          ? "hidden"
+                          : "auto",
                       position: "relative",
+                      display:
+                        requestResponseLayout === "horizontal" &&
+                          (responseTab === "latest" || responseTab === "raw" || responseTab === "report")
+                          ? "flex"
+                          : "block",
+                      flexDirection: "column",
                     }}
                   >
                     {responseTab === "messages" && (
@@ -7355,6 +7487,7 @@ export default function PlaygroundPage() {
                         value={latestResponsePayload}
                         filterQuery={deferredResponseFilter}
                         empty="Run a request or receive a stream message to see only the newest response payload."
+                        fullHeight={requestResponseLayout === "horizontal"}
                       />
                     )}
                     {responseTab === "messages" && showMessageTopButton && (
@@ -7379,7 +7512,11 @@ export default function PlaygroundPage() {
                       </Tooltip>
                     )}
                     {responseTab === "raw" && (
-                      <FeatureJsonBlock value={lastResult ?? events} highlightQuery={deferredResponseFilter} />
+                      <FeatureJsonBlock
+                        value={lastResult ?? events}
+                        highlightQuery={deferredResponseFilter}
+                        fullHeight={requestResponseLayout === "horizontal"}
+                      />
                     )}
                     {responseTab === "history" && (
                       <FeatureHistoryTable
@@ -7389,7 +7526,11 @@ export default function PlaygroundPage() {
                       />
                     )}
                     {responseTab === "report" && (
-                      <FeatureJsonBlock value={reportPayload} highlightQuery={deferredResponseFilter} />
+                      <FeatureJsonBlock
+                        value={reportPayload}
+                        highlightQuery={deferredResponseFilter}
+                        fullHeight={requestResponseLayout === "horizontal"}
+                      />
                     )}
                   </Box>
                 </Paper>

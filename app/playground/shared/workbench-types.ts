@@ -213,6 +213,8 @@ export type MockServerStatus = {
   startedAt?: string;
   updatedAt?: string;
   configVersion?: number;
+  activeCallCount?: number;
+  pendingTimerCount?: number;
 };
 
 export type WebSocketMockMatchMode = "always" | "contains" | "regex" | "jsonPath";
@@ -388,10 +390,14 @@ export type ProjectData = {
   activeRequestId: string;
 };
 
+export type RequestResponseLayoutMode = "vertical" | "horizontal";
+
 export type WorkspaceLayoutSnapshot = {
   sidebarOpen: boolean;
   sidebarWidthPx: number;
   responseHeight: number;
+  responseWidth?: number;
+  requestResponseLayout?: RequestResponseLayoutMode;
 };
 
 export type WorkspaceExportBundle = {

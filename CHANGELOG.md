@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.1
+
+### Major
+
+- Fixed several gRPC mocking issues.
+- Restored the default scenario behavior so scenarios can be added normally again.
+
+### Minor
+
+- Added latest response data in the Response tab.
+- Added left-right panel layout mode.
+- Added layout switcher for top-bottom and left-right response/body views.
 ## 1.0.0
 
 ### Major

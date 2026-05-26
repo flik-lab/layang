@@ -212,6 +212,8 @@ async function startMockServer(payload) {
     methodSignature: createMockMethodSignature(methods),
     protoSignature: createMockProtoSignature(protoFiles),
     startedAt: new Date().toISOString(),
+    runtimeConfigSignature: createRuntimeConfigSignature({ scenarios, streamDefaults, activeScenarioIds, enabledMethods }, runtime),
+    lastWorkspaceReloadSignature: "",
     hasUiStreamDefaultsOverride: false,
     hasUiRuntimeOverride: false,
     lastUiRuntimeUpdateAt: 0,
@@ -334,7 +336,7 @@ function findServiceDefinitionKey(serviceDefinition, protoMethodName) {
  * Creates a mutable runtime config that can be hot-swapped while the server keeps running.
  */
 function createMockRuntimeState(scenarios, streamDefaults, activeScenarioIds, enabledMethods, source) {
-  return {
+  const runtime = {
     scenarioIndex: (Array.isArray(scenarios) ? scenarios : [])
       .map((scenario, index) => normalizeMockRuntimeScenario(scenario, index))
       .filter(Boolean),
@@ -345,7 +347,55 @@ function createMockRuntimeState(scenarios, streamDefaults, activeScenarioIds, en
     updatedAt: new Date().toISOString(),
     source: source || "unknown",
     streamReschedulers: new Set(),
+    scenariosByMethod: new Map(),
+    activeScenariosByMethod: new Map(),
   };
+  rebuildRuntimeScenarioIndexes(runtime);
+  return runtime;
+}
+
+function getRuntimeMethodKey(serviceName, methodName) {
+  return `${serviceName}/${methodName}`;
+}
+
+function getRuntimeMethodDotKey(serviceName, methodName) {
+  return `${serviceName}.${methodName}`;
+}
+
+function rebuildRuntimeScenarioIndexes(runtime) {
+  if (!runtime) return runtime;
+  const scenariosByMethod = new Map();
+  for (const scenario of Array.isArray(runtime.scenarioIndex) ? runtime.scenarioIndex : []) {
+    const key = getRuntimeMethodKey(scenario.service, scenario.method);
+    const list = scenariosByMethod.get(key) || [];
+    list.push(scenario);
+    scenariosByMethod.set(key, list);
+  }
+  const activeScenariosByMethod = new Map();
+  for (const [key, list] of scenariosByMethod.entries()) {
+    const [serviceName, methodName] = key.split("/");
+    const selectedId =
+      runtime.activeScenarioIds?.[key] || runtime.activeScenarioIds?.[getRuntimeMethodDotKey(serviceName, methodName)];
+    const enabled =
+      runtime.enabledMethods?.[key] !== false &&
+      runtime.enabledMethods?.[getRuntimeMethodDotKey(serviceName, methodName)] !== false;
+    let active = [];
+    if (enabled) {
+      if (selectedId) {
+        active = list.filter((scenario) => scenario.id === selectedId && isRuntimeScenarioActive(scenario));
+      } else {
+        const firstActive =
+          list
+            .filter(isRuntimeScenarioActive)
+            .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0))[0] || list[0];
+        active = firstActive ? [firstActive] : [];
+      }
+    }
+    activeScenariosByMethod.set(key, active.sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0)));
+  }
+  runtime.scenariosByMethod = scenariosByMethod;
+  runtime.activeScenariosByMethod = activeScenariosByMethod;
+  return runtime;
 }
 
 function createMockMethodSignature(methods) {
@@ -369,6 +419,19 @@ function createMockProtoSignature(protoFiles) {
       .map((file) => ({ name: safeRelativePath(file?.name || ""), text: String(file?.text || "") }))
       .sort((a, b) => a.name.localeCompare(b.name)),
   );
+}
+
+function createRuntimeConfigSignature(payload, fallbackRuntime) {
+  const scenarios = Array.isArray(payload?.scenarios) ? payload.scenarios : fallbackRuntime?.scenarioIndex || [];
+  const streamDefaults = payload?.streamDefaults || fallbackRuntime?.streamDefaults || {};
+  const activeScenarioIds = payload?.activeScenarioIds || payload?.selectedScenarioIds || fallbackRuntime?.activeScenarioIds || {};
+  const enabledMethods = payload?.enabledMethods || fallbackRuntime?.enabledMethods || {};
+  return stableJson({
+    scenarios,
+    streamDefaults,
+    activeScenarioIds,
+    enabledMethods,
+  });
 }
 
 
@@ -460,6 +523,28 @@ async function updateActiveMockServer(payload, source) {
   const nextScenarios = Array.isArray(payload.scenarios) ? payload.scenarios : runtime.scenarioIndex;
   const nextActiveScenarioIds = payload.activeScenarioIds || payload.selectedScenarioIds || runtime.activeScenarioIds;
   const nextEnabledMethods = payload.enabledMethods || runtime.enabledMethods;
+  const nextSignature = createRuntimeConfigSignature(
+    {
+      scenarios: nextScenarios,
+      streamDefaults: nextStreamDefaults,
+      activeScenarioIds: nextActiveScenarioIds,
+      enabledMethods: nextEnabledMethods,
+    },
+    runtime,
+  );
+  if (nextSignature === active.runtimeConfigSignature) {
+    return createMockServerStatusPayload(active, {
+      scenarioCount: runtime.scenarioIndex.length,
+      activeScenarioIds: runtime.activeScenarioIds,
+      enabledMethods: runtime.enabledMethods,
+      methodCount: active.methodCount,
+      configVersion: runtime.configVersion,
+      updatedAt: runtime.updatedAt,
+      source: runtime.source,
+      unchanged: true,
+      message: "Mock runtime already uses the latest scenario config.",
+    });
+  }
   const next = createMockRuntimeState(
     nextScenarios,
     nextStreamDefaults,
@@ -474,6 +559,9 @@ async function updateActiveMockServer(payload, source) {
   runtime.configVersion += 1;
   runtime.updatedAt = new Date().toISOString();
   runtime.source = next.source;
+  rebuildRuntimeScenarioIndexes(runtime);
+  active.runtimeConfigSignature = nextSignature;
+  if (source === "file" && payload.workspaceSignature) active.lastWorkspaceReloadSignature = payload.workspaceSignature;
   notifyRuntimeStreamReschedulers(runtime);
   return {
     running: true,
@@ -542,6 +630,7 @@ async function startMockScenarioWatcher(workspaceDirectory, serverState) {
         serverState.port,
       );
       if (!loaded) return;
+      if (loaded.workspaceSignature && loaded.workspaceSignature === serverState.lastWorkspaceReloadSignature) return;
       if (await isMockWorkspaceWriteLocked(workspaceDirectory)) {
         scheduleReload(fileRuntimeReloadDebounceMs);
         return;
@@ -636,7 +725,14 @@ async function loadRuntimeScenariosFromWorkspace(workspaceDirectory, methods, po
     );
     if (activeScenario && !activeScenarioIds[key]) activeScenarioIds[key] = activeScenario.id;
   }
-  return { scenarios, activeScenarioIds, enabledMethods, streamDefaults, workspaceMtimeMs };
+  const workspaceSignature = stableJson({
+    workspaceMtimeMs,
+    scenarios,
+    activeScenarioIds,
+    enabledMethods,
+    streamDefaults,
+  });
+  return { scenarios, activeScenarioIds, enabledMethods, streamDefaults, workspaceMtimeMs, workspaceSignature };
 }
 
 /**
@@ -737,13 +833,7 @@ function createMockHandler(method, runtime, timers, activeCalls) {
 function handleMockUnary(call, callback, method, runtime, timers) {
   const request = call?.request ? call.request : {};
   const requestContext = createMockRequestContext(call);
-  const scenario = findMatchingMockScenario(
-    method,
-    requestContext,
-    runtime.scenarioIndex,
-    runtime.activeScenarioIds,
-    runtime.enabledMethods,
-  );
+  const scenario = findMatchingMockScenario(method, requestContext, runtime);
   if (!scenario) {
     callback(
       grpcStatusError(
@@ -821,13 +911,7 @@ function endMockServerStreamWithError(call, code, message, activeCalls) {
 function handleMockServerStream(call, method, runtime, timers, activeCalls) {
   const request = call?.request ? call.request : {};
   const requestContext = createMockRequestContext(call);
-  const initialScenario = findMatchingMockScenario(
-    method,
-    requestContext,
-    runtime.scenarioIndex,
-    runtime.activeScenarioIds,
-    runtime.enabledMethods,
-  );
+  const initialScenario = findMatchingMockScenario(method, requestContext, runtime);
   if (!initialScenario) {
     endMockServerStreamWithError(
       call,
@@ -1172,39 +1256,41 @@ function getRuntimeStreamTiming(scenario, runtime) {
  * so runtime scenario edits/selection changes keep applying on every tick.
  */
 function getLiveStreamScenario(method, request, preferredScenarioId, runtime) {
-  const candidates = getActiveRuntimeScenariosForMethod(
-    method,
-    runtime.scenarioIndex,
-    runtime.activeScenarioIds,
-    runtime.enabledMethods,
-  )
-    .filter((scenario) => mockMatcherMatches(scenario.input, request))
-    .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0));
+  const candidates = getActiveRuntimeScenariosForMethod(method, runtime).filter((scenario) =>
+    mockMatcherMatches(scenario.input, request),
+  );
   return candidates.find((scenario) => scenario.id === preferredScenarioId) || candidates[0];
 }
 
 /**
  * Finds the first matching scenario for a method/request pair.
  */
-function findMatchingMockScenario(method, request, scenarios, activeScenarioIds, enabledMethods) {
-  return getActiveRuntimeScenariosForMethod(method, scenarios, activeScenarioIds, enabledMethods)
-    .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0))
-    .find((scenario) => mockMatcherMatches(scenario.input, request));
+function findMatchingMockScenario(method, request, runtime) {
+  return getActiveRuntimeScenariosForMethod(method, runtime).find((scenario) => mockMatcherMatches(scenario.input, request));
 }
 
 /**
  * Returns only scenarios marked active for a method. Inactive scenarios are never matched.
+ * Runtime indexes avoid scanning and sorting the full scenario list for every request/tick.
  */
-function getActiveRuntimeScenariosForMethod(method, scenarios, activeScenarioIds, enabledMethods) {
+function getActiveRuntimeScenariosForMethod(method, runtime) {
+  const keySlash = getRuntimeMethodKey(method.serviceName, method.methodName);
+  if (runtime?.activeScenariosByMethod && typeof runtime.activeScenariosByMethod.get === "function") {
+    return runtime.activeScenariosByMethod.get(keySlash) || [];
+  }
+  const scenarios = Array.isArray(runtime?.scenarioIndex) ? runtime.scenarioIndex : Array.isArray(runtime) ? runtime : [];
+  const activeScenarioIds = runtime?.activeScenarioIds || {};
+  const enabledMethods = runtime?.enabledMethods || {};
   const methodScenarios = scenarios.filter(
     (scenario) => scenario.service === method.serviceName && scenario.method === method.methodName,
   );
-  const keySlash = `${method.serviceName}/${method.methodName}`;
-  const keyDot = `${method.serviceName}.${method.methodName}`;
+  const keyDot = getRuntimeMethodDotKey(method.serviceName, method.methodName);
   if (enabledMethods && (enabledMethods[keySlash] === false || enabledMethods[keyDot] === false)) return [];
   const selectedId = activeScenarioIds && (activeScenarioIds[keySlash] || activeScenarioIds[keyDot]);
   if (selectedId)
-    return methodScenarios.filter((scenario) => scenario.id === selectedId && isRuntimeScenarioActive(scenario));
+    return methodScenarios
+      .filter((scenario) => scenario.id === selectedId && isRuntimeScenarioActive(scenario))
+      .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0));
   const active =
     methodScenarios
       .filter(isRuntimeScenarioActive)
@@ -1230,7 +1316,7 @@ function buildMockNoMatchMessage(method, request, scenarios, activeScenarioIds, 
     enabledMethods &&
     (enabledMethods[runtimeMethodKey] === false ||
       enabledMethods[`${method.serviceName}.${method.methodName}`] === false);
-  const activeCandidates = getActiveRuntimeScenariosForMethod(method, scenarios, activeScenarioIds, enabledMethods);
+  const activeCandidates = getActiveRuntimeScenariosForMethod(method, { scenarioIndex: scenarios, activeScenarioIds, enabledMethods });
   const requestText = stableJson(request);
   const clippedRequest = requestText.length > 600 ? `${requestText.slice(0, 600)}...` : requestText;
   const invalidInput =

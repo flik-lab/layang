@@ -3,7 +3,7 @@
 let electronApp = null;
 try {
   const electron = require("electron");
-  electronApp = electron && electron.app ? electron.app : null;
+  electronApp = electron?.app ? electron.app : null;
 } catch {
   electronApp = null;
 }

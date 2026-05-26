@@ -419,6 +419,8 @@ export function applyWorkspaceLayoutSnapshot(
     setSidebarOpen: (value: boolean) => void;
     setSidebarWidthPx: (value: number) => void;
     setResponseHeight: (value: number) => void;
+    setResponseWidth?: (value: number) => void;
+    setRequestResponseLayout?: (value: "vertical" | "horizontal") => void;
   },
 ) {
   if (typeof snapshot.sidebarOpen === "boolean") setters.setSidebarOpen(snapshot.sidebarOpen);
@@ -426,6 +428,14 @@ export function applyWorkspaceLayoutSnapshot(
     setters.setSidebarWidthPx(clamp(snapshot.sidebarWidthPx, minSidebarWidth, maxSidebarWidth));
   if (typeof snapshot.responseHeight === "number")
     setters.setResponseHeight(Math.max(minResponseHeight, snapshot.responseHeight));
+  if (typeof snapshot.responseWidth === "number" && setters.setResponseWidth)
+    setters.setResponseWidth(Math.max(280, snapshot.responseWidth));
+  if (
+    (snapshot.requestResponseLayout === "vertical" || snapshot.requestResponseLayout === "horizontal") &&
+    setters.setRequestResponseLayout
+  ) {
+    setters.setRequestResponseLayout(snapshot.requestResponseLayout);
+  }
 }
 
 /**
