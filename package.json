@@ -33,12 +33,13 @@
     "cli": "node bin/layang.cjs",
     "cli:smoke": "node bin/layang.cjs --help",
     "test:unit": "node --test tests/*.test.cjs",
-    "test:ci": "pnpm run test:unit && pnpm run cli:smoke",
+    "test:ci": "pnpm run test:unit && pnpm run test:e2e && pnpm run cli:smoke",
     "docs:build": "node scripts/validate-github-pages.cjs",
     "docs:dev": "node scripts/serve-github-pages.cjs",
     "docs:serve": "node scripts/serve-github-pages.cjs",
     "deps:audit": "pnpm audit",
-    "deps:refresh": "pnpm install --lockfile-only && pnpm audit"
+    "deps:refresh": "pnpm install --lockfile-only && pnpm audit",
+    "test:e2e": "node --test tests/e2e/*.test.cjs"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.3",

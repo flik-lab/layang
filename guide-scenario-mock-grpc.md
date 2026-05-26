@@ -80,11 +80,31 @@ Recommended fields:
 
 ## Input Matching
 
-Layang supports three matcher styles:
+Layang. A scenario can use one or more matcher blocks:
 
 - `equals`
+- `equals_unordered` / `equalsUnordered`
 - `contains`
+- `matches` / `regex`
+- `glob`
+- `headers`
 - `or`
+- no `input` block, which behaves as a match-any fallback scenario
+
+### Match-any fallback
+
+A scenario without `input` matches any request for the same service/method. Use this as the default fallback response.
+
+```json
+{
+  "id": "default-success",
+  "service": "demo.v1.GreeterService",
+  "method": "SayHello",
+  "output": {
+    "data": { "message": "Hello from fallback" }
+  }
+}
+```
 
 ### `equals`
 
@@ -96,6 +116,20 @@ The incoming request must match exactly as JSON content. Object key order does n
     "equals": {
       "name": "Alice",
       "age": 21
+    }
+  }
+}
+```
+
+### `equals_unordered`
+
+Like `equals`, but arrays are compared without order. This is useful for repeated protobuf fields whose order is not important.
+
+```json
+{
+  "input": {
+    "equals_unordered": {
+      "tags": ["vip", "internal"]
     }
   }
 }
@@ -117,10 +151,55 @@ The incoming request only needs to contain the specified partial values.
 
 For strings, `contains` behaves like substring matching. For objects and arrays, it behaves like partial deep matching.
 
-Important:
+Important: `contains: {}` is treated as invalid and will not match anything. Use no `input` block or `any: true` when you intentionally want a fallback.
 
-- `contains: {}` is treated as invalid and will not match anything
-- a scenario without a valid matcher will be rejected at runtime for selection/matching
+### `matches`
+
+Use `matches` for regular-expression matching per field.
+
+```json
+{
+  "input": {
+    "matches": {
+      "name": "^Ali.*",
+      "code": "^[0-9]{3}$"
+    }
+  }
+}
+```
+
+### `glob`
+
+Use `glob` for simple wildcard matching. `*` matches many characters and `?` matches one character.
+
+```json
+{
+  "input": {
+    "glob": {
+      "route": "/api/*/tracks/?"
+    }
+  }
+}
+```
+
+### Header matching
+
+Use `headers` to match gRPC metadata. Header keys are normalized to lowercase.
+
+```json
+{
+  "input": {
+    "contains": {
+      "id": "A1"
+    },
+    "headers": {
+      "contains": {
+        "authorization": "Bearer"
+      }
+    }
+  }
+}
+```
 
 ### `or`
 
@@ -136,6 +215,8 @@ Use `or` when one scenario should match multiple request shapes.
   }
 }
 ```
+
+When multiple active scenarios are available, Layang sorts by `priority` descending and picks the first matching scenario. When a selected scenario id exists for a method, only that scenario is considered.
 
 ## Unary Output
 

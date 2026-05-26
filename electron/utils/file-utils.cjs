@@ -1,8 +1,15 @@
 "use strict";
 
-const { app } = require("electron");
+let electronApp = null;
+try {
+  const electron = require("electron");
+  electronApp = electron && electron.app ? electron.app : null;
+} catch {
+  electronApp = null;
+}
 const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
+const os = require("node:os");
 const path = require("node:path");
 const { safeRelativePath } = require("./path-utils.cjs");
 
@@ -103,9 +110,22 @@ async function writeTextInside(rootDir, relativePath, text) {
   await fs.writeFile(targetPath, text, "utf8");
 }
 
-async function writeProtoWorkspace(protoFiles) {
+function getRuntimeTempPath() {
+  if (electronApp && typeof electronApp.getPath === "function") {
+    try {
+      const electronTempPath = electronApp.getPath("temp");
+      if (electronTempPath) return electronTempPath;
+    } catch {
+      // Plain Node tests do not have a ready Electron app. Fall through to os.tmpdir().
+    }
+  }
+  return os.tmpdir();
+}
+
+async function writeProtoWorkspace(protoFiles, options = {}) {
   const id = crypto.randomBytes(8).toString("hex");
-  const workspaceDir = path.join(app.getPath("temp"), `layang-${id}`);
+  const tempRoot = options.tempRoot || getRuntimeTempPath();
+  const workspaceDir = path.join(tempRoot, `layang-${id}`);
   await fs.mkdir(workspaceDir, { recursive: true });
 
   for (const file of protoFiles) {
@@ -146,4 +166,4 @@ async function walkDirectory(directoryPath, visitor) {
   }
 }
 
-module.exports = { readJsonIfExists, walkDirectory, writeProtoWorkspace, writeTextInside };
+module.exports = { getRuntimeTempPath, readJsonIfExists, walkDirectory, writeProtoWorkspace, writeTextInside };

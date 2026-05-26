@@ -92,6 +92,7 @@ declare global {
         activeScenarioIds?: Record<string, string>;
         enabledMethods?: Record<string, boolean>;
         workspaceDirectory?: string;
+        uiRuntimeRevision?: number;
       }) => Promise<{
         ok: boolean;
         running?: boolean;

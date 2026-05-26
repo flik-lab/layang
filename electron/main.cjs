@@ -22,6 +22,7 @@ const { windowFromEvent } = require("./utils/ipc-utils.cjs");
 const { safePathSegment, safeRelativePath } = require("./utils/path-utils.cjs");
 const WINDOWS_APP_USER_MODEL_ID = "fliklab.layang.desktop";
 const workspaceSettingsFileName = "layang-settings.json";
+const mockWorkspaceWriteLockFileName = ".layang-mock-write-lock.json";
 
 registerWindowIpc();
 registerNativeGrpcIpc();
@@ -271,51 +272,7 @@ async function writeWorkspaceFolder(directoryPath, bundle) {
   await writeRequestSessionFiles(directoryPath, project.requestTabs || []);
   await writeJson(path.join(directoryPath, "history", "history.json"), project.history || []);
   const mockServerProject = project.mockServer && typeof project.mockServer === "object" ? project.mockServer : {};
-  await writeJson(path.join(directoryPath, "mocks", "mock-server.json"), {
-    port: normalizeMockServerPort(mockServerProject.port || 50055),
-    format: mockServerProject.format === "yaml" ? "yaml" : "json",
-    streamDefaults: normalizeRuntimeStreamSettings(mockServerProject.streamDefaults || {}, {
-      intervalMs: 1000,
-      loop: false,
-      maxLoops: 0,
-    }),
-    selectedScenarioIds: normalizeActiveScenarioIds(
-      mockServerProject.selectedScenarioIds || mockServerProject.activeScenarioIds || {},
-    ),
-    enabledMethods: normalizeEnabledMethods(mockServerProject.enabledMethods || {}),
-  });
-  await writeJson(
-    path.join(directoryPath, "mocks", "rest-mock-server.json"),
-    project.restMockServer || {
-      port: 3007,
-      bindHost: "127.0.0.1",
-      scenarios: [],
-    },
-  );
-  const mockMethodFiles =
-    mockServerProject.methodFiles && typeof mockServerProject.methodFiles === "object"
-      ? mockServerProject.methodFiles
-      : {};
-  const mockFileKeys = Object.keys(mockMethodFiles);
-  await fs.rm(path.join(directoryPath, "mocks", "scenarios"), { recursive: true, force: true });
-  if (mockFileKeys.length) {
-    const manifest = {};
-    for (const key of mockFileKeys) {
-      const file = mockMethodFiles[key] || {};
-      const ext = file.format === "yaml" ? "yaml" : "json";
-      const name = `${safePathSegment(key.replace("/", "."))}.${ext}`;
-      manifest[key] = { file: name, format: ext };
-      await writeTextInside(directoryPath, path.join("mocks", "scenarios", name), String(file.scenarioText || ""));
-    }
-    await writeJson(path.join(directoryPath, "mocks", "scenarios", "manifest.json"), manifest);
-  } else if (project.mockServer?.scenarioText) {
-    const ext = project.mockServer.format === "yaml" ? "yaml" : "json";
-    await writeTextInside(
-      directoryPath,
-      path.join("mocks", `scenarios.${ext}`),
-      String(project.mockServer.scenarioText),
-    );
-  }
+  await writeMockWorkspaceFilesAtomically(directoryPath, project, mockServerProject);
 
   const protoFiles = Array.isArray(project.protoFiles) ? project.protoFiles : [];
   await fs.rm(path.join(directoryPath, "protos"), { recursive: true, force: true });
@@ -449,6 +406,137 @@ function normalizeWorkspaceBundle(bundle) {
     layout: input.layout || {},
     settings: input.settings || {},
   };
+}
+
+/**
+ * Returns the marker file used to tell runtime watchers that a mock workspace save is still in progress.
+ */
+function mockWorkspaceWriteLockPath(directoryPath) {
+  return path.join(directoryPath, "mocks", mockWorkspaceWriteLockFileName);
+}
+
+/**
+ * Writes gRPC/REST mock config plus split scenario files under a short-lived lock.
+ *
+ * The running gRPC mock server watches these files for hot reload. Without a lock and
+ * atomic directory replacement, a watcher can reload exactly after mocks/scenarios is
+ * removed but before the new files are written, which makes the runtime fall back to
+ * an empty/default scenario set for one iteration.
+ */
+async function writeMockWorkspaceFilesAtomically(directoryPath, project, mockServerProject) {
+  const mocksDir = path.join(directoryPath, "mocks");
+  const lockPath = mockWorkspaceWriteLockPath(directoryPath);
+  await fs.mkdir(mocksDir, { recursive: true });
+  await writeJson(lockPath, {
+    status: "writing",
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+  });
+
+  try {
+    await writeJson(path.join(mocksDir, "mock-server.json"), {
+      port: normalizeMockServerPort(mockServerProject.port || 50055),
+      format: mockServerProject.format === "yaml" ? "yaml" : "json",
+      streamDefaults: normalizeRuntimeStreamSettings(mockServerProject.streamDefaults || {}, {
+        intervalMs: 1000,
+        loop: false,
+        maxLoops: 0,
+      }),
+      selectedScenarioIds: normalizeActiveScenarioIds(
+        mockServerProject.selectedScenarioIds || mockServerProject.activeScenarioIds || {},
+      ),
+      enabledMethods: normalizeEnabledMethods(mockServerProject.enabledMethods || {}),
+    });
+    await writeJson(
+      path.join(mocksDir, "rest-mock-server.json"),
+      project.restMockServer || {
+        port: 3007,
+        bindHost: "127.0.0.1",
+        scenarios: [],
+      },
+    );
+
+    const mockMethodFiles =
+      mockServerProject.methodFiles && typeof mockServerProject.methodFiles === "object"
+        ? mockServerProject.methodFiles
+        : {};
+    const mockFileKeys = Object.keys(mockMethodFiles);
+    const scenariosDir = path.join(mocksDir, "scenarios");
+
+    if (mockFileKeys.length) {
+      await replaceDirectoryAtomically(scenariosDir, async (tmpScenariosDir) => {
+        const manifest = {};
+        for (const key of mockFileKeys) {
+          const file = mockMethodFiles[key] || {};
+          const ext = file.format === "yaml" ? "yaml" : "json";
+          const name = `${safePathSegment(key.replace("/", "."))}.${ext}`;
+          manifest[key] = { file: name, format: ext };
+          await writeTextFile(path.join(tmpScenariosDir, name), String(file.scenarioText || ""));
+        }
+        await writeJson(path.join(tmpScenariosDir, "manifest.json"), manifest);
+      });
+    } else {
+      await fs.rm(scenariosDir, { recursive: true, force: true });
+      if (project.mockServer?.scenarioText) {
+        const ext = project.mockServer.format === "yaml" ? "yaml" : "json";
+        await writeTextInside(
+          directoryPath,
+          path.join("mocks", `scenarios.${ext}`),
+          String(project.mockServer.scenarioText),
+        );
+      }
+    }
+  } finally {
+    await fs.rm(lockPath, { force: true }).catch(() => undefined);
+  }
+}
+
+/**
+ * Replaces a directory by preparing the complete next contents in a sibling temp
+ * directory first, then swapping it into place. Watchers may still receive rename
+ * events, but they never need to observe a half-written scenarios directory.
+ */
+async function replaceDirectoryAtomically(targetDir, writeTempDirectory) {
+  const parentDir = path.dirname(targetDir);
+  const baseName = path.basename(targetDir);
+  const suffix = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const tmpDir = path.join(parentDir, `.${baseName}.tmp-${suffix}`);
+  const backupDir = path.join(parentDir, `.${baseName}.bak-${suffix}`);
+
+  await fs.rm(tmpDir, { recursive: true, force: true });
+  await fs.rm(backupDir, { recursive: true, force: true });
+  await fs.mkdir(tmpDir, { recursive: true });
+
+  let movedExisting = false;
+  try {
+    await writeTempDirectory(tmpDir);
+    await fs.rename(targetDir, backupDir).then(
+      () => {
+        movedExisting = true;
+      },
+      (error) => {
+        if (error?.code !== "ENOENT") throw error;
+      },
+    );
+    await fs.rename(tmpDir, targetDir);
+    await fs.rm(backupDir, { recursive: true, force: true });
+  } catch (error) {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+    if (movedExisting) {
+      await fs.rename(backupDir, targetDir).catch(() => undefined);
+    } else {
+      await fs.rm(backupDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Writes a text file and creates its parent folder.
+ */
+async function writeTextFile(filePath, text) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, text, "utf8");
 }
 
 /**

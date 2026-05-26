@@ -1111,6 +1111,8 @@ export default function PlaygroundPage() {
     pendingBundle: null,
     pendingPath: "",
   });
+  const mockRuntimeUpdateSeqRef = useRef(0);
+  const mockRuntimeAppliedSeqRef = useRef(0);
   const protoInputRef = useRef<HTMLInputElement | null>(null);
   const protoFolderInputRef = useRef<HTMLInputElement | null>(null);
   const projectInputRef = useRef<HTMLInputElement | null>(null);
@@ -4953,6 +4955,7 @@ export default function PlaygroundPage() {
       loaded.methods,
       mockServer.selectedScenarioIds,
     );
+    const uiRuntimeRevision = (mockRuntimeUpdateSeqRef.current += 1);
     const result = await window.electronMock.update({
       port: normalizeMockPort(mockServer.port, defaultMockPort),
       bindHost: normalizeMockBindHost(mockServer.bindHost),
@@ -4963,7 +4966,10 @@ export default function PlaygroundPage() {
       activeScenarioIds,
       enabledMethods: mockServer.enabledMethods,
       workspaceDirectory: workspaceFolderPath || undefined,
+      uiRuntimeRevision,
     });
+    if (uiRuntimeRevision < mockRuntimeAppliedSeqRef.current) return;
+    mockRuntimeAppliedSeqRef.current = uiRuntimeRevision;
     if (!result.ok) {
       setMockServerStatus((current) =>
         current.running ? { ...current, message: result.error ?? "Live reload failed." } : current,

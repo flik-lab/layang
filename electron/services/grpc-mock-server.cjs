@@ -8,10 +8,18 @@ const grpc = require("@grpc/grpc-js");
 const protoLoader = require("@grpc/proto-loader");
 const { readJsonIfExists, walkDirectory, writeProtoWorkspace } = require("../utils/file-utils.cjs");
 const { safeRelativePath } = require("../utils/path-utils.cjs");
+const {
+  isStaleUiRuntimeUpdate,
+  markUiRuntimeUpdate,
+  shouldIgnoreFileRuntimeUpdate,
+} = require("../../lib/grpc-mock-runtime-guard.cjs");
 
 let activeMockServer = null;
 
 const legacyGeneratedMockStreamIntervalMs = 500;
+const uiRuntimeFileReloadQuietPeriodMs = 3000;
+const fileRuntimeReloadDebounceMs = 800;
+const mockWorkspaceWriteLockFileName = ".layang-mock-write-lock.json";
 
 function getReachableMockTargets(port, bindHost) {
   const normalizedPort = normalizeMockServerPort(port);
@@ -207,6 +215,7 @@ async function startMockServer(payload) {
     hasUiStreamDefaultsOverride: false,
     hasUiRuntimeOverride: false,
     lastUiRuntimeUpdateAt: 0,
+    lastUiRuntimeRevision: 0,
   };
   await startMockScenarioWatcher(workspaceDirectory, activeMockServer);
 
@@ -406,38 +415,57 @@ async function updateActiveMockServer(payload, source) {
     };
   }
 
-  if (source === "ui") {
-    active.hasUiStreamDefaultsOverride = true;
-    active.hasUiRuntimeOverride = true;
-    active.lastUiRuntimeUpdateAt = Date.now();
+  if (source === "ui" && isStaleUiRuntimeUpdate(active, payload)) {
+    return createMockServerStatusPayload(active, {
+      scenarioCount: runtime.scenarioIndex.length,
+      activeScenarioIds: runtime.activeScenarioIds,
+      enabledMethods: runtime.enabledMethods,
+      methodCount: active.methodCount,
+      configVersion: runtime.configVersion,
+      updatedAt: runtime.updatedAt,
+      source: runtime.source,
+      ignoredStaleUpdate: true,
+      message: "Ignored stale mock runtime update.",
+    });
   }
-  const fileRuntimeMtimeMs = Number(payload.workspaceMtimeMs || payload.workspace_mtime_ms || 0);
-  const isStaleFileRuntimeUpdate =
-    source === "file" &&
-    active.hasUiRuntimeOverride &&
-    active.lastUiRuntimeUpdateAt > 0 &&
-    (fileRuntimeMtimeMs <= 0 || fileRuntimeMtimeMs < active.lastUiRuntimeUpdateAt);
+  if (source === "ui") markUiRuntimeUpdate(active, payload);
+
+  const fileUpdateGuard = shouldIgnoreFileRuntimeUpdate(
+    active,
+    runtime,
+    payload,
+    source,
+    Date.now(),
+    uiRuntimeFileReloadQuietPeriodMs,
+  );
+  if (fileUpdateGuard.ignore) {
+    return createMockServerStatusPayload(active, {
+      scenarioCount: runtime.scenarioIndex.length,
+      activeScenarioIds: runtime.activeScenarioIds,
+      enabledMethods: runtime.enabledMethods,
+      methodCount: active.methodCount,
+      configVersion: runtime.configVersion,
+      updatedAt: runtime.updatedAt,
+      source: runtime.source,
+      ignoredFileUpdate: true,
+      message: fileUpdateGuard.reason === "partial-workspace-write"
+        ? "Ignored incomplete mock scenario file reload while workspace save is still writing."
+        : "Ignored file mock reload because the running editor state is newer.",
+    });
+  }
   const nextStreamDefaults =
-    isStaleFileRuntimeUpdate || (source === "file" && active.hasUiStreamDefaultsOverride)
+    source === "file" && active.hasUiStreamDefaultsOverride
       ? runtime.streamDefaults
       : payload.streamDefaults || runtime.streamDefaults;
-  const nextScenarios = isStaleFileRuntimeUpdate
-    ? runtime.scenarioIndex
-    : Array.isArray(payload.scenarios)
-      ? payload.scenarios
-      : runtime.scenarioIndex;
-  const nextActiveScenarioIds = isStaleFileRuntimeUpdate
-    ? runtime.activeScenarioIds
-    : payload.activeScenarioIds || payload.selectedScenarioIds || runtime.activeScenarioIds;
-  const nextEnabledMethods = isStaleFileRuntimeUpdate
-    ? runtime.enabledMethods
-    : payload.enabledMethods || runtime.enabledMethods;
+  const nextScenarios = Array.isArray(payload.scenarios) ? payload.scenarios : runtime.scenarioIndex;
+  const nextActiveScenarioIds = payload.activeScenarioIds || payload.selectedScenarioIds || runtime.activeScenarioIds;
+  const nextEnabledMethods = payload.enabledMethods || runtime.enabledMethods;
   const next = createMockRuntimeState(
     nextScenarios,
     nextStreamDefaults,
     nextActiveScenarioIds,
     nextEnabledMethods,
-    isStaleFileRuntimeUpdate ? "ui" : source || "update",
+    source || "update",
   );
   runtime.scenarioIndex = next.scenarioIndex;
   runtime.streamDefaults = next.streamDefaults;
@@ -471,6 +499,19 @@ function notifyRuntimeStreamReschedulers(runtime) {
 }
 
 /**
+ * True while the workspace save code is rewriting gRPC mock files.
+ */
+async function isMockWorkspaceWriteLocked(workspaceDirectory) {
+  if (!workspaceDirectory) return false;
+  try {
+    const stat = await fs.stat(path.join(workspaceDirectory, "mocks", mockWorkspaceWriteLockFileName));
+    return stat.isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Watches saved external mock per-method files and hot-reloads them into the active runtime.
  */
 async function startMockScenarioWatcher(workspaceDirectory, serverState) {
@@ -483,16 +524,29 @@ async function startMockScenarioWatcher(workspaceDirectory, serverState) {
     return;
   }
 
+  const scheduleReload = (delayMs = fileRuntimeReloadDebounceMs) => {
+    if (serverState.watcherDebounce) clearTimeout(serverState.watcherDebounce);
+    serverState.watcherDebounce = setTimeout(() => void reload(), delayMs);
+  };
+
   const reload = async () => {
     if (activeMockServer !== serverState) return;
     try {
+      if (await isMockWorkspaceWriteLocked(workspaceDirectory)) {
+        scheduleReload(fileRuntimeReloadDebounceMs);
+        return;
+      }
       const loaded = await loadRuntimeScenariosFromWorkspace(
         workspaceDirectory,
         serverState.methods || [],
         serverState.port,
       );
       if (!loaded) return;
-      updateActiveMockServer(loaded, "file");
+      if (await isMockWorkspaceWriteLocked(workspaceDirectory)) {
+        scheduleReload(fileRuntimeReloadDebounceMs);
+        return;
+      }
+      await updateActiveMockServer(loaded, "file");
     } catch (error) {
       console.warn("[Layang][Mock] scenario file hot reload skipped:", error?.message ? error.message : error);
     }
@@ -500,14 +554,13 @@ async function startMockScenarioWatcher(workspaceDirectory, serverState) {
 
   try {
     serverState.watcher = fsSync.watch(scenariosDir, { persistent: false }, () => {
-      if (serverState.watcherDebounce) clearTimeout(serverState.watcherDebounce);
-      serverState.watcherDebounce = setTimeout(() => void reload(), 250);
+      scheduleReload();
     });
     const mocksDir = path.join(workspaceDirectory, "mocks");
     serverState.configWatcher = fsSync.watch(mocksDir, { persistent: false }, (_event, fileName) => {
-      if (String(fileName || "").toLowerCase() !== "mock-server.json") return;
-      if (serverState.watcherDebounce) clearTimeout(serverState.watcherDebounce);
-      serverState.watcherDebounce = setTimeout(() => void reload(), 250);
+      const normalizedFileName = String(fileName || "").toLowerCase();
+      if (normalizedFileName !== "mock-server.json" && normalizedFileName !== mockWorkspaceWriteLockFileName) return;
+      scheduleReload();
     });
   } catch (error) {
     console.warn("[Layang][Mock] scenario watcher disabled:", error?.message ? error.message : error);
@@ -683,9 +736,10 @@ function createMockHandler(method, runtime, timers, activeCalls) {
  */
 function handleMockUnary(call, callback, method, runtime, timers) {
   const request = call?.request ? call.request : {};
+  const requestContext = createMockRequestContext(call);
   const scenario = findMatchingMockScenario(
     method,
-    request,
+    requestContext,
     runtime.scenarioIndex,
     runtime.activeScenarioIds,
     runtime.enabledMethods,
@@ -766,9 +820,10 @@ function endMockServerStreamWithError(call, code, message, activeCalls) {
  */
 function handleMockServerStream(call, method, runtime, timers, activeCalls) {
   const request = call?.request ? call.request : {};
+  const requestContext = createMockRequestContext(call);
   const initialScenario = findMatchingMockScenario(
     method,
-    request,
+    requestContext,
     runtime.scenarioIndex,
     runtime.activeScenarioIds,
     runtime.enabledMethods,
@@ -826,7 +881,7 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls) {
   };
 
   const getLiveSnapshot = () => {
-    const scenario = getLiveStreamScenario(method, request, currentScenarioId, runtime);
+    const scenario = getLiveStreamScenario(method, requestContext, currentScenarioId, runtime);
     if (!scenario) return undefined;
     const responses = getRuntimeStreamResponses(scenario);
     const timing = getRuntimeStreamTiming(scenario, runtime);
@@ -1256,10 +1311,23 @@ function normalizeMockRuntimeScenario(value, index) {
  * Normalizes runtime matcher blocks.
  */
 function normalizeRuntimeMatcher(value) {
-  if (!value || typeof value !== "object") return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   return {
+    any: Object.hasOwn(value, "any") ? Boolean(value.any) : undefined,
     equals: Object.hasOwn(value, "equals") ? value.equals : undefined,
+    equalsUnordered: Object.hasOwn(value, "equalsUnordered")
+      ? value.equalsUnordered
+      : Object.hasOwn(value, "equals_unordered")
+        ? value.equals_unordered
+        : undefined,
     contains: Object.hasOwn(value, "contains") ? value.contains : undefined,
+    matches: Object.hasOwn(value, "matches")
+      ? value.matches
+      : Object.hasOwn(value, "regex")
+        ? value.regex
+        : undefined,
+    glob: Object.hasOwn(value, "glob") ? value.glob : undefined,
+    headers: Object.hasOwn(value, "headers") ? normalizeRuntimeMatcher(value.headers) : undefined,
     or: Array.isArray(value.or) ? value.or.map(normalizeRuntimeMatcher).filter(Boolean) : undefined,
   };
 }
@@ -1319,12 +1387,18 @@ function isUsableMockStreamOutput(output) {
 }
 
 /**
- * Returns true when a scenario has at least one usable input matcher.
+ * Returns true when a scenario has at least one usable input matcher. Missing
+ * input intentionally means match-any, matching GripMock's fallback-stub style.
  */
 function hasValidRuntimeMatcher(matcher) {
-  if (!matcher || typeof matcher !== "object") return false;
+  if (!matcher || typeof matcher !== "object" || Array.isArray(matcher)) return true;
+  if (matcher.any === true) return true;
   if (Object.hasOwn(matcher, "equals") && matcher.equals !== undefined) return true;
+  if (Object.hasOwn(matcher, "equalsUnordered") && matcher.equalsUnordered !== undefined) return true;
   if (Object.hasOwn(matcher, "contains") && isUsableContainsMatcherValue(matcher.contains)) return true;
+  if (Object.hasOwn(matcher, "matches") && isUsableContainsMatcherValue(matcher.matches)) return true;
+  if (Object.hasOwn(matcher, "glob") && isUsableContainsMatcherValue(matcher.glob)) return true;
+  if (Object.hasOwn(matcher, "headers") && hasValidRuntimeMatcher(matcher.headers)) return true;
   return Array.isArray(matcher.or) && matcher.or.some(hasValidRuntimeMatcher);
 }
 
@@ -1336,20 +1410,73 @@ function isUsableContainsMatcherValue(value) {
   return true;
 }
 
+function createMockRequestContext(call) {
+  return {
+    data: call?.request ? call.request : {},
+    headers: grpcMetadataToObject(call?.metadata),
+  };
+}
+
+function grpcMetadataToObject(metadata) {
+  const output = {};
+  if (!metadata || typeof metadata.getMap !== "function") return output;
+  try {
+    const map = metadata.getMap() || {};
+    for (const [key, value] of Object.entries(map)) {
+      output[String(key).toLowerCase()] = Buffer.isBuffer(value) ? value.toString("base64") : value;
+    }
+  } catch {
+    return output;
+  }
+  return output;
+}
+
+function normalizeRequestContext(requestOrContext) {
+  if (
+    requestOrContext &&
+    typeof requestOrContext === "object" &&
+    !Array.isArray(requestOrContext) &&
+    Object.hasOwn(requestOrContext, "data") &&
+    Object.hasOwn(requestOrContext, "headers")
+  ) {
+    return {
+      data: requestOrContext.data === undefined ? {} : requestOrContext.data,
+      headers: requestOrContext.headers && typeof requestOrContext.headers === "object" ? requestOrContext.headers : {},
+    };
+  }
+  return { data: requestOrContext === undefined ? {} : requestOrContext, headers: {} };
+}
+
 /**
- * Evaluates equals/contains/or request matchers.
+ * Evaluates equals/equals_unordered/contains/matches/glob/or/header request matchers.
  */
-function mockMatcherMatches(matcher, request) {
+function mockMatcherMatches(rawMatcher, requestOrContext) {
+  const matcher = normalizeRuntimeMatcher(rawMatcher);
+  if (!matcher) return true;
   if (!hasValidRuntimeMatcher(matcher)) return false;
+  const context = normalizeRequestContext(requestOrContext);
+  if (matcher.any === true) return true;
   if (Array.isArray(matcher.or) && matcher.or.length) {
-    return matcher.or.some((item) => mockMatcherMatches(item, request));
+    return matcher.or.some((item) => mockMatcherMatches(item, context));
   }
   let matched = true;
   if (Object.hasOwn(matcher, "equals") && matcher.equals !== undefined) {
-    matched = matched && stableJson(request) === stableJson(matcher.equals);
+    matched = matched && stableJson(context.data) === stableJson(matcher.equals);
+  }
+  if (Object.hasOwn(matcher, "equalsUnordered") && matcher.equalsUnordered !== undefined) {
+    matched = matched && jsonEqualsUnordered(context.data, matcher.equalsUnordered);
   }
   if (Object.hasOwn(matcher, "contains") && matcher.contains !== undefined) {
-    matched = matched && jsonContains(request, matcher.contains);
+    matched = matched && jsonContains(context.data, matcher.contains);
+  }
+  if (Object.hasOwn(matcher, "matches") && matcher.matches !== undefined) {
+    matched = matched && jsonMatches(context.data, matcher.matches);
+  }
+  if (Object.hasOwn(matcher, "glob") && matcher.glob !== undefined) {
+    matched = matched && jsonGlobMatches(context.data, matcher.glob);
+  }
+  if (Object.hasOwn(matcher, "headers") && matcher.headers !== undefined) {
+    matched = matched && mockMatcherMatches(matcher.headers, context.headers);
   }
   return matched;
 }
@@ -1370,6 +1497,70 @@ function jsonContains(actual, expected) {
   if (!actual || typeof actual !== "object" || Array.isArray(actual)) return false;
   return Object.entries(expected).every(([key, value]) => jsonContains(actual[key], value));
 }
+
+function jsonEqualsUnordered(actual, expected) {
+  if (Array.isArray(actual) || Array.isArray(expected)) {
+    if (!Array.isArray(actual) || !Array.isArray(expected) || actual.length !== expected.length) return false;
+    const unmatched = actual.map((item) => ({ item, used: false }));
+    return expected.every((expectedItem) => {
+      const index = unmatched.findIndex((entry) => !entry.used && jsonEqualsUnordered(entry.item, expectedItem));
+      if (index < 0) return false;
+      unmatched[index].used = true;
+      return true;
+    });
+  }
+  if (actual && typeof actual === "object" || expected && typeof expected === "object") {
+    if (!actual || !expected || typeof actual !== "object" || typeof expected !== "object" || Array.isArray(actual) || Array.isArray(expected)) return false;
+    const actualKeys = Object.keys(actual).sort();
+    const expectedKeys = Object.keys(expected).sort();
+    if (stableJson(actualKeys) !== stableJson(expectedKeys)) return false;
+    return expectedKeys.every((key) => jsonEqualsUnordered(actual[key], expected[key]));
+  }
+  return Object.is(actual, expected);
+}
+
+function jsonMatches(actual, expected) {
+  if (!isUsableContainsMatcherValue(expected)) return false;
+  if (expected === null || typeof expected !== "object") return matchesPattern(actual, expected);
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual)) return false;
+    return expected.every((expectedItem, index) => jsonMatches(actual[index], expectedItem));
+  }
+  if (!actual || typeof actual !== "object" || Array.isArray(actual)) return false;
+  return Object.entries(expected).every(([key, value]) => jsonMatches(actual[key], value));
+}
+
+function jsonGlobMatches(actual, expected) {
+  if (!isUsableContainsMatcherValue(expected)) return false;
+  if (expected === null || typeof expected !== "object") return globMatches(actual, expected);
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual)) return false;
+    return expected.every((expectedItem, index) => jsonGlobMatches(actual[index], expectedItem));
+  }
+  if (!actual || typeof actual !== "object" || Array.isArray(actual)) return false;
+  return Object.entries(expected).every(([key, value]) => jsonGlobMatches(actual[key], value));
+}
+
+function matchesPattern(actual, pattern) {
+  try {
+    return new RegExp(String(pattern)).test(String(actual ?? ""));
+  } catch {
+    return false;
+  }
+}
+
+function globMatches(actual, pattern) {
+  const escaped = String(pattern)
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*")
+    .replace(/\?/g, ".");
+  try {
+    return new RegExp(`^${escaped}$`).test(String(actual ?? ""));
+  } catch {
+    return false;
+  }
+}
+
 
 /**
  * Parses the small YAML subset generated by the app's scenario editor.
