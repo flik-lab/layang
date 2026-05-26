@@ -86,6 +86,7 @@ export const ResponseToolbar = memo(
 
 const responseWorkbenchTabItems: WorkbenchTabItem<ResponseTab>[] = [
   { value: "messages", label: "Messages" },
+  { value: "latest", label: "Latest JSON" },
   { value: "raw", label: "Raw" },
   { value: "history", label: "History" },
   { value: "report", label: "Report" },

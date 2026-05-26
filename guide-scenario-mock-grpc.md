@@ -80,7 +80,7 @@ Recommended fields:
 
 ## Input Matching
 
-Layang. A scenario can use one or more matcher blocks:
+A scenario can use one or more matcher blocks:
 
 - `equals`
 - `equals_unordered` / `equalsUnordered`

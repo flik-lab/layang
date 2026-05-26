@@ -4,7 +4,7 @@ import type { GrpcResult, MetadataPair, ProtoSourceFile, RpcMethodInfo } from "@
 export type TransportMode = "grpc-web" | "native-grpc" | "websocket" | "rest";
 export type EnvironmentKey = string;
 export type RequestTab = "body" | "metadata" | "schema" | "docs" | "benchmark" | "examples" | "mock" | "history";
-export type ResponseTab = "messages" | "trailers" | "headers" | "raw" | "history" | "report";
+export type ResponseTab = "messages" | "latest" | "trailers" | "headers" | "raw" | "history" | "report";
 export type ApiRequestKind = "rest" | "grpc" | "websocket";
 export type SideSection = "registry" | "examples" | "history" | "docs" | "mocks" | "ws-mocks" | "rest-mocks";
 

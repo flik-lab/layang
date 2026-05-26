@@ -478,7 +478,7 @@ export function dedupeRequestSessions(sessions: RequestSession[]): RequestSessio
  * Maps hidden/deprecated response tabs to visible tabs.
  */
 export function normalizeVisibleResponseTab(tab: ResponseTab | undefined): ResponseTab {
-  return tab === "raw" || tab === "history" || tab === "report" ? tab : "messages";
+  return tab === "latest" || tab === "raw" || tab === "history" || tab === "report" ? tab : "messages";
 }
 
 /**

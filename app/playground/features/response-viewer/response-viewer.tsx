@@ -316,6 +316,24 @@ export function HistoryTable({
   );
 }
 
+
+/** Renders only the newest response message payload as formatted JSON. */
+export function LatestResponseJsonViewer({
+  value,
+  empty = "Run a request to see the latest response payload.",
+  filterQuery = "",
+}: {
+  value: unknown;
+  empty?: string;
+  filterQuery?: string;
+}) {
+  if (value === undefined) {
+    return <EmptyState title="No latest response" body={empty} />;
+  }
+
+  return <JsonBlock value={value} highlightQuery={filterQuery} />;
+}
+
 /** Renders an object as formatted JSON with optional text highlighting. */
 export function JsonBlock({
   value,

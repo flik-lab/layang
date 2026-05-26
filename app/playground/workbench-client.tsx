@@ -190,6 +190,7 @@ import {
 import {
   HistoryTable as FeatureHistoryTable,
   JsonBlock as FeatureJsonBlock,
+  LatestResponseJsonViewer as FeatureLatestResponseJsonViewer,
   MessageTable as FeatureMessageTable,
 } from "./features/response-viewer/response-viewer";
 import { ResponseToolbar, ResponseWorkbenchTabs } from "./features/response-viewer/response-toolbar";
@@ -2129,6 +2130,17 @@ export default function PlaygroundPage() {
           : draftEffectiveBaseUrl;
 
   const messageEvents = events.filter((event) => event.kind === "message");
+  const latestResponsePayload = useMemo(() => {
+    const resultMessages = lastResult?.messages ?? [];
+    if (resultMessages.length > 0) return resultMessages[resultMessages.length - 1];
+
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index];
+      if (event.kind === "message") return event.payload;
+    }
+
+    return undefined;
+  }, [events, lastResult]);
   const reportPayload = useMemo(
     () => ({
       exportedAt: hydrated ? new Date().toISOString() : "",
@@ -7336,6 +7348,13 @@ export default function PlaygroundPage() {
                         empty="Run a request to see messages."
                         events={messageEvents}
                         filterQuery={deferredResponseFilter}
+                      />
+                    )}
+                    {responseTab === "latest" && (
+                      <FeatureLatestResponseJsonViewer
+                        value={latestResponsePayload}
+                        filterQuery={deferredResponseFilter}
+                        empty="Run a request or receive a stream message to see only the newest response payload."
                       />
                     )}
                     {responseTab === "messages" && showMessageTopButton && (
