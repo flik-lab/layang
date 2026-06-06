@@ -8,20 +8,17 @@ import {
   Box,
   Button,
   Chip,
-  Paper,
   Stack,
-  Table,
   TableBody,
   TableCell,
-  TableContainer,
-  TableHead,
   TableRow,
   TextField,
   Typography,
 } from "@/components/shadcn/compat";
 import type { RpcMethodInfo } from "@/lib/types";
 import { EmptyState } from "../../shared/components/empty-state";
-import { formatTimestampShort, truncateLabel } from "../../shared/formatters";
+import { ResizableTable, type ResizableTableColumn } from "../../shared/components/resizable-table";
+import { formatTimestampReadable, formatTimestampShort, truncateLabel } from "../../shared/formatters";
 import { percentileFromSorted } from "../../shared/number-utils";
 import type { BenchmarkResult } from "../../shared/workbench-types";
 
@@ -48,6 +45,24 @@ type BenchmarkStats = {
   p95: number;
   errorRate: number;
 };
+
+const unaryBenchmarkColumns: ResizableTableColumn[] = [
+  { id: "no", label: "No", width: 44, minWidth: 36, maxWidth: 80, sx: { textAlign: "right" } },
+  { id: "status", label: "Status", width: 120, minWidth: 96, maxWidth: 260 },
+  { id: "duration", label: "Duration", width: 112, minWidth: 90, maxWidth: 180 },
+  { id: "messages", label: "Messages", width: 92, minWidth: 76, maxWidth: 160, sx: { textAlign: "right" } },
+  { id: "time", label: "Time", width: 136, minWidth: 112, maxWidth: 260 },
+];
+
+const streamingBenchmarkColumns: ResizableTableColumn[] = [
+  { id: "no", label: "No", width: 44, minWidth: 36, maxWidth: 80, sx: { textAlign: "right" } },
+  { id: "status", label: "Status", width: 120, minWidth: 96, maxWidth: 260 },
+  { id: "latency", label: "Latency avg", width: 112, minWidth: 96, maxWidth: 200 },
+  { id: "throughput", label: "Throughput", width: 120, minWidth: 100, maxWidth: 220 },
+  { id: "messages", label: "Messages", width: 92, minWidth: 76, maxWidth: 160, sx: { textAlign: "right" } },
+  { id: "periodDuration", label: "Period duration", width: 132, minWidth: 112, maxWidth: 220 },
+  { id: "time", label: "Time", width: 136, minWidth: 112, maxWidth: 260 },
+];
 
 /**
  * Calculates benchmark latency distribution stats from successful runs and error rate from all runs.
@@ -191,61 +206,43 @@ export function BenchmarkPanel({
           </>
         )}
       </Stack>
-      <TableContainer component={Paper} variant="outlined">
-        <Table size="small">
-          <TableHead>
-            {streaming ? (
-              <TableRow>
-                <TableCell>Period</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell>Latency avg</TableCell>
-                <TableCell>Throughput</TableCell>
-                <TableCell>Messages</TableCell>
-                <TableCell>Period duration</TableCell>
-                <TableCell>Time</TableCell>
-              </TableRow>
-            ) : (
-              <TableRow>
-                <TableCell>#</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell>Duration</TableCell>
-                <TableCell>Messages</TableCell>
-                <TableCell>Time</TableCell>
-              </TableRow>
-            )}
-          </TableHead>
-          <TableBody>
-            {results.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={streaming ? 7 : 5}>
-                  {streaming
-                    ? "Run a streaming benchmark to collect per-period latency and throughput."
-                    : "Run a benchmark to collect endpoint latency samples."}
+      <ResizableTable columns={streaming ? streamingBenchmarkColumns : unaryBenchmarkColumns}>
+        <TableBody>
+          {results.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={streaming ? 7 : 5}>
+                {streaming
+                  ? "Run a streaming benchmark to collect per-period latency and throughput."
+                  : "Run a benchmark to collect endpoint latency samples."}
+              </TableCell>
+            </TableRow>
+          ) : (
+            results.map((result) => (
+              <TableRow key={result.id}>
+                <TableCell sx={{ textAlign: "right", color: "text.secondary" }}>{result.index}</TableCell>
+                <TableCell>
+                  <Chip
+                    size="small"
+                    color={result.ok ? "success" : "error"}
+                    label={truncateLabel(result.status, 28)}
+                    title={result.status}
+                  />
+                </TableCell>
+                <TableCell>{result.durationMs.toFixed(1)} ms</TableCell>
+                {streaming && <TableCell>{(result.messagesPerSecond ?? 0).toFixed(1)} msg/s</TableCell>}
+                <TableCell sx={{ textAlign: "right" }}>{result.messageCount}</TableCell>
+                {streaming && <TableCell>{((result.periodDurationMs ?? 0) / 1000).toFixed(1)} s</TableCell>}
+                <TableCell
+                  title={formatTimestampShort(result.timestamp)}
+                  sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                >
+                  {formatTimestampReadable(result.timestamp)}
                 </TableCell>
               </TableRow>
-            ) : (
-              results.map((result) => (
-                <TableRow key={result.id}>
-                  <TableCell>{streaming ? `#${result.index}` : result.index}</TableCell>
-                  <TableCell>
-                    <Chip
-                      size="small"
-                      color={result.ok ? "success" : "error"}
-                      label={truncateLabel(result.status, 28)}
-                      title={result.status}
-                    />
-                  </TableCell>
-                  <TableCell>{result.durationMs.toFixed(1)} ms</TableCell>
-                  {streaming && <TableCell>{(result.messagesPerSecond ?? 0).toFixed(1)} msg/s</TableCell>}
-                  <TableCell>{result.messageCount}</TableCell>
-                  {streaming && <TableCell>{((result.periodDurationMs ?? 0) / 1000).toFixed(1)} s</TableCell>}
-                  <TableCell>{formatTimestampShort(result.timestamp)}</TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </TableContainer>
+            ))
+          )}
+        </TableBody>
+      </ResizableTable>
     </Stack>
   );
 }

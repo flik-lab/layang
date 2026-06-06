@@ -1,6 +1,27 @@
 import type { GrpcEvent, GrpcResult, MetadataPair, ProtoSourceFile, RpcMethodInfo } from "@/lib/types";
 import type { WebSocketMockLog } from "@/app/playground/shared/workbench-types";
 
+export type LayangLogLevel = "debug" | "info" | "warn" | "error";
+export interface LayangLoggerSettings {
+  level: LayangLogLevel;
+  mirrorToConsole: boolean;
+  maxBytes: number;
+  maxTotalBytes: number;
+  retentionDays: number;
+}
+export interface LayangLoggerInfo {
+  ok?: boolean;
+  initialized: boolean;
+  logDir: string;
+  logFilePath: string;
+  settingsFilePath: string;
+  isPackaged: boolean;
+  totalBytes: number;
+  fileCount: number;
+  settings: LayangLoggerSettings;
+  error?: string;
+}
+
 declare global {
   interface Window {
     electronGrpc?: {
@@ -18,6 +39,19 @@ declare global {
       }) => Promise<GrpcResult>;
       cancelActive?: (runId?: string) => Promise<{ cancelled: boolean }>;
     };
+    electronLogger?: {
+      isAvailable: boolean;
+      log?: (payload: {
+        level?: LayangLogLevel;
+        scope?: string;
+        message?: string;
+        data?: unknown[] | unknown;
+      }) => Promise<{ ok: boolean; error?: string }>;
+      getInfo?: () => Promise<LayangLoggerInfo>;
+      setSettings?: (settings: Partial<LayangLoggerSettings>) => Promise<LayangLoggerInfo>;
+      openFolder?: () => Promise<{ ok: boolean; path?: string; error?: string }>;
+      clear?: () => Promise<LayangLoggerInfo>;
+    };
     electronWorkspace?: {
       isAvailable: boolean;
       saveFolder?: (
@@ -27,6 +61,7 @@ declare global {
       openFolder?: (
         directoryPath?: string,
       ) => Promise<{ ok: boolean; cancelled?: boolean; directoryPath?: string; bundle?: unknown; error?: string }>;
+      readMockServer?: (directoryPath: string) => Promise<{ ok: boolean; mockServer?: unknown; error?: string }>;
       getDefaultFolder?: () => Promise<{ ok: boolean; directoryPath?: string; error?: string }>;
       ensureDefaultFolder?: (
         bundle: unknown,
@@ -66,6 +101,8 @@ declare global {
         activeScenarioIds?: Record<string, string>;
         enabledMethods?: Record<string, boolean>;
         workspaceDirectory?: string;
+        uiRuntimeRevision?: number;
+        mockServerUpdatedAt?: string;
       }) => Promise<{
         ok: boolean;
         port?: number;
@@ -93,6 +130,7 @@ declare global {
         enabledMethods?: Record<string, boolean>;
         workspaceDirectory?: string;
         uiRuntimeRevision?: number;
+        mockServerUpdatedAt?: string;
       }) => Promise<{
         ok: boolean;
         running?: boolean;

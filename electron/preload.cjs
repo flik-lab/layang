@@ -35,11 +35,10 @@ contextBridge.exposeInMainWorld("electronGrpc", {
   isAvailable: true,
 });
 
-
-
 contextBridge.exposeInMainWorld("electronWorkspace", {
   saveFolder: (bundle, directoryPath) => ipcRenderer.invoke("workspace:save-folder", { bundle, directoryPath }),
   openFolder: (directoryPath) => ipcRenderer.invoke("workspace:open-folder", { directoryPath }),
+  readMockServer: (directoryPath) => ipcRenderer.invoke("workspace:read-mock-server", { directoryPath }),
   getDefaultFolder: () => ipcRenderer.invoke("workspace:get-default-folder"),
   ensureDefaultFolder: (bundle) => ipcRenderer.invoke("workspace:ensure-default-folder", { bundle }),
   ensureFolder: (bundle, directoryPath) => ipcRenderer.invoke("workspace:ensure-folder", { bundle, directoryPath }),
@@ -81,5 +80,14 @@ contextBridge.exposeInMainWorld("electronWindow", {
   maximizeToggle: () => ipcRenderer.invoke("window:maximize-toggle"),
   close: () => ipcRenderer.invoke("window:close"),
   toggleAlwaysOnTop: () => ipcRenderer.invoke("window:toggle-always-on-top"),
+  isAvailable: true,
+});
+
+contextBridge.exposeInMainWorld("electronLogger", {
+  log: (payload) => ipcRenderer.invoke("logger:log", payload),
+  getInfo: () => ipcRenderer.invoke("logger:get-info"),
+  setSettings: (settings) => ipcRenderer.invoke("logger:set-settings", settings),
+  openFolder: () => ipcRenderer.invoke("logger:open-folder"),
+  clear: () => ipcRenderer.invoke("logger:clear"),
   isAvailable: true,
 });

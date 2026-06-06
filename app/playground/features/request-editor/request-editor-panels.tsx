@@ -1,6 +1,14 @@
 "use client";
 
-import { type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent, useId, useMemo, useState } from "react";
+import {
+  type ChangeEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type SyntheticEvent as ReactSyntheticEvent,
+  useId,
+  useMemo,
+  useState,
+} from "react";
 
 import { Close, DesktopWindows, Edit } from "@/components/shadcn/icons";
 
@@ -35,6 +43,7 @@ type CodeTextFieldProps = {
   formatDisabled?: boolean;
   formatAriaLabel?: string;
   fullscreenTitle?: string;
+  fullHeight?: boolean;
 };
 
 const editorIndent = "  ";
@@ -56,6 +65,7 @@ export function CodeTextField({
   formatDisabled = false,
   formatAriaLabel = "Format code",
   fullscreenTitle,
+  fullHeight = false,
 }: CodeTextFieldProps) {
   const [activeLine, setActiveLine] = useState(0);
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
@@ -147,9 +157,10 @@ export function CodeTextField({
 
   function renderEditor({ fullscreen = false }: { fullscreen?: boolean } = {}) {
     const describedById = fullscreen ? `${helpTextId}-fullscreen` : helpTextId;
-    const editorMaxHeight = fullscreen ? undefined : maxHeight;
+    const shouldFillHeight = fullscreen || fullHeight;
+    const editorMaxHeight = shouldFillHeight ? undefined : maxHeight;
     const editorMinHeight = fullscreen ? Math.max(minHeight, 420) : minHeight;
-    const editorHeight = fullscreen ? "calc(100vh - 160px)" : maxRows ? undefined : contentHeight;
+    const editorHeight = fullscreen ? "calc(100vh - 160px)" : fullHeight ? "100%" : maxRows ? undefined : contentHeight;
     return (
       <Box
         className="code-editor-selectable code-editor"
@@ -160,6 +171,9 @@ export function CodeTextField({
           overflow: "hidden",
           bgcolor: "background.default",
           boxShadow: "inset 0 1px 0 rgba(148, 163, 184, 0.08)",
+          ...(fullHeight || fullscreen
+            ? { display: "flex", flexDirection: "column", minHeight: 0, height: "100%" }
+            : {}),
         }}
       >
         <Stack
@@ -239,8 +253,9 @@ export function CodeTextField({
             minHeight: editorMinHeight,
             maxHeight: editorMaxHeight,
             height: editorHeight,
+            flex: shouldFillHeight ? "1 1 auto" : undefined,
             overflow: "auto",
-            resize: fullscreen ? "none" : "vertical",
+            resize: shouldFillHeight ? "none" : "vertical",
             background: "var(--background)",
           }}
         >
@@ -248,7 +263,7 @@ export function CodeTextField({
             aria-hidden="true"
             className="code-editor__gutter"
             style={{
-              minHeight: fullscreen ? "100%" : contentHeight,
+              minHeight: shouldFillHeight ? "100%" : contentHeight,
               margin: 0,
               padding: `${editorPaddingYPx}px 9px ${editorPaddingYPx}px 10px`,
               borderRight: "1px solid var(--border)",
@@ -268,7 +283,7 @@ export function CodeTextField({
             style={{
               flex: "1 1 auto",
               minWidth: 0,
-              minHeight: fullscreen ? "100%" : contentHeight,
+              minHeight: shouldFillHeight ? "100%" : contentHeight,
               position: "relative",
             }}
           >
@@ -286,9 +301,9 @@ export function CodeTextField({
                 onChange(event.target.value);
                 updateActiveLine(event.target, event.target.value);
               }}
-              onClick={(event) => updateActiveLine(event.currentTarget)}
-              onKeyUp={(event) => updateActiveLine(event.currentTarget)}
-              onSelect={(event) => updateActiveLine(event.currentTarget)}
+              onClick={(event: ReactMouseEvent<HTMLTextAreaElement>) => updateActiveLine(event.currentTarget)}
+              onKeyUp={(event: ReactKeyboardEvent<HTMLTextAreaElement>) => updateActiveLine(event.currentTarget)}
+              onSelect={(event: ReactSyntheticEvent<HTMLTextAreaElement>) => updateActiveLine(event.currentTarget)}
               onKeyDown={handleKeyDown}
               aria-label={codeEditorAriaLabel}
               aria-describedby={describedById}
@@ -300,7 +315,7 @@ export function CodeTextField({
               style={{
                 width: "100%",
                 minWidth: 0,
-                minHeight: fullscreen ? "100%" : contentHeight,
+                minHeight: shouldFillHeight ? "100%" : contentHeight,
                 margin: 0,
                 padding: `${editorPaddingYPx}px 12px`,
                 border: 0,

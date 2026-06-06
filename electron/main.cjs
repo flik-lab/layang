@@ -7,15 +7,19 @@ const { registerNativeGrpcIpc } = require("./ipc/native-grpc-ipc.cjs");
 const { registerWebSocketMockIpc } = require("./ipc/ws-mock-ipc.cjs");
 const { registerRestMockIpc } = require("./ipc/rest-mock-ipc.cjs");
 const { registerWindowIpc } = require("./ipc/window-ipc.cjs");
+const { registerLoggerIpc } = require("./ipc/logger-ipc.cjs");
 const {
   normalizeActiveScenarioIds,
   normalizeEnabledMethods,
+  normalizeMockBindHost,
   normalizeMockServerPort,
   normalizeRuntimeStreamSettings,
+  parseRuntimeScenarioText,
   stopMockServer,
 } = require("./services/grpc-mock-server.cjs");
 const { stopWebSocketMockServer } = require("./services/ws-mock-server.cjs");
 const { stopRestMockServer } = require("./services/rest-mock-server.cjs");
+const { configureLogger, getLogger, registerProcessErrorHandlers } = require("./utils/logger.cjs");
 const { createWindow } = require("./window/create-window.cjs");
 const { readJsonIfExists, walkDirectory, writeTextInside } = require("./utils/file-utils.cjs");
 const { windowFromEvent } = require("./utils/ipc-utils.cjs");
@@ -23,12 +27,14 @@ const { safePathSegment, safeRelativePath } = require("./utils/path-utils.cjs");
 const WINDOWS_APP_USER_MODEL_ID = "fliklab.layang.desktop";
 const workspaceSettingsFileName = "layang-settings.json";
 const mockWorkspaceWriteLockFileName = ".layang-mock-write-lock.json";
+const mainLogger = getLogger("main");
 
 registerWindowIpc();
 registerNativeGrpcIpc();
 registerGrpcMockIpc();
 registerWebSocketMockIpc();
 registerRestMockIpc();
+registerLoggerIpc();
 
 if (process.platform === "win32") {
   app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
@@ -36,19 +42,16 @@ if (process.platform === "win32") {
 
 // Allow HTTPS endpoints with self-signed or otherwise untrusted certificates.
 // This is intended for the local/trusted desktop API workbench use case.
-app.on("certificate-error", (event, _webContents, _url, _error, _certificate, callback) => {
+app.on("certificate-error", (event, _webContents, url, error, _certificate, callback) => {
   event.preventDefault();
-  callback(true);
-});
-
-// Allow HTTPS endpoints with self-signed or otherwise untrusted certificates.
-// This is intended for the local/trusted desktop API workbench use case.
-app.on("certificate-error", (event, _webContents, _url, _error, _certificate, callback) => {
-  event.preventDefault();
+  mainLogger.warn("trusted desktop certificate override", { url, error });
   callback(true);
 });
 
 app.whenReady().then(() => {
+  configureLogger({ app, appName: "Layang" });
+  registerProcessErrorHandlers(getLogger("process"));
+  mainLogger.info("app ready", { version: app.getVersion(), isPackaged: app.isPackaged });
   createWindow();
 
   app.on("activate", () => {
@@ -61,6 +64,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  mainLogger.info("app before quit: stopping mock servers");
   void stopMockServer();
   void stopWebSocketMockServer();
   void stopRestMockServer();
@@ -71,10 +75,7 @@ ipcMain.handle("workspace:get-default-folder", async () => {
 });
 
 ipcMain.handle("workspace:ensure-default-folder", async (_event, payload) => {
-  return ensureWorkspaceFolder(
-    getConfiguredWorkspaceDirectory(),
-    payload?.bundle ? payload.bundle : {},
-  );
+  return ensureWorkspaceFolder(getConfiguredWorkspaceDirectory(), payload?.bundle ? payload.bundle : {});
 });
 
 ipcMain.handle("workspace:ensure-folder", async (_event, payload) => {
@@ -132,6 +133,17 @@ ipcMain.handle("workspace:save-folder", async (event, payload) => {
 
   await writeWorkspaceFolder(targetPath, payload?.bundle ? payload.bundle : {});
   return { ok: true, directoryPath: targetPath };
+});
+
+ipcMain.handle("workspace:read-mock-server", async (_event, payload) => {
+  const directoryPath = payload && typeof payload.directoryPath === "string" ? payload.directoryPath.trim() : "";
+  if (!directoryPath) return { ok: false, error: "Missing workspace folder path." };
+  try {
+    const mockServer = await readMockServerFromFolder(path.join(directoryPath, "mocks"));
+    return { ok: true, mockServer };
+  } catch (error) {
+    return { ok: false, error: error?.message ? String(error.message) : String(error) };
+  }
 });
 
 ipcMain.handle("workspace:open-path", async (_event, payload) => {
@@ -436,7 +448,12 @@ async function writeMockWorkspaceFilesAtomically(directoryPath, project, mockSer
   try {
     await writeJson(path.join(mocksDir, "mock-server.json"), {
       port: normalizeMockServerPort(mockServerProject.port || 50055),
+      bindHost: normalizeMockBindHost(mockServerProject.bindHost || "127.0.0.1"),
       format: mockServerProject.format === "yaml" ? "yaml" : "json",
+      updatedAt:
+        typeof mockServerProject.updatedAt === "string" && mockServerProject.updatedAt.trim()
+          ? mockServerProject.updatedAt
+          : project.updatedAt || new Date().toISOString(),
       streamDefaults: normalizeRuntimeStreamSettings(mockServerProject.streamDefaults || {}, {
         intervalMs: 1000,
         loop: false,
@@ -464,19 +481,13 @@ async function writeMockWorkspaceFilesAtomically(directoryPath, project, mockSer
     const scenariosDir = path.join(mocksDir, "scenarios");
 
     if (mockFileKeys.length) {
-      await replaceDirectoryAtomically(scenariosDir, async (tmpScenariosDir) => {
-        const manifest = {};
-        for (const key of mockFileKeys) {
-          const file = mockMethodFiles[key] || {};
-          const ext = file.format === "yaml" ? "yaml" : "json";
-          const name = `${safePathSegment(key.replace("/", "."))}.${ext}`;
-          manifest[key] = { file: name, format: ext };
-          await writeTextFile(path.join(tmpScenariosDir, name), String(file.scenarioText || ""));
-        }
-        await writeJson(path.join(tmpScenariosDir, "manifest.json"), manifest);
-      });
+      await writeScenarioFilesIncrementally(
+        scenariosDir,
+        mockMethodFiles,
+        normalizeMockServerPort(mockServerProject.port || 50055),
+      );
     } else {
-      await fs.rm(scenariosDir, { recursive: true, force: true });
+      await writeEmptyScenarioManifest(scenariosDir);
       if (project.mockServer?.scenarioText) {
         const ext = project.mockServer.format === "yaml" ? "yaml" : "json";
         await writeTextInside(
@@ -492,11 +503,90 @@ async function writeMockWorkspaceFilesAtomically(directoryPath, project, mockSer
 }
 
 /**
+ * Writes split mock scenario files incrementally.
+ *
+ * Windows frequently locks directories that are being watched by Electron, editors,
+ * antivirus, or the Next dev server. For that reason mocks/scenarios is treated like
+ * a normal workspace tree: individual scenario files are updated in place, then
+ * manifest.json is written last as the source of truth. We never rename or replace
+ * the whole scenarios directory during normal autosave.
+ */
+async function writeScenarioFilesIncrementally(scenariosDir, mockMethodFiles, fallbackPort) {
+  await fs.mkdir(scenariosDir, { recursive: true });
+
+  const manifest = { version: 1, layout: "scenario-files-v1", methods: {} };
+  const usedRelativeFiles = new Set();
+  const activeRelativeFiles = new Set(["manifest.json"]);
+
+  for (const key of Object.keys(mockMethodFiles || {})) {
+    const file = mockMethodFiles[key] || {};
+    const parsed = parseRuntimeScenarioText(
+      String(file.scenarioText || ""),
+      file.format === "yaml" ? "yaml" : "json",
+      fallbackPort,
+    );
+    const methodDir = safePathSegment(key.replace("/", ".")) || "method";
+    manifest.methods[key] = { format: "json", scenarios: {} };
+
+    for (const scenario of parsed.scenarios || []) {
+      const scenarioId = String(scenario.id || "scenario").trim() || "scenario";
+      const baseName = safePathSegment(scenarioId) || "scenario";
+      let relativeFile = `${methodDir}/${baseName}.json`;
+      let counter = 2;
+      while (usedRelativeFiles.has(relativeFile)) {
+        relativeFile = `${methodDir}/${baseName}-${counter}.json`;
+        counter += 1;
+      }
+      usedRelativeFiles.add(relativeFile);
+      activeRelativeFiles.add(relativeFile);
+      manifest.methods[key].scenarios[scenarioId] = { file: relativeFile, format: "json" };
+      await writeJson(path.join(scenariosDir, relativeFile), scenario);
+    }
+  }
+
+  await writeJson(path.join(scenariosDir, "manifest.json"), manifest);
+  await pruneScenarioFilesNotInManifest(scenariosDir, activeRelativeFiles).catch(() => undefined);
+}
+
+async function writeEmptyScenarioManifest(scenariosDir) {
+  await fs.mkdir(scenariosDir, { recursive: true });
+  await writeJson(path.join(scenariosDir, "manifest.json"), {
+    version: 1,
+    layout: "scenario-files-v1",
+    methods: {},
+  });
+  await pruneScenarioFilesNotInManifest(scenariosDir, new Set(["manifest.json"])).catch(() => undefined);
+}
+
+async function pruneScenarioFilesNotInManifest(scenariosDir, activeRelativeFiles) {
+  await walkDirectory(scenariosDir, async (filePath) => {
+    const relative = path.relative(scenariosDir, filePath).replace(/\\/g, "/");
+    if (activeRelativeFiles.has(relative)) return;
+    const ext = path.extname(filePath).toLowerCase();
+    if (ext !== ".json" && ext !== ".yaml" && ext !== ".yml") return;
+    await fs.rm(filePath, { force: true }).catch(() => undefined);
+  });
+
+  await removeEmptyDirectories(scenariosDir, scenariosDir).catch(() => undefined);
+}
+
+async function removeEmptyDirectories(rootDir, currentDir) {
+  const entries = await fs.readdir(currentDir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    await removeEmptyDirectories(rootDir, path.join(currentDir, entry.name));
+  }
+  if (currentDir === rootDir) return;
+  const remaining = await fs.readdir(currentDir).catch(() => []);
+  if (remaining.length === 0) await fs.rmdir(currentDir).catch(() => undefined);
+}
+
+/**
  * Replaces a directory by preparing the complete next contents in a sibling temp
  * directory first, then swapping it into place. Watchers may still receive rename
  * events, but they never need to observe a half-written scenarios directory.
  */
-async function replaceDirectoryAtomically(targetDir, writeTempDirectory) {
+async function _replaceDirectoryAtomically(targetDir, writeTempDirectory) {
   const parentDir = path.dirname(targetDir);
   const baseName = path.basename(targetDir);
   const suffix = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -521,6 +611,14 @@ async function replaceDirectoryAtomically(targetDir, writeTempDirectory) {
     await fs.rename(tmpDir, targetDir);
     await fs.rm(backupDir, { recursive: true, force: true });
   } catch (error) {
+    const shouldFallbackInPlace = error?.code === "EPERM" || error?.code === "EBUSY" || error?.code === "EACCES";
+    if (shouldFallbackInPlace) {
+      await replaceDirectoryInPlace(targetDir, tmpDir);
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+      await fs.rm(backupDir, { recursive: true, force: true }).catch(() => undefined);
+      return;
+    }
+
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
     if (movedExisting) {
       await fs.rename(backupDir, targetDir).catch(() => undefined);
@@ -531,10 +629,39 @@ async function replaceDirectoryAtomically(targetDir, writeTempDirectory) {
   }
 }
 
+async function replaceDirectoryInPlace(targetDir, sourceDir) {
+  await fs.mkdir(targetDir, { recursive: true });
+  await fs.cp(sourceDir, targetDir, { recursive: true, force: true });
+
+  // Best-effort cleanup only. On Windows, dev servers, editors, or file watchers can
+  // briefly lock scenario files/folders; stale files are harmless because manifest.json
+  // is the source of truth for scenario discovery.
+  await pruneDirectoryEntriesNotInSource(targetDir, sourceDir).catch(() => undefined);
+}
+
+async function pruneDirectoryEntriesNotInSource(targetDir, sourceDir) {
+  const [targetEntries, sourceEntries] = await Promise.all([
+    fs.readdir(targetDir, { withFileTypes: true }).catch(() => []),
+    fs.readdir(sourceDir, { withFileTypes: true }).catch(() => []),
+  ]);
+  const sourceNames = new Set(sourceEntries.map((entry) => entry.name));
+  for (const entry of targetEntries) {
+    const targetPath = path.join(targetDir, entry.name);
+    const sourcePath = path.join(sourceDir, entry.name);
+    if (!sourceNames.has(entry.name)) {
+      await fs.rm(targetPath, { recursive: true, force: true }).catch(() => undefined);
+      continue;
+    }
+    if (entry.isDirectory()) {
+      await pruneDirectoryEntriesNotInSource(targetPath, sourcePath).catch(() => undefined);
+    }
+  }
+}
+
 /**
  * Writes a text file and creates its parent folder.
  */
-async function writeTextFile(filePath, text) {
+async function _writeTextFile(filePath, text) {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, text, "utf8");
 }
@@ -664,9 +791,58 @@ async function readProtoFilesFromFolder(protosDir) {
  * Reads mock server scenario editor files from a workspace folder.
  * Supports the new external mock split layout under mocks/scenarios/*.json|yaml and the legacy combined file.
  */
+
+async function readScenarioGroupsFromSplitDirectory(splitDir, port) {
+  const manifestPath = path.join(splitDir, "manifest.json");
+  const manifest = await readJsonIfExists(manifestPath).catch(() => null);
+  if (manifest && typeof manifest === "object" && manifest.layout === "scenario-files-v1") {
+    return readScenarioGroupsFromManifest(splitDir, manifest, port);
+  }
+
+  const methodScenarioGroups = {};
+  await walkDirectory(splitDir, async (filePath) => {
+    const ext = path.extname(filePath).toLowerCase();
+    if (ext !== ".json" && ext !== ".yaml" && ext !== ".yml") return;
+    if (path.basename(filePath).toLowerCase() === "manifest.json") return;
+    const format = ext === ".json" ? "json" : "yaml";
+    const text = await fs.readFile(filePath, "utf8");
+    const parsed = parseRuntimeScenarioText(text, format, port);
+    for (const scenario of parsed.scenarios || []) {
+      const key = `${scenario.service}/${scenario.method}`;
+      if (!methodScenarioGroups[key]) methodScenarioGroups[key] = [];
+      methodScenarioGroups[key].push(scenario);
+    }
+  });
+  return methodScenarioGroups;
+}
+
+async function readScenarioGroupsFromManifest(splitDir, manifest, port) {
+  const methodScenarioGroups = {};
+  const methods = manifest.methods && typeof manifest.methods === "object" ? manifest.methods : {};
+  for (const [key, entry] of Object.entries(methods)) {
+    const scenarios =
+      entry && typeof entry === "object" && entry.scenarios && typeof entry.scenarios === "object"
+        ? entry.scenarios
+        : {};
+    methodScenarioGroups[key] = [];
+    for (const descriptor of Object.values(scenarios)) {
+      if (!descriptor || typeof descriptor !== "object" || !descriptor.file) continue;
+      const relativeFile = String(descriptor.file);
+      if (relativeFile.includes("..") || path.isAbsolute(relativeFile)) continue;
+      const format = descriptor.format === "yaml" || descriptor.format === "yml" ? "yaml" : "json";
+      const filePath = path.join(splitDir, relativeFile);
+      const text = await fs.readFile(filePath, "utf8");
+      const parsed = parseRuntimeScenarioText(text, format, port);
+      methodScenarioGroups[key].push(...(parsed.scenarios || []));
+    }
+  }
+  return methodScenarioGroups;
+}
+
 async function readMockServerFromFolder(mocksDir) {
   const serverConfig = (await readJsonIfExists(path.join(mocksDir, "mock-server.json")).catch(() => ({}))) || {};
   const port = normalizeMockServerPort(serverConfig.port || 50055);
+  const bindHost = normalizeMockBindHost(serverConfig.bindHost || serverConfig.bind_host || "127.0.0.1");
   const formatDefault = serverConfig.format === "yaml" ? "yaml" : "json";
   const streamDefaults = normalizeRuntimeStreamSettings(
     serverConfig.streamDefaults || serverConfig.stream_defaults || {},
@@ -681,27 +857,19 @@ async function readMockServerFromFolder(mocksDir) {
   );
   const enabledMethods = normalizeEnabledMethods(serverConfig.enabledMethods || serverConfig.enabled_methods || {});
   const splitDir = path.join(mocksDir, "scenarios");
-  const manifest = (await readJsonIfExists(path.join(splitDir, "manifest.json"))) || {};
+  const methodScenarioGroups = await readScenarioGroupsFromSplitDirectory(splitDir, port);
   const methodFiles = {};
-  await walkDirectory(splitDir, async (filePath) => {
-    const ext = path.extname(filePath).toLowerCase();
-    if (ext !== ".json" && ext !== ".yaml" && ext !== ".yml") return;
-    if (path.basename(filePath).toLowerCase() === "manifest.json") return;
-    const format = ext === ".json" ? "json" : "yaml";
-    const relative = path.relative(splitDir, filePath).replace(/\\/g, "/");
-    const manifestEntry = Object.entries(manifest).find(
-      ([, item]) => (item && item.file === relative) || (item && item.file === path.basename(filePath)),
-    );
-    const key = manifestEntry ? manifestEntry[0] : path.basename(filePath, ext).replace(/\.(?=[^.]+$)/, "/");
+  for (const [key, scenarios] of Object.entries(methodScenarioGroups)) {
     methodFiles[key] = {
-      format,
-      scenarioText: await fs.readFile(filePath, "utf8"),
+      format: "json",
+      scenarioText: JSON.stringify({ version: 1, scenarios }, null, 2),
       updatedAt: new Date().toISOString(),
     };
-  });
+  }
   if (Object.keys(methodFiles).length) {
     return {
       port,
+      bindHost,
       format: formatDefault,
       streamDefaults,
       selectedScenarioIds,
@@ -717,6 +885,7 @@ async function readMockServerFromFolder(mocksDir) {
   try {
     return {
       port,
+      bindHost,
       format: "json",
       streamDefaults,
       selectedScenarioIds,
@@ -731,6 +900,7 @@ async function readMockServerFromFolder(mocksDir) {
   try {
     return {
       port,
+      bindHost,
       format: "yaml",
       streamDefaults,
       selectedScenarioIds,

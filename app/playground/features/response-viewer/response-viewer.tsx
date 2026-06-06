@@ -8,18 +8,16 @@ import {
   IconButton,
   Paper,
   Stack,
-  Table,
   TableBody,
   TableCell,
-  TableContainer,
-  TableHead,
   TableRow,
   Tooltip,
   Typography,
 } from "@/components/shadcn/compat";
 import { ContentCopy } from "@/components/shadcn/icons";
 import { EmptyState } from "../../shared/components/empty-state";
-import { formatTimestampShort } from "../../shared/formatters";
+import { ResizableTable, type ResizableTableColumn } from "../../shared/components/resizable-table";
+import { formatTimestampReadable, formatTimestampShort } from "../../shared/formatters";
 import { deepTextIncludes, safePrettyJson } from "../../shared/json-utils";
 import type { HistoryItem, UiEvent } from "../../shared/workbench-types";
 
@@ -32,6 +30,20 @@ const oneLineMessageSx = {
   whiteSpace: "nowrap",
   fontSize: 12,
 } as const;
+
+const messageTableColumns: ResizableTableColumn[] = [
+  { id: "no", label: "No", width: 44, minWidth: 36, maxWidth: 80, sx: { textAlign: "right" } },
+  { id: "time", label: "Time", width: 136, minWidth: 112, maxWidth: 260 },
+  { id: "summary", label: "Summary", width: 560, minWidth: 260, maxWidth: 1400 },
+];
+
+const historyTableColumns: ResizableTableColumn[] = [
+  { id: "time", label: "Time", width: 136, minWidth: 112, maxWidth: 260 },
+  { id: "method", label: "Method", width: 320, minWidth: 160, maxWidth: 900 },
+  { id: "status", label: "Status", width: 120, minWidth: 90, maxWidth: 260 },
+  { id: "duration", label: "Duration", width: 110, minWidth: 90, maxWidth: 180 },
+  { id: "messages", label: "Messages", width: 92, minWidth: 76, maxWidth: 160, sx: { textAlign: "right" } },
+];
 
 /** Renders response messages as newest-first one-line rows that expand on click. */
 export function MessageTable({
@@ -46,7 +58,7 @@ export function MessageTable({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const normalizedFilterQuery = filterQuery.trim();
-  const displayEvents = useMemo(() => {
+  const displayEvents = useMemo<Array<{ event: UiEvent; messageNumber: number; timestampMs: number }>>(() => {
     const normalizedQuery = filterQuery.trim();
     return events
       .filter((event) => event.kind === "message" || event.kind === "error" || event.kind === "end")
@@ -79,103 +91,96 @@ export function MessageTable({
     );
   }
   return (
-    <TableContainer component={Paper} variant="outlined">
-      <Table size="small" sx={{ tableLayout: "fixed", width: "100%" }}>
-        <TableHead>
-          <TableRow>
-            <TableCell>No.</TableCell>
-            <TableCell>Time</TableCell>
-            <TableCell>Summary</TableCell>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {displayEvents.map(({ event, messageNumber }) => {
-            const expanded = expandedId === event.id;
-            const summary = oneLinePayload(event.payload);
-            return (
-              <Fragment key={event.id}>
-                <TableRow sx={{ cursor: "pointer" }} onClick={() => setExpandedId(expanded ? null : event.id)}>
-                  <TableCell sx={{ whiteSpace: "nowrap", width: 58 }}>#{messageNumber}</TableCell>
-                  <TableCell sx={{ whiteSpace: "nowrap", width: 168 }}>
-                    {formatTimestampShort(event.timestamp)}
-                  </TableCell>
-                  <TableCell sx={{ minWidth: 0, width: "100%" }}>
+    <ResizableTable columns={messageTableColumns}>
+      <TableBody>
+        {displayEvents.map(({ event, messageNumber }: { event: UiEvent; messageNumber: number }) => {
+          const expanded = expandedId === event.id;
+          const summary = oneLinePayload(event.payload);
+          return (
+            <Fragment key={event.id}>
+              <TableRow sx={{ cursor: "pointer" }} onClick={() => setExpandedId(expanded ? null : event.id)}>
+                <TableCell sx={{ whiteSpace: "nowrap", textAlign: "right", color: "text.secondary" }}>
+                  {messageNumber}
+                </TableCell>
+                <TableCell
+                  title={formatTimestampShort(event.timestamp)}
+                  sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                >
+                  {formatTimestampReadable(event.timestamp)}
+                </TableCell>
+                <TableCell sx={{ minWidth: 0 }}>
+                  <Box
+                    title={summary}
+                    sx={{
+                      ...oneLineMessageSx,
+                      fontFamily:
+                        'var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace)',
+                    }}
+                  >
+                    <HighlightedInlineText text={summary} query={filterQuery} />
+                  </Box>
+                </TableCell>
+              </TableRow>
+              {expanded && (
+                <TableRow key={`${event.id}-expanded`}>
+                  <TableCell colSpan={3}>
                     <Box
-                      title={summary}
                       sx={{
-                        ...oneLineMessageSx,
-                        fontFamily:
-                          'var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace)',
+                        position: "relative",
+                        maxHeight: 440,
+                        overflow: "auto",
+                        border: "1px solid",
+                        borderColor: "divider",
+                        borderRadius: 1.25,
+                        bgcolor: "var(--muted)",
+                        "& .code-viewer": {
+                          maxHeight: "none",
+                          overflow: "visible",
+                          border: 0,
+                          borderRadius: 0,
+                          bgcolor: "transparent",
+                        },
                       }}
                     >
-                      <HighlightedInlineText text={summary} query={filterQuery} />
+                      <Tooltip title={copiedId === event.id ? "Copied" : "Copy message"}>
+                        <IconButton
+                          size="small"
+                          aria-label="Copy message"
+                          onClick={(clickEvent: MouseEvent<HTMLButtonElement>) => {
+                            clickEvent.stopPropagation();
+                            void copyMessagePayload(event.payload).then((copied) => {
+                              if (!copied) return;
+                              setCopiedId(event.id);
+                              window.setTimeout(() => setCopiedId((current) => (current === event.id ? null : current)), 1200);
+                            });
+                          }}
+                          sx={{
+                            position: "sticky",
+                            top: 8,
+                            right: 8,
+                            float: "right",
+                            m: 0.75,
+                            zIndex: 2,
+                            bgcolor: "background.paper",
+                            border: "1px solid",
+                            borderColor: "divider",
+                            boxShadow: 1,
+                            "&:hover": { bgcolor: "action.hover" },
+                          }}
+                        >
+                          <ContentCopy sx={{ fontSize: 16 }} />
+                        </IconButton>
+                      </Tooltip>
+                      <JsonBlock value={event.payload} compact highlightQuery={filterQuery} />
                     </Box>
                   </TableCell>
                 </TableRow>
-                {expanded && (
-                  <TableRow key={`${event.id}-expanded`}>
-                    <TableCell colSpan={3}>
-                      <Box
-                        sx={{
-                          position: "relative",
-                          maxHeight: 440,
-                          overflow: "auto",
-                          border: "1px solid",
-                          borderColor: "divider",
-                          borderRadius: 1.25,
-                          bgcolor: "var(--muted)",
-                          "& .code-viewer": {
-                            maxHeight: "none",
-                            overflow: "visible",
-                            border: 0,
-                            borderRadius: 0,
-                            bgcolor: "transparent",
-                          },
-                        }}
-                      >
-                        <Tooltip title={copiedId === event.id ? "Copied" : "Copy message"}>
-                          <IconButton
-                            size="small"
-                            aria-label="Copy message"
-                            onClick={(clickEvent: MouseEvent<HTMLButtonElement>) => {
-                              clickEvent.stopPropagation();
-                              void copyMessagePayload(event.payload).then((copied) => {
-                                if (!copied) return;
-                                setCopiedId(event.id);
-                                window.setTimeout(
-                                  () => setCopiedId((current) => (current === event.id ? null : current)),
-                                  1200,
-                                );
-                              });
-                            }}
-                            sx={{
-                              position: "sticky",
-                              top: 8,
-                              right: 8,
-                              float: "right",
-                              m: 0.75,
-                              zIndex: 2,
-                              bgcolor: "background.paper",
-                              border: "1px solid",
-                              borderColor: "divider",
-                              boxShadow: 1,
-                              "&:hover": { bgcolor: "action.hover" },
-                            }}
-                          >
-                            <ContentCopy sx={{ fontSize: 16 }} />
-                          </IconButton>
-                        </Tooltip>
-                        <JsonBlock value={event.payload} compact highlightQuery={filterQuery} />
-                      </Box>
-                    </TableCell>
-                  </TableRow>
-                )}
-              </Fragment>
-            );
-          })}
-        </TableBody>
-      </Table>
-    </TableContainer>
+              )}
+            </Fragment>
+          );
+        })}
+      </TableBody>
+    </ResizableTable>
   );
 }
 
@@ -251,7 +256,7 @@ export function EventList({
         <Paper key={event.id} variant="outlined" sx={{ p: 1, borderRadius: 2 }}>
           <Stack direction="row" spacing={0.7} alignItems="center" sx={{ mb: 0.6 }}>
             <Typography variant="caption" color="text.secondary">
-              {formatTimestampShort(event.timestamp)}
+              {formatTimestampReadable(event.timestamp)}
             </Typography>
             <Typography variant="body2" sx={{ fontWeight: 520 }}>
               <HighlightedInlineText text={event.title} query={filterQuery} />
@@ -285,37 +290,30 @@ export function HistoryTable({
       {filtered.length === 0 ? (
         <EmptyState title="No history" body="Run a request to create a history item." />
       ) : (
-        <TableContainer component={Paper} variant="outlined">
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Time</TableCell>
-                <TableCell>Method</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell>Duration</TableCell>
-                <TableCell>Messages</TableCell>
+        <ResizableTable columns={historyTableColumns}>
+          <TableBody>
+            {filtered.map((item) => (
+              <TableRow key={item.id}>
+                <TableCell
+                  title={formatTimestampShort(item.timestamp)}
+                  sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                >
+                  {formatTimestampReadable(item.timestamp)}
+                </TableCell>
+                <TableCell title={item.method}>{item.method}</TableCell>
+                <TableCell>
+                  <Chip size="small" label={item.status} />
+                </TableCell>
+                <TableCell>{item.durationMs} ms</TableCell>
+                <TableCell sx={{ textAlign: "right" }}>{item.messageCount}</TableCell>
               </TableRow>
-            </TableHead>
-            <TableBody>
-              {filtered.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell>{formatTimestampShort(item.timestamp)}</TableCell>
-                  <TableCell title={item.method}>{item.method}</TableCell>
-                  <TableCell>
-                    <Chip size="small" label={item.status} />
-                  </TableCell>
-                  <TableCell>{item.durationMs} ms</TableCell>
-                  <TableCell>{item.messageCount}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
+            ))}
+          </TableBody>
+        </ResizableTable>
       )}
     </Stack>
   );
 }
-
 
 /** Renders only the newest response message payload as formatted JSON. */
 export function LatestResponseJsonViewer({
@@ -355,11 +353,7 @@ export function JsonBlock({
   });
   return (
     <pre
-      className={[
-        "code-viewer",
-        compact ? "code-viewer--compact" : "",
-        fullHeight ? "code-viewer--fill" : "",
-      ]
+      className={["code-viewer", compact ? "code-viewer--compact" : "", fullHeight ? "code-viewer--fill" : ""]
         .filter(Boolean)
         .join(" ")}
     >

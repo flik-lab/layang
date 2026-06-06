@@ -2,6 +2,9 @@
 
 const { app, BrowserWindow, Menu } = require("electron");
 const path = require("node:path");
+const { getLogger } = require("../utils/logger.cjs");
+
+const windowLogger = getLogger("window");
 
 function createWindow() {
   Menu.setApplicationMenu(null);
@@ -30,7 +33,6 @@ function createWindow() {
   return win;
 }
 
-
 function loadRenderer(win) {
   const isDev = !app.isPackaged;
   const staticIndexPath = path.join(__dirname, "..", "..", "out", "playground.html");
@@ -44,15 +46,15 @@ function loadRenderer(win) {
 
 function attachRendererDiagnostics(win) {
   win.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
-    console.error("[renderer:did-fail-load]", errorCode, errorDescription, validatedURL);
+    windowLogger.error("renderer did-fail-load", { errorCode, errorDescription, validatedURL });
   });
   win.webContents.on("console-message", (_event, level, message, line, sourceId) => {
-    console.log(`[renderer:${level}] ${message} (${sourceId}:${line})`);
+    windowLogger.debug("renderer console", { level, message, line, sourceId });
   });
   win.webContents.on("did-finish-load", () => {
-    console.log("[renderer:did-finish-load]", win.webContents.getURL());
+    windowLogger.info("renderer did-finish-load", { url: win.webContents.getURL() });
   });
-  console.log("[electron:grpc-web] transport browser fetch (CORS disabled for this trusted desktop window)");
+  windowLogger.info("transport browser fetch enabled", { cors: "disabled for trusted desktop window" });
 }
 
 module.exports = { createWindow };
