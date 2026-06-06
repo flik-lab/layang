@@ -76,13 +76,19 @@ test("equals_unordered matcher ignores array order recursively", () => {
 });
 
 test("matches matcher supports regex field matching", () => {
-  assert.equal(runtime.mockMatcherMatches({ matches: { name: "^ali.*", code: "^[0-9]{3}$" } }, { name: "alice", code: 200 }), true);
+  assert.equal(
+    runtime.mockMatcherMatches({ matches: { name: "^ali.*", code: "^[0-9]{3}$" } }, { name: "alice", code: 200 }),
+    true,
+  );
   assert.equal(runtime.mockMatcherMatches({ matches: { name: "^bob" } }, { name: "alice" }), false);
 });
 
 test("glob matcher supports wildcard matching", () => {
   assert.equal(runtime.mockMatcherMatches({ glob: { route: "/api/*/tracks/?" } }, { route: "/api/v1/tracks/a" }), true);
-  assert.equal(runtime.mockMatcherMatches({ glob: { route: "/api/*/tracks/?" } }, { route: "/api/v1/tracks/abc" }), false);
+  assert.equal(
+    runtime.mockMatcherMatches({ glob: { route: "/api/*/tracks/?" } }, { route: "/api/v1/tracks/abc" }),
+    false,
+  );
 });
 
 test("headers matcher can be combined with request data matcher", () => {

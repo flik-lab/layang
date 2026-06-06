@@ -13,11 +13,8 @@ import {
   Select,
   Stack,
   Switch,
-  Table,
   TableBody,
   TableCell,
-  TableContainer,
-  TableHead,
   TableRow,
   TextField,
   Tooltip,
@@ -28,7 +25,8 @@ import { calculateBenchmarkStats } from "../benchmark/benchmark-panel";
 import { MarkdownPreview as FeatureMarkdownPreview } from "../docs-publisher/docs-publisher-panel";
 import { CodeTextField as FeatureCodeTextField } from "../request-editor/request-editor-panels";
 import { JsonBlock as FeatureJsonBlock } from "../response-viewer/response-viewer";
-import { formatTimestampShort } from "../../shared/formatters";
+import { ResizableTable, type ResizableTableColumn } from "../../shared/components/resizable-table";
+import { formatTimestampReadable, formatTimestampShort } from "../../shared/formatters";
 import type {
   ApiCollectionRequest,
   BenchmarkResult,
@@ -52,6 +50,14 @@ type WebSocketRequestPathRow = {
   loop?: boolean;
   maxLoops?: number;
 };
+
+const websocketBenchmarkColumns: ResizableTableColumn[] = [
+  { id: "no", label: "No", width: 44, minWidth: 36, maxWidth: 80, sx: { textAlign: "right" } },
+  { id: "status", label: "Status", width: 120, minWidth: 96, maxWidth: 260 },
+  { id: "duration", label: "Duration", width: 112, minWidth: 90, maxWidth: 180 },
+  { id: "messages", label: "Messages", width: 92, minWidth: 76, maxWidth: 160, sx: { textAlign: "right" } },
+  { id: "time", label: "Time", width: 136, minWidth: 112, maxWidth: 260 },
+];
 
 type WebSocketSidebarRequestRow = WebSocketRequestPathRow & {
   scenarioId: string;
@@ -738,43 +744,37 @@ export function WebSocketBenchmarkPanel({
         <Chip size="small" label={`Avg ${stats.average.toFixed(1)} ms`} variant="outlined" />
         <Chip size="small" label={`P95 ${stats.p95.toFixed(1)} ms`} variant="outlined" />
       </Stack>
-      <TableContainer component={Paper} variant="outlined">
-        <Table size="small">
-          <TableHead>
+      <ResizableTable columns={websocketBenchmarkColumns}>
+        <TableBody>
+          {results.length === 0 ? (
             <TableRow>
-              <TableCell>#</TableCell>
-              <TableCell>Status</TableCell>
-              <TableCell>Duration</TableCell>
-              <TableCell>Messages</TableCell>
-              <TableCell>Time</TableCell>
+              <TableCell colSpan={5}>Run a WebSocket benchmark to see samples.</TableCell>
             </TableRow>
-          </TableHead>
-          <TableBody>
-            {results.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={5}>Run a WebSocket benchmark to see samples.</TableCell>
+          ) : (
+            results.map((item) => (
+              <TableRow key={item.id}>
+                <TableCell sx={{ textAlign: "right", color: "text.secondary" }}>{item.index}</TableCell>
+                <TableCell>
+                  <Chip
+                    size="small"
+                    label={item.status}
+                    color={item.ok ? "success" : "error"}
+                    variant={item.ok ? "filled" : "outlined"}
+                  />
+                </TableCell>
+                <TableCell>{item.durationMs.toFixed(1)} ms</TableCell>
+                <TableCell sx={{ textAlign: "right" }}>{item.messageCount}</TableCell>
+                <TableCell
+                  title={formatTimestampShort(item.timestamp)}
+                  sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                >
+                  {formatTimestampReadable(item.timestamp)}
+                </TableCell>
               </TableRow>
-            ) : (
-              results.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell>{item.index}</TableCell>
-                  <TableCell>
-                    <Chip
-                      size="small"
-                      label={item.status}
-                      color={item.ok ? "success" : "error"}
-                      variant={item.ok ? "filled" : "outlined"}
-                    />
-                  </TableCell>
-                  <TableCell>{item.durationMs.toFixed(1)} ms</TableCell>
-                  <TableCell>{item.messageCount}</TableCell>
-                  <TableCell>{formatTimestampShort(item.timestamp)}</TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </TableContainer>
+            ))
+          )}
+        </TableBody>
+      </ResizableTable>
       <Stack spacing={0.8}>
         <Typography variant="body2" fontWeight={560}>
           Latest response snapshot

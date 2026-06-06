@@ -100,7 +100,7 @@ export function useBenchmarkRunner({
         periodIndex += 1;
         completedPeriods = periodIndex;
 
-        setResults((current) => [
+        setResults((current: BenchmarkResult[]) => [
           ...current,
           {
             id: createId(),
@@ -288,7 +288,7 @@ export function useBenchmarkRunner({
 
           const status = result.trailers["grpc-status"] ?? String(result.httpStatus ?? "unknown");
           completedRuns += 1;
-          setResults((current) => [
+          setResults((current: BenchmarkResult[]) => [
             ...current,
             {
               id: createId(),
@@ -305,7 +305,7 @@ export function useBenchmarkRunner({
           if (benchmarkControl.cancelled || abortController.signal.aborted) break;
 
           completedRuns += 1;
-          setResults((current) => [
+          setResults((current: BenchmarkResult[]) => [
             ...current,
             {
               id: createId(),

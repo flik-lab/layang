@@ -220,6 +220,7 @@ export function RegistryPanel({
                   size="small"
                   title="Add WebSocket request"
                   aria-label={`Add WebSocket request to ${collection.name}`}
+                  data-testid={`add-websocket-request-${collection.id}`}
                   onClick={(event: ReactMouseEvent<HTMLButtonElement>) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -245,6 +246,8 @@ export function RegistryPanel({
                 <IconButton
                   size="small"
                   title="Delete collection"
+                  aria-label={`Delete collection ${collection.name}`}
+                  data-testid={`delete-collection-${collection.id}`}
                   color="error"
                   onClick={(event: ReactMouseEvent<HTMLButtonElement>) => {
                     event.preventDefault();

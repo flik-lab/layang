@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.0.2
+
+### Major
+
+- Refactored the playground workbench into focused feature controllers, shell components, layout state, workspace actions, request runners, and response controllers.
+- Split gRPC mock scenario handling into smaller modules for scenario core data, editor state, YAML/JSON parsing, file persistence, examples, and runtime synchronization.
+- Added scenario-files manifest support for gRPC mock workspaces so split mock files can be loaded consistently by the UI, CLI, and runtime server.
+- Improved gRPC mock runtime reload behavior so manual scenario file edits can override stale UI snapshots after the quiet period without rolling back newer editor changes.
+
+### Minor
+
+- Added validation for gRPC mock scenario documents, including required scenario ids, service names, method names, and stream response shapes.
+- Improved mock server freshness tracking with separate timestamps for server config, scenario files, editor updates, and workspace signatures.
+- Added Electron logger IPC/preload support and shared logger utilities for workbench diagnostics.
+- Added reusable workbench modules for collections, docs, environments, REST, WebSocket, layout persistence, shell actions, and resizable tables.
+- Improved response viewing, response toolbar behavior, benchmark formatting, request editor actions, and WebSocket controller state.
+- Added package and release script aliases for test, package, Windows release, and Linux release workflows.
+
+### Documentation
+
+- Updated project documentation, GitHub Pages assets, guide pages, roadmap, testing notes, and website metadata for the current release.
+
+### Tests
+
+- Added regression coverage for CLI workspace scenario file loading, gRPC mock runtime guard behavior, logger behavior, and workbench refactor stability.
+
 ## 1.0.1
 
 ### Major

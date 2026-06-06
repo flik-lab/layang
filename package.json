@@ -1,6 +1,6 @@
 {
   "name": "layang",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -19,7 +19,6 @@
     "format": "biome format --write .",
     "typecheck": "tsc --noEmit",
     "check": "pnpm run typecheck && pnpm run test:ci && pnpm run lint && pnpm run build && pnpm run docs:build",
-    "desktop:setup": "pnpm run desktop:win:setup",
     "desktop:portable": "pnpm run desktop:win:portable",
     "desktop:win": "pnpm run build && electron-forge make --platform=win32",
     "desktop:win:setup": "node scripts/check-wix-toolset.cjs && pnpm run build && electron-forge make --platform=win32 --targets=@electron-forge/maker-wix",
@@ -33,13 +32,14 @@
     "cli": "node bin/layang.cjs",
     "cli:smoke": "node bin/layang.cjs --help",
     "test:unit": "node --test tests/*.test.cjs",
-    "test:ci": "pnpm run test:unit && pnpm run test:e2e && pnpm run cli:smoke",
+    "test:e2e": "node --test tests/e2e/*.test.cjs",
+    "test:ci": "pnpm run test:unit && pnpm run cli:smoke",
+    "test:all": "pnpm run test:unit && pnpm run test:e2e && pnpm run cli:smoke",
     "docs:build": "node scripts/validate-github-pages.cjs",
     "docs:dev": "node scripts/serve-github-pages.cjs",
     "docs:serve": "node scripts/serve-github-pages.cjs",
     "deps:audit": "pnpm audit",
-    "deps:refresh": "pnpm install --lockfile-only && pnpm audit",
-    "test:e2e": "node --test tests/e2e/*.test.cjs"
+    "deps:refresh": "pnpm install --lockfile-only && pnpm audit"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.3",

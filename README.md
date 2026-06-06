@@ -5,12 +5,12 @@
 # Layang
 
 [![Website](https://img.shields.io/badge/website-layang.mff.web.id-blue)](https://layang.mff.web.id/)
-[![Version](https://img.shields.io/badge/version-1.0.1-blue)](https://github.com/flik-lab/layang/releases)
+[![Version](https://img.shields.io/badge/version-1.0.2-blue)](https://github.com/flik-lab/layang/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Layang is a workspace-based API workbench for testing, mocking, benchmarking, documenting, and automating APIs across gRPC, gRPC-Web, WebSocket, and REST.
 
-Layang `1.0.1` is the first official stable release. It includes the full workspace workflow for REST, WebSocket, and gRPC APIs, with local mocks, scenario matching, response templates, request logs, generated docs, benchmarking, and CLI automation.
+Layang `1.0.2` improves the workspace workflow with a refactored workbench, split gRPC mock scenario files, safer runtime reload behavior, Electron logging, release scripts, and expanded regression coverage.
 
 ![Layang workbench](github-pages/assets/layang-app-screenshot.png)
 
@@ -41,9 +41,9 @@ Layang `1.0.1` is the first official stable release. It includes the full worksp
 - Use the WebSocket workbench for live connections, message sending, local mock responses, benchmark exports, and generated docs.
 - Use the REST workbench for params, headers, auth, bodies, docs, examples, local mocks, scenario matching, and templates.
 
-## Release 1.0.0
+## Release 1.0.2
 
-The official `1.0.0` release brings REST, WebSocket, gRPC, and gRPC-Web into one stable workspace experience. REST support includes richer mock scenarios, query/header/body matching, response templates, request logs, and guide files for REST, gRPC, and WebSocket mocking.
+The `1.0.2` release focuses on stability and maintainability. It keeps REST, WebSocket, gRPC, and gRPC-Web in one workspace while improving gRPC mock scenario persistence, manifest-based scenario file loading, runtime freshness checks, logging, packaging commands, and test coverage.
 
 ## Install
 

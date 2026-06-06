@@ -1,5 +1,5 @@
 /** Downloads a text/blob payload from the browser without involving app state. */
-export function downloadTextFile(filename: string, content: string, mimeType: string): void {
+export function downloadTextFile(filename: string, content: string, mimeType = "text/plain"): void {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");

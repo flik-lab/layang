@@ -4,6 +4,7 @@ const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
+const { getLogger } = require("../utils/logger.cjs");
 const grpc = require("@grpc/grpc-js");
 const protoLoader = require("@grpc/proto-loader");
 const { readJsonIfExists, walkDirectory, writeProtoWorkspace } = require("../utils/file-utils.cjs");
@@ -14,21 +15,29 @@ const {
   shouldIgnoreFileRuntimeUpdate,
 } = require("../../lib/grpc-mock-runtime-guard.cjs");
 
+const mockLogger = getLogger("grpc-mock");
+
 let activeMockServer = null;
 
 const legacyGeneratedMockStreamIntervalMs = 500;
+// Keep file watcher reloads behind the UI autosave window.
+// UI runtime sync is fast, but disk persistence is intentionally slower;
+// accepting a file reload too early can roll active streams back to the
+// previous JSON after one updated message.
 const uiRuntimeFileReloadQuietPeriodMs = 3000;
-const fileRuntimeReloadDebounceMs = 800;
+const fileRuntimeReloadDebounceMs = 250;
 const mockWorkspaceWriteLockFileName = ".layang-mock-write-lock.json";
 
 function getReachableMockTargets(port, bindHost) {
   const normalizedPort = normalizeMockServerPort(port);
   const normalizedBindHost = normalizeMockBindHost(bindHost);
-  const targets = [
-    { label: "Bind IP", host: normalizedBindHost, target: `${normalizedBindHost}:${normalizedPort}` },
-  ];
+  const targets = [{ label: "Bind IP", host: normalizedBindHost, target: `${normalizedBindHost}:${normalizedPort}` }];
   if (normalizedBindHost === "127.0.0.1" || normalizedBindHost === "localhost") {
-    targets.push({ label: "Docker Desktop / APISIX", host: "host.docker.internal", target: `host.docker.internal:${normalizedPort}` });
+    targets.push({
+      label: "Docker Desktop / APISIX",
+      host: "host.docker.internal",
+      target: `host.docker.internal:${normalizedPort}`,
+    });
   }
   const interfaces = os.networkInterfaces ? os.networkInterfaces() : {};
   for (const items of Object.values(interfaces)) {
@@ -203,6 +212,7 @@ async function startMockServer(payload) {
     watchedWorkspaceDir: workspaceDirectory,
     watcher: null,
     configWatcher: null,
+    scenarioWatchers: new Map(),
     watcherDebounce: null,
     port: boundPort,
     bindHost,
@@ -212,7 +222,10 @@ async function startMockServer(payload) {
     methodSignature: createMockMethodSignature(methods),
     protoSignature: createMockProtoSignature(protoFiles),
     startedAt: new Date().toISOString(),
-    runtimeConfigSignature: createRuntimeConfigSignature({ scenarios, streamDefaults, activeScenarioIds, enabledMethods }, runtime),
+    runtimeConfigSignature: createRuntimeConfigSignature(
+      { scenarios, streamDefaults, activeScenarioIds, enabledMethods },
+      runtime,
+    ),
     lastWorkspaceReloadSignature: "",
     hasUiStreamDefaultsOverride: false,
     hasUiRuntimeOverride: false,
@@ -251,6 +264,16 @@ async function stopMockServer() {
     } catch {
       /* ignore */
     }
+  }
+  if (active.scenarioWatchers && typeof active.scenarioWatchers.values === "function") {
+    for (const watcher of active.scenarioWatchers.values()) {
+      try {
+        watcher.close();
+      } catch {
+        /* ignore */
+      }
+    }
+    active.scenarioWatchers.clear?.();
   }
   for (const timer of active.timers || []) clearTimeout(timer);
   for (const call of active.activeCalls || []) {
@@ -295,7 +318,11 @@ async function stopMockServer() {
 function normalizeMockBindHost(value) {
   const raw = typeof value === "string" ? value.trim() : "";
   if (!raw || raw === "0.0.0.0" || raw === "::") return "127.0.0.1";
-  const cleaned = raw.replace(/^grpc:\/\//i, "").split(":")[0]?.trim() || "127.0.0.1";
+  const cleaned =
+    raw
+      .replace(/^grpc:\/\//i, "")
+      .split(":")[0]
+      ?.trim() || "127.0.0.1";
   if (!cleaned || cleaned === "0.0.0.0" || cleaned === "::") return "127.0.0.1";
   return cleaned;
 }
@@ -340,7 +367,11 @@ function createMockRuntimeState(scenarios, streamDefaults, activeScenarioIds, en
     scenarioIndex: (Array.isArray(scenarios) ? scenarios : [])
       .map((scenario, index) => normalizeMockRuntimeScenario(scenario, index))
       .filter(Boolean),
-    streamDefaults: normalizeRuntimeStreamSettings(streamDefaults || {}, { intervalMs: 1000, loop: false, maxLoops: 0 }),
+    streamDefaults: normalizeRuntimeStreamSettings(streamDefaults || {}, {
+      intervalMs: 1000,
+      loop: false,
+      maxLoops: 0,
+    }),
     activeScenarioIds: normalizeActiveScenarioIds(activeScenarioIds || {}),
     enabledMethods: normalizeEnabledMethods(enabledMethods || {}),
     configVersion: 1,
@@ -385,13 +416,15 @@ function rebuildRuntimeScenarioIndexes(runtime) {
         active = list.filter((scenario) => scenario.id === selectedId && isRuntimeScenarioActive(scenario));
       } else {
         const firstActive =
-          list
-            .filter(isRuntimeScenarioActive)
-            .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0))[0] || list[0];
+          list.filter(isRuntimeScenarioActive).sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0))[0] ||
+          list[0];
         active = firstActive ? [firstActive] : [];
       }
     }
-    activeScenariosByMethod.set(key, active.sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0)));
+    activeScenariosByMethod.set(
+      key,
+      active.sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0)),
+    );
   }
   runtime.scenariosByMethod = scenariosByMethod;
   runtime.activeScenariosByMethod = activeScenariosByMethod;
@@ -424,7 +457,8 @@ function createMockProtoSignature(protoFiles) {
 function createRuntimeConfigSignature(payload, fallbackRuntime) {
   const scenarios = Array.isArray(payload?.scenarios) ? payload.scenarios : fallbackRuntime?.scenarioIndex || [];
   const streamDefaults = payload?.streamDefaults || fallbackRuntime?.streamDefaults || {};
-  const activeScenarioIds = payload?.activeScenarioIds || payload?.selectedScenarioIds || fallbackRuntime?.activeScenarioIds || {};
+  const activeScenarioIds =
+    payload?.activeScenarioIds || payload?.selectedScenarioIds || fallbackRuntime?.activeScenarioIds || {};
   const enabledMethods = payload?.enabledMethods || fallbackRuntime?.enabledMethods || {};
   return stableJson({
     scenarios,
@@ -433,7 +467,6 @@ function createRuntimeConfigSignature(payload, fallbackRuntime) {
     enabledMethods,
   });
 }
-
 
 /**
  * Replaces active runtime scenarios without restarting the bound gRPC server or open streams.
@@ -511,9 +544,10 @@ async function updateActiveMockServer(payload, source) {
       updatedAt: runtime.updatedAt,
       source: runtime.source,
       ignoredFileUpdate: true,
-      message: fileUpdateGuard.reason === "partial-workspace-write"
-        ? "Ignored incomplete mock scenario file reload while workspace save is still writing."
-        : "Ignored file mock reload because the running editor state is newer.",
+      message:
+        fileUpdateGuard.reason === "partial-workspace-write"
+          ? "Ignored incomplete mock scenario file reload while workspace save is still writing."
+          : "Ignored file mock reload because the running editor state is newer.",
     });
   }
   const nextStreamDefaults =
@@ -637,14 +671,61 @@ async function startMockScenarioWatcher(workspaceDirectory, serverState) {
       }
       await updateActiveMockServer(loaded, "file");
     } catch (error) {
-      console.warn("[Layang][Mock] scenario file hot reload skipped:", error?.message ? error.message : error);
+      mockLogger.warn("scenario file hot reload skipped", error?.message ? error.message : error);
+    }
+  };
+
+  const collectScenarioDirectories = async (rootDir) => {
+    const directories = new Set([rootDir]);
+    const visit = async (dirPath) => {
+      let entries = [];
+      try {
+        entries = await fs.readdir(dirPath, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const childPath = path.join(dirPath, entry.name);
+        directories.add(childPath);
+        await visit(childPath);
+      }
+    };
+    await visit(rootDir);
+    return directories;
+  };
+
+  const watchScenarioDirectory = (dirPath) => {
+    if (serverState.scenarioWatchers?.has?.(dirPath)) return;
+    const watcher = fsSync.watch(dirPath, { persistent: false }, () => {
+      void refreshScenarioWatchers();
+      scheduleReload();
+    });
+    serverState.scenarioWatchers.set(dirPath, watcher);
+  };
+
+  const refreshScenarioWatchers = async () => {
+    if (activeMockServer !== serverState) return;
+    const directories = await collectScenarioDirectories(scenariosDir);
+    serverState.scenarioWatchers =
+      serverState.scenarioWatchers && typeof serverState.scenarioWatchers.entries === "function"
+        ? serverState.scenarioWatchers
+        : new Map();
+    for (const dirPath of directories) watchScenarioDirectory(dirPath);
+    for (const [dirPath, watcher] of Array.from(serverState.scenarioWatchers.entries())) {
+      if (directories.has(dirPath)) continue;
+      try {
+        watcher.close();
+      } catch {
+        /* ignore */
+      }
+      serverState.scenarioWatchers.delete(dirPath);
     }
   };
 
   try {
-    serverState.watcher = fsSync.watch(scenariosDir, { persistent: false }, () => {
-      scheduleReload();
-    });
+    serverState.scenarioWatchers = new Map();
+    await refreshScenarioWatchers();
     const mocksDir = path.join(workspaceDirectory, "mocks");
     serverState.configWatcher = fsSync.watch(mocksDir, { persistent: false }, (_event, fileName) => {
       const normalizedFileName = String(fileName || "").toLowerCase();
@@ -652,7 +733,7 @@ async function startMockScenarioWatcher(workspaceDirectory, serverState) {
       scheduleReload();
     });
   } catch (error) {
-    console.warn("[Layang][Mock] scenario watcher disabled:", error?.message ? error.message : error);
+    mockLogger.warn("scenario watcher disabled", error?.message ? error.message : error);
   }
 }
 
@@ -662,23 +743,29 @@ async function startMockScenarioWatcher(workspaceDirectory, serverState) {
 async function loadRuntimeScenariosFromWorkspace(workspaceDirectory, methods, port) {
   const mocksDir = path.join(workspaceDirectory, "mocks");
   let workspaceMtimeMs = 0;
-  const noteWorkspaceMtime = async (filePath) => {
+  let serverConfigMtimeMs = 0;
+  let scenarioFilesMtimeMs = 0;
+  const noteWorkspaceMtime = async (filePath, kind = "workspace") => {
     try {
       const stat = await fs.stat(filePath);
-      if (Number.isFinite(stat.mtimeMs)) workspaceMtimeMs = Math.max(workspaceMtimeMs, stat.mtimeMs);
+      if (!Number.isFinite(stat.mtimeMs)) return;
+      workspaceMtimeMs = Math.max(workspaceMtimeMs, stat.mtimeMs);
+      if (kind === "server-config") serverConfigMtimeMs = Math.max(serverConfigMtimeMs, stat.mtimeMs);
+      if (kind === "scenario-file") scenarioFilesMtimeMs = Math.max(scenarioFilesMtimeMs, stat.mtimeMs);
     } catch {
       // Optional workspace files may not exist.
     }
   };
-  await noteWorkspaceMtime(path.join(mocksDir, "mock-server.json"));
-  const serverConfig = (await readJsonIfExists(path.join(mocksDir, "mock-server.json")).catch(() => ({}))) || {};
+  const serverConfigPath = path.join(mocksDir, "mock-server.json");
+  await noteWorkspaceMtime(serverConfigPath, "server-config");
+  const serverConfig = (await readJsonIfExists(serverConfigPath).catch(() => ({}))) || {};
   const streamDefaults = normalizeRuntimeStreamSettings(
     serverConfig.streamDefaults || serverConfig.stream_defaults || {},
     { intervalMs: 1000, loop: false, maxLoops: 0 },
   );
   const enabledMethods = normalizeEnabledMethods(serverConfig.enabledMethods || serverConfig.enabled_methods || {});
   const scenariosDir = path.join(mocksDir, "scenarios");
-  await noteWorkspaceMtime(path.join(scenariosDir, "manifest.json"));
+  await noteWorkspaceMtime(path.join(scenariosDir, "manifest.json"), "scenario-file");
   const manifest = (await readJsonIfExists(path.join(scenariosDir, "manifest.json")).catch(() => ({}))) || {};
   const scenarios = [];
   const activeScenarioIds = normalizeActiveScenarioIds(
@@ -688,12 +775,8 @@ async function loadRuntimeScenariosFromWorkspace(workspaceDirectory, methods, po
       serverConfig.active_scenario_ids ||
       {},
   );
-  await walkDirectory(scenariosDir, async (filePath) => {
-    const ext = path.extname(filePath).toLowerCase();
-    if (ext !== ".json" && ext !== ".yaml" && ext !== ".yml") return;
-    if (path.basename(filePath).toLowerCase() === "manifest.json") return;
-    const format = ext === ".json" ? "json" : "yaml";
-    await noteWorkspaceMtime(filePath);
+  const loadScenarioFile = async (filePath, format) => {
+    await noteWorkspaceMtime(filePath, "scenario-file");
     const text = await fs.readFile(filePath, "utf8");
     const parsed = parseRuntimeScenarioText(text, format, port);
     const methodScenarios = parsed.scenarios.filter((scenario) =>
@@ -704,19 +787,63 @@ async function loadRuntimeScenariosFromWorkspace(workspaceDirectory, methods, po
     for (const [key, id] of Object.entries(selection)) {
       if (id && !activeScenarioIds[key]) activeScenarioIds[key] = id;
     }
-  });
-  for (const [key, item] of Object.entries(manifest || {})) {
-    if (
-      item &&
-      typeof item === "object" &&
-      typeof item.selectedScenarioId === "string" &&
-      item.selectedScenarioId.trim()
-    ) {
-      if (!activeScenarioIds[key]) activeScenarioIds[key] = item.selectedScenarioId.trim();
+  };
+
+  if (manifest && typeof manifest === "object" && manifest.layout === "scenario-files-v1") {
+    const manifestMethods = manifest.methods && typeof manifest.methods === "object" ? manifest.methods : {};
+    for (const [key, entry] of Object.entries(manifestMethods)) {
+      if (
+        entry &&
+        typeof entry === "object" &&
+        typeof entry.selectedScenarioId === "string" &&
+        entry.selectedScenarioId.trim()
+      ) {
+        if (!activeScenarioIds[key]) activeScenarioIds[key] = entry.selectedScenarioId.trim();
+      }
+      const listedScenarios =
+        entry && typeof entry === "object" && entry.scenarios && typeof entry.scenarios === "object"
+          ? entry.scenarios
+          : {};
+      for (const descriptor of Object.values(listedScenarios)) {
+        if (!descriptor || typeof descriptor !== "object" || !descriptor.file) continue;
+        const relativeFile = String(descriptor.file);
+        if (relativeFile.includes("..") || path.isAbsolute(relativeFile)) continue;
+        const format = descriptor.format === "yaml" || descriptor.format === "yml" ? "yaml" : "json";
+        await loadScenarioFile(path.join(scenariosDir, relativeFile), format);
+      }
+    }
+  } else {
+    await walkDirectory(scenariosDir, async (filePath) => {
+      const ext = path.extname(filePath).toLowerCase();
+      if (ext !== ".json" && ext !== ".yaml" && ext !== ".yml") return;
+      if (path.basename(filePath).toLowerCase() === "manifest.json") return;
+      const format = ext === ".json" ? "json" : "yaml";
+      await loadScenarioFile(filePath, format);
+    });
+    for (const [key, item] of Object.entries(manifest || {})) {
+      if (
+        item &&
+        typeof item === "object" &&
+        typeof item.selectedScenarioId === "string" &&
+        item.selectedScenarioId.trim()
+      ) {
+        if (!activeScenarioIds[key]) activeScenarioIds[key] = item.selectedScenarioId.trim();
+      }
     }
   }
   for (const method of methods || []) {
     const key = `${method.serviceName}/${method.methodName}`;
+    const methodScenarios = scenarios.filter(
+      (scenario) => scenario.service === method.serviceName && scenario.method === method.methodName,
+    );
+    if (enabledMethods[key] === true && methodScenarios.length === 0) {
+      throw new Error(`${key}: mocking is enabled in mock-server.json, but the method file has no matching scenario.`);
+    }
+    if (activeScenarioIds[key] && !methodScenarios.some((scenario) => scenario.id === activeScenarioIds[key])) {
+      throw new Error(
+        `${key}: mock-server.json selects scenario "${activeScenarioIds[key]}", but that id is not present in this method file.`,
+      );
+    }
     const activeScenario = scenarios.find(
       (scenario) =>
         scenario.service === method.serviceName &&
@@ -725,14 +852,33 @@ async function loadRuntimeScenariosFromWorkspace(workspaceDirectory, methods, po
     );
     if (activeScenario && !activeScenarioIds[key]) activeScenarioIds[key] = activeScenario.id;
   }
+  const editorUpdatedAt =
+    typeof serverConfig.updatedAt === "string" && serverConfig.updatedAt.trim()
+      ? serverConfig.updatedAt
+      : serverConfig.updated_at;
+  const editorUpdatedAtMs = Date.parse(String(editorUpdatedAt || ""));
   const workspaceSignature = stableJson({
     workspaceMtimeMs,
+    serverConfigMtimeMs,
+    scenarioFilesMtimeMs,
+    editorUpdatedAt: Number.isFinite(editorUpdatedAtMs) ? editorUpdatedAt : "",
     scenarios,
     activeScenarioIds,
     enabledMethods,
     streamDefaults,
   });
-  return { scenarios, activeScenarioIds, enabledMethods, streamDefaults, workspaceMtimeMs, workspaceSignature };
+  return {
+    scenarios,
+    activeScenarioIds,
+    enabledMethods,
+    streamDefaults,
+    workspaceMtimeMs,
+    serverConfigMtimeMs,
+    scenarioFilesMtimeMs,
+    editorUpdatedAt: Number.isFinite(editorUpdatedAtMs) ? editorUpdatedAt : "",
+    editorUpdatedAtMs: Number.isFinite(editorUpdatedAtMs) ? editorUpdatedAtMs : 0,
+    workspaceSignature,
+  };
 }
 
 /**
@@ -740,14 +886,24 @@ async function loadRuntimeScenariosFromWorkspace(workspaceDirectory, methods, po
  */
 function parseRuntimeScenarioText(text, format, fallbackPort) {
   const raw = format === "json" ? JSON.parse(text || "{}") : parseSimpleYaml(text || "{}");
+  const validationError = validateRuntimeScenarioDocument(raw);
+  if (validationError) throw new Error(`Invalid ${format.toUpperCase()} scenario file: ${validationError}`);
   const record = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const isSingleScenarioDocument =
+    record &&
+    typeof record === "object" &&
+    !Array.isArray(record) &&
+    !Array.isArray(record.scenarios) &&
+    !Array.isArray(record.stubs);
   const rawScenarios = Array.isArray(raw)
     ? raw
     : Array.isArray(record.scenarios)
       ? record.scenarios
       : Array.isArray(record.stubs)
         ? record.stubs
-        : [];
+        : isSingleScenarioDocument
+          ? [record]
+          : [];
   const serverRecord =
     record.server && typeof record.server === "object" && !Array.isArray(record.server) ? record.server : {};
   const hasPerFileStreamDefaults = Boolean(serverRecord.streamDefaults || serverRecord.stream_defaults);
@@ -774,6 +930,50 @@ function parseRuntimeScenarioText(text, format, fallbackPort) {
     enabledMethods,
     scenarios,
   };
+}
+
+function validateRuntimeScenarioDocument(raw) {
+  if (Array.isArray(raw)) {
+    if (raw.length === 0)
+      return 'top-level [] is empty. Use one scenario object or { "version": 1, "scenarios": [ ... ] }.';
+    return validateRuntimeScenarioArray(raw, "scenarios");
+  }
+  if (!raw || typeof raw !== "object") return `top-level value must be an object, got ${describeRuntimeValue(raw)}.`;
+  const hasScenarios = Object.hasOwn(raw, "scenarios");
+  const hasStubs = Object.hasOwn(raw, "stubs");
+  if (!hasScenarios && !hasStubs) return validateRuntimeScenarioArray([raw], "scenario");
+  const scenarios = hasScenarios ? raw.scenarios : raw.stubs;
+  const pathName = hasScenarios ? "scenarios" : "stubs";
+  if (!Array.isArray(scenarios)) return `${pathName} must be an array, got ${describeRuntimeValue(scenarios)}.`;
+  return validateRuntimeScenarioArray(scenarios, pathName);
+}
+
+function validateRuntimeScenarioArray(scenarios, pathName) {
+  for (let index = 0; index < scenarios.length; index += 1) {
+    const scenario = scenarios[index];
+    const itemPath = pathName === "scenario" ? "scenario" : `${pathName}[${index}]`;
+    if (!scenario || typeof scenario !== "object" || Array.isArray(scenario)) {
+      return `${itemPath} must be an object, got ${describeRuntimeValue(scenario)}.`;
+    }
+    if (!String(scenario.id || "").trim()) return `${itemPath}.id is required.`;
+    if (!String(scenario.service || "").trim()) return `${itemPath}.service is required.`;
+    if (!String(scenario.method || "").trim()) return `${itemPath}.method is required.`;
+    if (Object.hasOwn(scenario, "stream")) {
+      if (!scenario.stream || typeof scenario.stream !== "object" || Array.isArray(scenario.stream)) {
+        return `${itemPath}.stream must be an object, got ${describeRuntimeValue(scenario.stream)}.`;
+      }
+      if (Object.hasOwn(scenario.stream, "responses") && !Array.isArray(scenario.stream.responses)) {
+        return `${itemPath}.stream.responses must be an array, got ${describeRuntimeValue(scenario.stream.responses)}.`;
+      }
+    }
+  }
+  return null;
+}
+
+function describeRuntimeValue(value) {
+  if (Array.isArray(value)) return "array";
+  if (value === null) return "null";
+  return typeof value;
 }
 
 /**
@@ -994,7 +1194,10 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls) {
         pendingCompletedCycle = false;
       } else {
         const nextUnsentIndex = findFirstUnsentRuntimeStreamResponseIndex(responses, sentResponseCounts);
-        if (nextUnsentIndex >= 0 && (pendingActionKind === "finish" || index >= responses.length || nextUnsentIndex < index)) {
+        if (
+          nextUnsentIndex >= 0 &&
+          (pendingActionKind === "finish" || index >= responses.length || nextUnsentIndex < index)
+        ) {
           index = nextUnsentIndex;
           completedCycles = 0;
           pendingCompletedCycle = false;
@@ -1031,7 +1234,11 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls) {
     ) {
       return { kind: "finish", undoCompletedCycle: false };
     }
-    if (currentKind === "next" && index >= snapshot.responses.length && !canContinueAfterCompletedCycle(snapshot.timing)) {
+    if (
+      currentKind === "next" &&
+      index >= snapshot.responses.length &&
+      !canContinueAfterCompletedCycle(snapshot.timing)
+    ) {
       return { kind: "finish", undoCompletedCycle: false };
     }
     return { kind: currentKind, undoCompletedCycle: false };
@@ -1174,7 +1381,7 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls) {
     const nextDelay = hasExplicitResponseDelay ? responseDelay : intervalMs;
     if (wrote === false && typeof call.once === "function") {
       call.once("drain", () => {
-        const delay = hasExplicitResponseDelay ? nextDelay : getLiveTiming()?.intervalMs ?? nextDelay;
+        const delay = hasExplicitResponseDelay ? nextDelay : (getLiveTiming()?.intervalMs ?? nextDelay);
         scheduleNext(delay, !hasExplicitResponseDelay);
       });
     } else {
@@ -1204,7 +1411,6 @@ function getRuntimeStreamResponses(scenario) {
       ? [fallbackOutput]
       : [];
 }
-
 
 function createRuntimeStreamResponseFingerprint(item) {
   const output = item && typeof item === "object" ? item : {};
@@ -1266,7 +1472,9 @@ function getLiveStreamScenario(method, request, preferredScenarioId, runtime) {
  * Finds the first matching scenario for a method/request pair.
  */
 function findMatchingMockScenario(method, request, runtime) {
-  return getActiveRuntimeScenariosForMethod(method, runtime).find((scenario) => mockMatcherMatches(scenario.input, request));
+  return getActiveRuntimeScenariosForMethod(method, runtime).find((scenario) =>
+    mockMatcherMatches(scenario.input, request),
+  );
 }
 
 /**
@@ -1278,7 +1486,11 @@ function getActiveRuntimeScenariosForMethod(method, runtime) {
   if (runtime?.activeScenariosByMethod && typeof runtime.activeScenariosByMethod.get === "function") {
     return runtime.activeScenariosByMethod.get(keySlash) || [];
   }
-  const scenarios = Array.isArray(runtime?.scenarioIndex) ? runtime.scenarioIndex : Array.isArray(runtime) ? runtime : [];
+  const scenarios = Array.isArray(runtime?.scenarioIndex)
+    ? runtime.scenarioIndex
+    : Array.isArray(runtime)
+      ? runtime
+      : [];
   const activeScenarioIds = runtime?.activeScenarioIds || {};
   const enabledMethods = runtime?.enabledMethods || {};
   const methodScenarios = scenarios.filter(
@@ -1316,7 +1528,11 @@ function buildMockNoMatchMessage(method, request, scenarios, activeScenarioIds, 
     enabledMethods &&
     (enabledMethods[runtimeMethodKey] === false ||
       enabledMethods[`${method.serviceName}.${method.methodName}`] === false);
-  const activeCandidates = getActiveRuntimeScenariosForMethod(method, { scenarioIndex: scenarios, activeScenarioIds, enabledMethods });
+  const activeCandidates = getActiveRuntimeScenariosForMethod(method, {
+    scenarioIndex: scenarios,
+    activeScenarioIds,
+    enabledMethods,
+  });
   const requestText = stableJson(request);
   const clippedRequest = requestText.length > 600 ? `${requestText.slice(0, 600)}...` : requestText;
   const invalidInput =
@@ -1407,11 +1623,7 @@ function normalizeRuntimeMatcher(value) {
         ? value.equals_unordered
         : undefined,
     contains: Object.hasOwn(value, "contains") ? value.contains : undefined,
-    matches: Object.hasOwn(value, "matches")
-      ? value.matches
-      : Object.hasOwn(value, "regex")
-        ? value.regex
-        : undefined,
+    matches: Object.hasOwn(value, "matches") ? value.matches : Object.hasOwn(value, "regex") ? value.regex : undefined,
     glob: Object.hasOwn(value, "glob") ? value.glob : undefined,
     headers: Object.hasOwn(value, "headers") ? normalizeRuntimeMatcher(value.headers) : undefined,
     or: Array.isArray(value.or) ? value.or.map(normalizeRuntimeMatcher).filter(Boolean) : undefined,
@@ -1595,8 +1807,16 @@ function jsonEqualsUnordered(actual, expected) {
       return true;
     });
   }
-  if (actual && typeof actual === "object" || expected && typeof expected === "object") {
-    if (!actual || !expected || typeof actual !== "object" || typeof expected !== "object" || Array.isArray(actual) || Array.isArray(expected)) return false;
+  if ((actual && typeof actual === "object") || (expected && typeof expected === "object")) {
+    if (
+      !actual ||
+      !expected ||
+      typeof actual !== "object" ||
+      typeof expected !== "object" ||
+      Array.isArray(actual) ||
+      Array.isArray(expected)
+    )
+      return false;
     const actualKeys = Object.keys(actual).sort();
     const expectedKeys = Object.keys(expected).sort();
     if (stableJson(actualKeys) !== stableJson(expectedKeys)) return false;
@@ -1646,7 +1866,6 @@ function globMatches(actual, pattern) {
     return false;
   }
 }
-
 
 /**
  * Parses the small YAML subset generated by the app's scenario editor.
@@ -1812,8 +2031,10 @@ module.exports = {
   getReachableMockTargets,
   normalizeActiveScenarioIds,
   normalizeEnabledMethods,
+  normalizeMockBindHost,
   normalizeMockServerPort,
   normalizeRuntimeStreamSettings,
+  parseRuntimeScenarioText,
   startMockServer,
   stopMockServer,
   updateActiveMockServer,

@@ -83,3 +83,56 @@ test("gRPC mock guard accepts fresh file reload before UI becomes authoritative"
   );
   assert.deepEqual(result, { ignore: false, reason: "fresh-file-update" });
 });
+
+test("gRPC mock guard accepts newer manual file reload after UI quiet period", () => {
+  const state = active({ hasUiRuntimeOverride: true, lastUiRuntimeUpdateAt: 5000, lastUiRuntimeRevision: 3 });
+  const result = guard.shouldIgnoreFileRuntimeUpdate(
+    state,
+    runtime(1),
+    { scenarios: [{ id: "disk" }], workspaceMtimeMs: 6200 },
+    "file",
+    9000,
+    3000,
+  );
+  assert.deepEqual(result, { ignore: false, reason: "fresh-file-update" });
+});
+
+test("gRPC mock guard rejects stale autosave snapshots after a newer UI edit", () => {
+  const state = active({ hasUiRuntimeOverride: true, lastUiRuntimeUpdateAt: 10_000, lastUiRuntimeRevision: 4 });
+  guard.markUiRuntimeUpdate(state, { uiRuntimeRevision: 5, mockServerUpdatedAt: "2026-06-05T10:00:10.000Z" }, 10_000);
+  const result = guard.shouldIgnoreFileRuntimeUpdate(
+    state,
+    runtime(1),
+    {
+      scenarios: [{ id: "old-autosave" }],
+      workspaceMtimeMs: 14_500,
+      serverConfigMtimeMs: 14_500,
+      scenarioFilesMtimeMs: 14_500,
+      editorUpdatedAt: "2026-06-05T10:00:01.000Z",
+    },
+    "file",
+    14_500,
+    3000,
+  );
+  assert.deepEqual(result, { ignore: true, reason: "stale-workspace-snapshot" });
+});
+
+test("gRPC mock guard accepts manual scenario file edits after the UI quiet period", () => {
+  const state = active({ hasUiRuntimeOverride: true, lastUiRuntimeUpdateAt: 10_000, lastUiRuntimeRevision: 4 });
+  guard.markUiRuntimeUpdate(state, { uiRuntimeRevision: 5, mockServerUpdatedAt: "2026-06-05T10:00:10.000Z" }, 10_000);
+  const result = guard.shouldIgnoreFileRuntimeUpdate(
+    state,
+    runtime(1),
+    {
+      scenarios: [{ id: "manual-file-edit" }],
+      workspaceMtimeMs: 14_500,
+      serverConfigMtimeMs: 5_000,
+      scenarioFilesMtimeMs: 14_500,
+      editorUpdatedAt: "2026-06-05T10:00:01.000Z",
+    },
+    "file",
+    14_500,
+    3000,
+  );
+  assert.deepEqual(result, { ignore: false, reason: "fresh-file-update" });
+});

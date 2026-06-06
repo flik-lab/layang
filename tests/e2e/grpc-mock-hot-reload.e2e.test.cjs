@@ -63,10 +63,7 @@ async function writeWorkspaceScenario(workspaceDir, text, selectedScenarioId = "
       2,
     ),
   );
-  await fs.writeFile(
-    path.join(workspaceDir, "mocks", "scenarios", "demo.Greeter.SayHello.json"),
-    text,
-  );
+  await fs.writeFile(path.join(workspaceDir, "mocks", "scenarios", "demo.Greeter.SayHello.json"), text);
   await fs.writeFile(
     path.join(workspaceDir, "mocks", "scenarios", "manifest.json"),
     JSON.stringify({ "demo.Greeter/SayHello": { file: "demo.Greeter.SayHello.json", format: "json" } }, null, 2),
@@ -99,8 +96,14 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-test("gRPC mock e2e keeps latest UI scenario across stale file reloads and stale UI revisions", { skip: !hasGrpcDeps }, async () => {
-  const { startMockServer, updateActiveMockServer, stopMockServer } = require("../../electron/services/grpc-mock-server.cjs");
+test("gRPC mock e2e keeps latest UI scenario across stale file reloads and stale UI revisions", {
+  skip: !hasGrpcDeps,
+}, async () => {
+  const {
+    startMockServer,
+    updateActiveMockServer,
+    stopMockServer,
+  } = require("../../electron/services/grpc-mock-server.cjs");
   const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "layang-grpc-e2e-"));
   const protoPath = path.join(workspaceDir, "greeter.proto");
   const port = await getFreePort();
@@ -108,7 +111,21 @@ test("gRPC mock e2e keeps latest UI scenario across stale file reloads and stale
   await fs.writeFile(protoPath, protoText);
   await writeWorkspaceScenario(
     workspaceDir,
-    JSON.stringify({ version: 1, scenarios: [{ id: "disk-default", service: "demo.Greeter", method: "SayHello", response: { data: { message: "default" } } }] }, null, 2),
+    JSON.stringify(
+      {
+        version: 1,
+        scenarios: [
+          {
+            id: "disk-default",
+            service: "demo.Greeter",
+            method: "SayHello",
+            response: { data: { message: "default" } },
+          },
+        ],
+      },
+      null,
+      2,
+    ),
     "disk-default",
   );
 
@@ -119,7 +136,9 @@ test("gRPC mock e2e keeps latest UI scenario across stale file reloads and stale
       bindHost: "127.0.0.1",
       protoFiles: [{ name: "greeter.proto", text: protoText }],
       methods: [method("SayHello")],
-      scenarios: [{ id: "initial", service: "demo.Greeter", method: "SayHello", response: { data: { message: "initial" } } }],
+      scenarios: [
+        { id: "initial", service: "demo.Greeter", method: "SayHello", response: { data: { message: "initial" } } },
+      ],
       activeScenarioIds: { "demo.Greeter/SayHello": "initial" },
       enabledMethods: { "demo.Greeter/SayHello": true },
       workspaceDirectory: workspaceDir,
@@ -131,7 +150,9 @@ test("gRPC mock e2e keeps latest UI scenario across stale file reloads and stale
     await updateActiveMockServer(
       {
         uiRuntimeRevision: 1,
-        scenarios: [{ id: "ui-1", service: "demo.Greeter", method: "SayHello", response: { data: { message: "ui-1" } } }],
+        scenarios: [
+          { id: "ui-1", service: "demo.Greeter", method: "SayHello", response: { data: { message: "ui-1" } } },
+        ],
         activeScenarioIds: { "demo.Greeter/SayHello": "ui-1" },
         enabledMethods: { "demo.Greeter/SayHello": true },
         methods: [method("SayHello")],
@@ -144,7 +165,14 @@ test("gRPC mock e2e keeps latest UI scenario across stale file reloads and stale
     await updateActiveMockServer(
       {
         workspaceMtimeMs: Date.now() - 10_000,
-        scenarios: [{ id: "disk-default", service: "demo.Greeter", method: "SayHello", response: { data: { message: "default" } } }],
+        scenarios: [
+          {
+            id: "disk-default",
+            service: "demo.Greeter",
+            method: "SayHello",
+            response: { data: { message: "default" } },
+          },
+        ],
         activeScenarioIds: { "demo.Greeter/SayHello": "disk-default" },
         enabledMethods: { "demo.Greeter/SayHello": true },
       },
@@ -155,7 +183,9 @@ test("gRPC mock e2e keeps latest UI scenario across stale file reloads and stale
     await updateActiveMockServer(
       {
         uiRuntimeRevision: 2,
-        scenarios: [{ id: "ui-2", service: "demo.Greeter", method: "SayHello", response: { data: { message: "ui-2" } } }],
+        scenarios: [
+          { id: "ui-2", service: "demo.Greeter", method: "SayHello", response: { data: { message: "ui-2" } } },
+        ],
         activeScenarioIds: { "demo.Greeter/SayHello": "ui-2" },
         enabledMethods: { "demo.Greeter/SayHello": true },
       },
@@ -166,7 +196,9 @@ test("gRPC mock e2e keeps latest UI scenario across stale file reloads and stale
     await updateActiveMockServer(
       {
         uiRuntimeRevision: 1,
-        scenarios: [{ id: "ui-old", service: "demo.Greeter", method: "SayHello", response: { data: { message: "old" } } }],
+        scenarios: [
+          { id: "ui-old", service: "demo.Greeter", method: "SayHello", response: { data: { message: "old" } } },
+        ],
         activeScenarioIds: { "demo.Greeter/SayHello": "ui-old" },
         enabledMethods: { "demo.Greeter/SayHello": true },
       },
@@ -181,7 +213,11 @@ test("gRPC mock e2e keeps latest UI scenario across stale file reloads and stale
 });
 
 test("gRPC mock e2e ignores watcher reload while workspace write lock exists", { skip: !hasGrpcDeps }, async () => {
-  const { startMockServer, updateActiveMockServer, stopMockServer } = require("../../electron/services/grpc-mock-server.cjs");
+  const {
+    startMockServer,
+    updateActiveMockServer,
+    stopMockServer,
+  } = require("../../electron/services/grpc-mock-server.cjs");
   const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "layang-grpc-watch-e2e-"));
   const protoPath = path.join(workspaceDir, "greeter.proto");
   const port = await getFreePort();
@@ -189,7 +225,21 @@ test("gRPC mock e2e ignores watcher reload while workspace write lock exists", {
   await fs.writeFile(protoPath, protoText);
   await writeWorkspaceScenario(
     workspaceDir,
-    JSON.stringify({ version: 1, scenarios: [{ id: "disk-default", service: "demo.Greeter", method: "SayHello", response: { data: { message: "default" } } }] }, null, 2),
+    JSON.stringify(
+      {
+        version: 1,
+        scenarios: [
+          {
+            id: "disk-default",
+            service: "demo.Greeter",
+            method: "SayHello",
+            response: { data: { message: "default" } },
+          },
+        ],
+      },
+      null,
+      2,
+    ),
     "disk-default",
   );
 
@@ -217,10 +267,27 @@ test("gRPC mock e2e ignores watcher reload while workspace write lock exists", {
     );
     assert.equal((await callUnary(client, { name: "A" })).message, "ui");
 
-    await fs.writeFile(path.join(workspaceDir, "mocks", ".layang-mock-write-lock.json"), JSON.stringify({ status: "writing" }));
+    await fs.writeFile(
+      path.join(workspaceDir, "mocks", ".layang-mock-write-lock.json"),
+      JSON.stringify({ status: "writing" }),
+    );
     await writeWorkspaceScenario(
       workspaceDir,
-      JSON.stringify({ version: 1, scenarios: [{ id: "disk-default", service: "demo.Greeter", method: "SayHello", response: { data: { message: "default" } } }] }, null, 2),
+      JSON.stringify(
+        {
+          version: 1,
+          scenarios: [
+            {
+              id: "disk-default",
+              service: "demo.Greeter",
+              method: "SayHello",
+              response: { data: { message: "default" } },
+            },
+          ],
+        },
+        null,
+        2,
+      ),
       "disk-default",
     );
     await wait(1000);

@@ -796,7 +796,7 @@ export function Dialog({ open, onClose, children, fullWidth, maxWidth = "sm" }: 
       }}
     >
       <div
-        className="max-h-[calc(100vh-32px)] overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-xl"
+        className="flex max-h-[calc(100vh-32px)] flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-xl"
         style={{
           width: fullWidth ? `min(${maxDialogWidth}, calc(100vw - 32px))` : undefined,
           maxWidth: `calc(100vw - 32px)`,
@@ -817,7 +817,7 @@ export function DialogTitle({ children, sx, className, ...props }: AnyProps) {
   return (
     <div
       {...props}
-      className={cn("border-b border-border px-4 py-3 text-[14px] font-medium", className)}
+      className={cn("shrink-0 border-b border-border px-4 py-3 text-[14px] font-medium", className)}
       style={mergeStyles(sxToStyle(sx, theme), props.style)}
     >
       {children}
@@ -828,7 +828,11 @@ export function DialogTitle({ children, sx, className, ...props }: AnyProps) {
 export function DialogContent({ children, sx, className, ...props }: AnyProps) {
   const theme = useContext(ThemeContext);
   return (
-    <div {...props} className={cn("px-4 py-3", className)} style={mergeStyles(sxToStyle(sx, theme), props.style)}>
+    <div
+      {...props}
+      className={cn("min-h-0 flex-auto overflow-auto px-4 py-3", className)}
+      style={mergeStyles(sxToStyle(sx, theme), props.style)}
+    >
       {children}
     </div>
   );
@@ -839,7 +843,7 @@ export function DialogActions({ children, sx, className, ...props }: AnyProps) {
   return (
     <div
       {...props}
-      className={cn("flex justify-end gap-2 border-t border-border px-4 py-3", className)}
+      className={cn("flex shrink-0 justify-end gap-2 border-t border-border px-4 py-3", className)}
       style={mergeStyles(sxToStyle(sx, theme), props.style)}
     >
       {children}

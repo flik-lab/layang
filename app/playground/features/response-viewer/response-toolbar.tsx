@@ -73,7 +73,7 @@ export const ResponseToolbar = memo(
       </Stack>
     );
   },
-  (prev, next) =>
+  (prev: ResponseToolbarProps, next: ResponseToolbarProps) =>
     prev.filter === next.filter &&
     prev.hasEvents === next.hasEvents &&
     prev.hasLastResult === next.hasLastResult &&
@@ -97,5 +97,8 @@ export const ResponseWorkbenchTabs = memo(
   function ResponseWorkbenchTabs({ value, onChange }: { value: ResponseTab; onChange: (value: ResponseTab) => void }) {
     return <WorkbenchTabs<ResponseTab> value={value} items={responseWorkbenchTabItems} onChange={onChange} />;
   },
-  (prev, next) => prev.value === next.value && prev.onChange === next.onChange,
+  (
+    prev: { value: ResponseTab; onChange: (value: ResponseTab) => void },
+    next: { value: ResponseTab; onChange: (value: ResponseTab) => void },
+  ) => prev.value === next.value && prev.onChange === next.onChange,
 );

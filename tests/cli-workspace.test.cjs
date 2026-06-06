@@ -136,6 +136,64 @@ test("validates mock selected scenario and input matcher", async () => {
   });
 });
 
+test("reads manifest-listed mock scenario files and ignores stale unlocked files", async () => {
+  await withWorkspace(async (dir) => {
+    const scenariosDir = path.join(dir, "mocks", "scenarios");
+    await fs.rm(path.join(scenariosDir, "demo.Greeter.SayHello.json"), { force: true });
+    await fs.mkdir(path.join(scenariosDir, "demo.Greeter.SayHello"), { recursive: true });
+    await fs.writeFile(
+      path.join(scenariosDir, "manifest.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          layout: "scenario-files-v1",
+          methods: {
+            "demo.Greeter/SayHello": {
+              format: "json",
+              scenarios: { hello: { file: "demo.Greeter.SayHello/hello.json", format: "json" } },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    await fs.writeFile(
+      path.join(scenariosDir, "demo.Greeter.SayHello", "hello.json"),
+      JSON.stringify(
+        {
+          id: "hello",
+          service: "demo.Greeter",
+          method: "SayHello",
+          input: { equals: { name: "Alice" } },
+          response: { data: { message: "Hello" } },
+        },
+        null,
+        2,
+      ),
+    );
+    await fs.writeFile(
+      path.join(scenariosDir, "stale.json"),
+      JSON.stringify(
+        {
+          id: "stale",
+          service: "demo.Greeter",
+          method: "SayHello",
+          input: { equals: { name: "Stale" } },
+          response: { data: { message: "Should not load" } },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const workspace = await readWorkspace(dir);
+    assert.equal(workspace.scenarios.length, 1);
+    assert.equal(workspace.scenarios[0].id, "hello");
+    assert.equal(validateMockScenarios(workspace).ok, true);
+  });
+});
+
 test("prefers Git-friendly request item files over aggregate tabs.json", async () => {
   await withWorkspace(async (dir) => {
     await fs.mkdir(path.join(dir, "requests", "items"), { recursive: true });
