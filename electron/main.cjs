@@ -32,64 +32,68 @@ const workspaceSettingsFileName = "layang-settings.json";
 const mockWorkspaceWriteLockFileName = ".layang-mock-write-lock.json";
 const mainLogger = getLogger("main");
 
-app.setName("Layang");
+startApplication();
 
-if (handleWindowsSquirrelStartupEvent()) {
-  return;
-}
+function startApplication() {
+  app.setName("Layang");
 
-if (!app.requestSingleInstanceLock()) {
-  app.quit();
-  return;
-}
+  if (handleWindowsSquirrelStartupEvent()) {
+    return;
+  }
 
-registerWindowIpc();
-registerNativeGrpcIpc();
-registerGrpcMockIpc();
-registerWebSocketMockIpc();
-registerRestMockIpc();
-registerLoggerIpc();
+  if (!app.requestSingleInstanceLock()) {
+    app.quit();
+    return;
+  }
 
-if (process.platform === "win32") {
-  app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
-}
+  registerWindowIpc();
+  registerNativeGrpcIpc();
+  registerGrpcMockIpc();
+  registerWebSocketMockIpc();
+  registerRestMockIpc();
+  registerLoggerIpc();
 
-app.on("second-instance", () => {
-  const existingWindow = BrowserWindow.getAllWindows()[0];
-  if (!existingWindow) return;
+  if (process.platform === "win32") {
+    app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
+  }
 
-  if (existingWindow.isMinimized()) existingWindow.restore();
-  existingWindow.show();
-  existingWindow.focus();
-});
+  app.on("second-instance", () => {
+    const existingWindow = BrowserWindow.getAllWindows()[0];
+    if (!existingWindow) return;
 
-// Allow HTTPS endpoints with self-signed or otherwise untrusted certificates.
-// This is intended for the local/trusted desktop API workbench use case.
-app.on("certificate-error", (event, _webContents, url, error, _certificate, callback) => {
-  event.preventDefault();
-  mainLogger.warn("trusted desktop certificate override", { url, error });
-  callback(true);
-});
-
-app.whenReady().then(() => {
-  configureLogger({ app, appName: "Layang" });
-  registerProcessErrorHandlers(getLogger("process"));
-  mainLogger.info("app ready", { version: app.getVersion(), isPackaged: app.isPackaged });
-  configureAutoUpdates();
-  createWindow();
-
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (existingWindow.isMinimized()) existingWindow.restore();
+    existingWindow.show();
+    existingWindow.focus();
   });
-});
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
-});
+  // Allow HTTPS endpoints with self-signed or otherwise untrusted certificates.
+  // This is intended for the local/trusted desktop API workbench use case.
+  app.on("certificate-error", (event, _webContents, url, error, _certificate, callback) => {
+    event.preventDefault();
+    mainLogger.warn("trusted desktop certificate override", { url, error });
+    callback(true);
+  });
 
-app.on("before-quit", () => {
-  stopRuntimeServices("app before quit");
-});
+  app.whenReady().then(() => {
+    configureLogger({ app, appName: "Layang" });
+    registerProcessErrorHandlers(getLogger("process"));
+    mainLogger.info("app ready", { version: app.getVersion(), isPackaged: app.isPackaged });
+    configureAutoUpdates();
+    createWindow();
+
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
+
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") app.quit();
+  });
+
+  app.on("before-quit", () => {
+    stopRuntimeServices("app before quit");
+  });
+}
 
 function handleWindowsSquirrelStartupEvent() {
   if (process.platform !== "win32") return false;
