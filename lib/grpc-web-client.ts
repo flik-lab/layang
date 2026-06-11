@@ -564,16 +564,10 @@ class GrpcWebTextBase64Decoder {
 
       if (decodableLength <= 0) break;
 
-      if (!final && decodableLength === this.pending.length) {
-        // Keep one 4-byte quantum buffered. Some proxies flush base64 text in tiny chunks;
-        // retaining a small tail avoids aggressive decoding without blocking real-time frames.
-        if (decodableLength <= 4) break;
-        const entity = this.pending.slice(0, decodableLength - 4);
-        chunks.push(base64Decode(entity));
-        this.pending = this.pending.slice(decodableLength - 4);
-        continue;
-      }
-
+      // Decode every complete 4-character base64 quantum immediately.
+      // Keeping a full quantum buffered makes low-frequency server streams look stalled:
+      // a server can send one complete gRPC frame and then stay idle, but the frame parser
+      // will not see the last bytes until another chunk arrives or the stream is closed.
       const entity = this.pending.slice(0, decodableLength);
       chunks.push(base64Decode(entity));
       this.pending = this.pending.slice(decodableLength);

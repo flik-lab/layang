@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.0.3
+
+### Major
+
+- Fixed gRPC-Web server-streaming delivery so the first streamed response is rendered immediately instead of being buffered until the listener is stopped.
+- Added Windows Squirrel setup support with install/update/uninstall event handling for Desktop and Start Menu shortcuts.
+- Added GitHub Releases based auto-update flow for packaged Windows builds, including update checks, download handling, and restart-to-update confirmation.
+
+### Minor
+
+- Improved native gRPC server-streaming listener startup by explicitly resuming the stream call.
+- Added single-instance behavior so reopening Layang focuses the existing window instead of opening a duplicate instance.
+- Added Windows App User Model ID configuration for more consistent taskbar and shortcut behavior.
+- Updated release packaging scripts and GitHub Actions artifacts for Squirrel installer, RELEASES metadata, and NuGet update packages.
+
+### Documentation
+
+- Added Windows setup documentation covering installer artifacts, shortcuts, auto-update behavior, and MSI as an optional enterprise build.
+
 ## 1.0.2
 
 ### Major
