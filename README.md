@@ -5,12 +5,12 @@
 # Layang
 
 [![Website](https://img.shields.io/badge/website-layang.mff.web.id-blue)](https://layang.mff.web.id/)
-[![Version](https://img.shields.io/badge/version-1.0.2-blue)](https://github.com/flik-lab/layang/releases)
+[![Version](https://img.shields.io/badge/version-1.0.3-blue)](https://github.com/flik-lab/layang/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Layang is a workspace-based API workbench for testing, mocking, benchmarking, documenting, and automating APIs across gRPC, gRPC-Web, WebSocket, and REST.
 
-Layang `1.0.2` improves the workspace workflow with a refactored workbench, split gRPC mock scenario files, safer runtime reload behavior, Electron logging, release scripts, and expanded regression coverage.
+Layang `1.0.3` fixes the first-message delivery issue in gRPC-Web server streams and improves the Windows desktop setup with Squirrel installer shortcuts, single-instance behavior, and GitHub Releases based auto-update support.
 
 ![Layang workbench](github-pages/assets/layang-app-screenshot.png)
 
@@ -41,6 +41,10 @@ Layang `1.0.2` improves the workspace workflow with a refactored workbench, spli
 - Use the WebSocket workbench for live connections, message sending, local mock responses, benchmark exports, and generated docs.
 - Use the REST workbench for params, headers, auth, bodies, docs, examples, local mocks, scenario matching, and templates.
 
+## Release 1.0.3
+
+The `1.0.3` release fixes gRPC-Web server-streaming delivery so the first streamed response appears immediately instead of waiting until the listener is stopped. It also improves the Windows desktop setup with Squirrel installer shortcuts, single-instance behavior, and GitHub Releases based auto-update support.
+
 ## Release 1.0.2
 
 The `1.0.2` release focuses on stability and maintainability. It keeps REST, WebSocket, gRPC, and gRPC-Web in one workspace while improving gRPC mock scenario persistence, manifest-based scenario file loading, runtime freshness checks, logging, packaging commands, and test coverage.
@@ -49,10 +53,12 @@ The `1.0.2` release focuses on stability and maintainability. It keeps REST, Web
 
 For most users, the simplest path is:
 
-1. Download the latest Windows installer from [GitHub Releases](https://github.com/flik-lab/layang/releases).
+1. Download `LayangSetup.exe` from [GitHub Releases](https://github.com/flik-lab/layang/releases).
 2. Run the installer.
-3. Open Layang from Start Menu or Desktop shortcut.
+3. Open Layang from the Start Menu or Desktop shortcut.
 4. On first launch, choose the workspace folder location you want to use.
+
+Windows packaging and auto-update details are documented in [WINDOWS_SETUP.md](./WINDOWS_SETUP.md).
 
 ## Mocking And Streaming
 

@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
-const windowsAppUserModelId = "fliklab.layang.desktop";
+const windowsAppUserModelId = "com.squirrel.Layang.layang";
 const windowsUpgradeCode = "1dd84257-e27c-4a72-abcb-12c8f88ecf42";
 
 function ensureElectronWinstaller7z() {
@@ -29,6 +29,13 @@ export default {
     appCategoryType: "public.app-category.developer-tools",
     icon: path.join(rootDir, "electron", "assets", "icon"),
     asar: true,
+    win32metadata: {
+      CompanyName: "Flik Lab",
+      FileDescription: "Layang API workbench",
+      InternalName: "Layang",
+      OriginalFilename: "layang.exe",
+      ProductName: "Layang",
+    },
     ignore: [
       /^\/\.github($|\/)/,
       /^\/\.next($|\/)/,
@@ -74,7 +81,11 @@ export default {
         name: "Layang",
         authors: "Flik and Layang contributors",
         description: "Local-first gRPC and mock server workbench.",
+        exe: "layang.exe",
+        noMsi: true,
+        setupExe: "LayangSetup.exe",
         setupIcon: path.join(rootDir, "electron", "assets", "icon.ico"),
+        shortcutName: "Layang",
       },
     },
     {

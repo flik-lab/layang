@@ -1,4 +1,5 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
+const { app, autoUpdater, BrowserWindow, ipcMain, dialog, shell } = require("electron");
+const { spawn } = require("node:child_process");
 const fs = require("node:fs/promises");
 const fsSync = require("node:fs");
 const path = require("node:path");
@@ -24,10 +25,23 @@ const { createWindow } = require("./window/create-window.cjs");
 const { readJsonIfExists, walkDirectory, writeTextInside } = require("./utils/file-utils.cjs");
 const { windowFromEvent } = require("./utils/ipc-utils.cjs");
 const { safePathSegment, safeRelativePath } = require("./utils/path-utils.cjs");
-const WINDOWS_APP_USER_MODEL_ID = "fliklab.layang.desktop";
+const WINDOWS_APP_USER_MODEL_ID = "com.squirrel.Layang.layang";
+const UPDATE_FEED_BASE_URL = "https://update.electronjs.org/flik-lab/layang";
+const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1000;
 const workspaceSettingsFileName = "layang-settings.json";
 const mockWorkspaceWriteLockFileName = ".layang-mock-write-lock.json";
 const mainLogger = getLogger("main");
+
+app.setName("Layang");
+
+if (handleWindowsSquirrelStartupEvent()) {
+  return;
+}
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  return;
+}
 
 registerWindowIpc();
 registerNativeGrpcIpc();
@@ -39,6 +53,15 @@ registerLoggerIpc();
 if (process.platform === "win32") {
   app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
 }
+
+app.on("second-instance", () => {
+  const existingWindow = BrowserWindow.getAllWindows()[0];
+  if (!existingWindow) return;
+
+  if (existingWindow.isMinimized()) existingWindow.restore();
+  existingWindow.show();
+  existingWindow.focus();
+});
 
 // Allow HTTPS endpoints with self-signed or otherwise untrusted certificates.
 // This is intended for the local/trusted desktop API workbench use case.
@@ -52,6 +75,7 @@ app.whenReady().then(() => {
   configureLogger({ app, appName: "Layang" });
   registerProcessErrorHandlers(getLogger("process"));
   mainLogger.info("app ready", { version: app.getVersion(), isPackaged: app.isPackaged });
+  configureAutoUpdates();
   createWindow();
 
   app.on("activate", () => {
@@ -64,11 +88,151 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
-  mainLogger.info("app before quit: stopping mock servers");
+  stopRuntimeServices("app before quit");
+});
+
+function handleWindowsSquirrelStartupEvent() {
+  if (process.platform !== "win32") return false;
+
+  const squirrelEvent = process.argv.find((argument) => argument.startsWith("--squirrel-"));
+  if (!squirrelEvent || squirrelEvent === "--squirrel-firstrun") return false;
+
+  const updateExePath = path.resolve(path.dirname(process.execPath), "..", "Update.exe");
+  const appExeName = path.basename(process.execPath);
+  const shortcutLocations = "Desktop,StartMenu";
+
+  const runUpdateExe = (args) => {
+    try {
+      spawn(updateExePath, args, { detached: true, stdio: "ignore" }).unref();
+    } catch {
+      // Squirrel install/update/uninstall events must exit cleanly and must not open the UI.
+    }
+
+    setTimeout(() => app.quit(), 1_000);
+  };
+
+  switch (squirrelEvent) {
+    case "--squirrel-install":
+    case "--squirrel-updated":
+      runUpdateExe(["--createShortcut", appExeName, `--shortcut-locations=${shortcutLocations}`]);
+      return true;
+
+    case "--squirrel-uninstall":
+      runUpdateExe(["--removeShortcut", appExeName, `--shortcut-locations=${shortcutLocations}`]);
+      return true;
+
+    case "--squirrel-obsolete":
+      app.quit();
+      return true;
+
+    default:
+      return false;
+  }
+}
+
+function stopRuntimeServices(reason) {
+  mainLogger.info(`${reason}: stopping mock servers`);
   void stopMockServer();
   void stopWebSocketMockServer();
   void stopRestMockServer();
-});
+}
+
+function configureAutoUpdates() {
+  if (process.env.LAYANG_DISABLE_AUTO_UPDATE === "1") {
+    mainLogger.info("auto update disabled by environment variable");
+    return;
+  }
+
+  if (!app.isPackaged) {
+    mainLogger.info("auto update disabled outside packaged app");
+    return;
+  }
+
+  if (process.platform !== "win32" && process.platform !== "darwin") {
+    mainLogger.info("auto update disabled for unsupported platform", { platform: process.platform });
+    return;
+  }
+
+  const feedUrl = `${UPDATE_FEED_BASE_URL}/${process.platform}-${process.arch}/${app.getVersion()}`;
+  let updateCheckOrDownloadInProgress = false;
+  let updateReadyToInstall = false;
+
+  try {
+    autoUpdater.setFeedURL({ url: feedUrl });
+  } catch (error) {
+    mainLogger.warn("failed to configure auto update feed", {
+      error: error?.message ? String(error.message) : String(error),
+    });
+    return;
+  }
+
+  autoUpdater.on("checking-for-update", () => {
+    updateCheckOrDownloadInProgress = true;
+    mainLogger.info("checking for update", { feedUrl });
+  });
+
+  autoUpdater.on("update-available", () => {
+    mainLogger.info("update available; downloading in background");
+  });
+
+  autoUpdater.on("update-not-available", () => {
+    updateCheckOrDownloadInProgress = false;
+    mainLogger.info("no update available");
+  });
+
+  autoUpdater.on("error", (error) => {
+    updateCheckOrDownloadInProgress = false;
+    mainLogger.warn("auto update error", {
+      error: error?.message ? String(error.message) : String(error),
+    });
+  });
+
+  autoUpdater.on("before-quit-for-update", () => {
+    stopRuntimeServices("app before update quit");
+  });
+
+  autoUpdater.on("update-downloaded", async (_event, releaseNotes, releaseName) => {
+    updateCheckOrDownloadInProgress = false;
+    updateReadyToInstall = true;
+    mainLogger.info("update downloaded", { releaseName });
+
+    const result = await dialog.showMessageBox({
+      type: "info",
+      buttons: ["Restart & update", "Later"],
+      defaultId: 0,
+      cancelId: 1,
+      title: "Layang update ready",
+      message: releaseName ? `Layang ${releaseName} is ready` : "A new Layang update is ready",
+      detail:
+        typeof releaseNotes === "string" && releaseNotes.trim()
+          ? `${releaseNotes}\n\nRestart Layang to apply the update.`
+          : "Restart Layang to apply the downloaded update.",
+    });
+
+    if (result.response === 0) autoUpdater.quitAndInstall();
+  });
+
+  const checkForUpdates = () => {
+    if (updateCheckOrDownloadInProgress || updateReadyToInstall) {
+      mainLogger.info("skip update check because an update check/download is already active");
+      return;
+    }
+
+    try {
+      updateCheckOrDownloadInProgress = true;
+      autoUpdater.checkForUpdates();
+    } catch (error) {
+      updateCheckOrDownloadInProgress = false;
+      mainLogger.warn("failed to start update check", {
+        error: error?.message ? String(error.message) : String(error),
+      });
+    }
+  };
+
+  const firstCheckDelayMs = process.platform === "win32" && process.argv.includes("--squirrel-firstrun") ? 10_000 : 5_000;
+  setTimeout(checkForUpdates, firstCheckDelayMs);
+  setInterval(checkForUpdates, UPDATE_CHECK_INTERVAL_MS);
+}
 
 ipcMain.handle("workspace:get-default-folder", async () => {
   return { ok: true, directoryPath: getConfiguredWorkspaceDirectory() };

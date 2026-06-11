@@ -466,6 +466,11 @@ function invokeServerStreaming(
       }
       finish(trailers);
     });
+
+    // Be explicit about switching grpc-js ClientReadableStream into flowing mode.
+    // The "data" listener normally does this, but calling resume() keeps native streams
+    // consistent with the UI expectation that messages appear as soon as they arrive.
+    if (typeof call.resume === "function") call.resume();
   });
 }
 
