@@ -58,9 +58,9 @@ pnpm run desktop:win:setup:msi
 
 ## GitHub Release checklist
 
-1. Bump `package.json` version, for example `1.0.3`.
+1. Bump `package.json` version, for example `1.0.4`.
 2. Open **Actions → Release → Run workflow**. The workflow reads `package.json` and creates/publishes tag `v${package.version}` automatically.
-3. Alternatively, push a SemVer tag manually, for example `v1.0.3`; the workflow validates that the tag matches `package.json`.
+3. Alternatively, push a SemVer tag manually, for example `v1.0.4`; the workflow validates that the tag matches `package.json`.
 4. Let the release workflow publish Windows artifacts.
 5. Confirm the GitHub Release contains:
 

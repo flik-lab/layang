@@ -4,6 +4,7 @@ const fs = require("node:fs/promises");
 const grpc = require("@grpc/grpc-js");
 const protoLoader = require("@grpc/proto-loader");
 const { writeProtoWorkspace } = require("../utils/file-utils.cjs");
+const { getCurrentCertificateSettings } = require("../utils/certificate-settings.cjs");
 const { safeRelativePath } = require("../utils/path-utils.cjs");
 
 /**
@@ -53,7 +54,7 @@ async function invokeNativeGrpc(payload, emit = () => undefined, registerCall = 
     }
 
     const target = normalizeNativeTarget(payload.targetUrl);
-    const credentials = target.secure ? grpc.credentials.createSsl() : grpc.credentials.createInsecure();
+    const credentials = createNativeGrpcCredentials(target, emit);
 
     const client = new ServiceCtor(target.address, credentials, {
       "grpc.max_receive_message_length": 50 * 1024 * 1024,
@@ -211,6 +212,36 @@ function normalizeNativeTarget(rawTarget) {
   }
 
   return { address, secure };
+}
+
+/**
+ * Creates native gRPC credentials from desktop certificate settings.
+ */
+function createNativeGrpcCredentials(target, emit) {
+  if (!target.secure) return grpc.credentials.createInsecure();
+
+  const settings = getCurrentCertificateSettings();
+  const caCertificatePem = typeof settings.caCertificatePem === "string" ? settings.caCertificatePem.trim() : "";
+  if (caCertificatePem) {
+    emit({
+      type: "log",
+      level: "info",
+      message: "Native gRPC using imported certificate PEM",
+      details: { secure: true },
+    });
+    return grpc.credentials.createSsl(Buffer.from(caCertificatePem, "utf8"));
+  }
+
+  if (settings.bypassTlsErrors) {
+    emit({
+      type: "log",
+      level: "warn",
+      message: "Native gRPC TLS bypass is not applied; import a CA PEM for grpcs:// targets.",
+      details: { secure: true },
+    });
+  }
+
+  return grpc.credentials.createSsl();
 }
 
 /**

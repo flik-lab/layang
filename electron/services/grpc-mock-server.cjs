@@ -544,10 +544,14 @@ async function updateActiveMockServer(payload, source) {
       updatedAt: runtime.updatedAt,
       source: runtime.source,
       ignoredFileUpdate: true,
+      ignoredFileUpdateReason: fileUpdateGuard.reason,
+      retryAfterMs: fileUpdateGuard.retryAfterMs || 0,
       message:
         fileUpdateGuard.reason === "partial-workspace-write"
           ? "Ignored incomplete mock scenario file reload while workspace save is still writing."
-          : "Ignored file mock reload because the running editor state is newer.",
+          : fileUpdateGuard.reason === "ui-quiet-period"
+            ? "Delayed file mock reload until editor live update quiet period is complete."
+            : "Ignored file mock reload because the running editor state is newer.",
     });
   }
   const nextStreamDefaults =
@@ -669,7 +673,10 @@ async function startMockScenarioWatcher(workspaceDirectory, serverState) {
         scheduleReload(fileRuntimeReloadDebounceMs);
         return;
       }
-      await updateActiveMockServer(loaded, "file");
+      const result = await updateActiveMockServer(loaded, "file");
+      if (result?.ignoredFileUpdate && Number(result.retryAfterMs || 0) > 0) {
+        scheduleReload(Number(result.retryAfterMs || fileRuntimeReloadDebounceMs));
+      }
     } catch (error) {
       mockLogger.warn("scenario file hot reload skipped", error?.message ? error.message : error);
     }

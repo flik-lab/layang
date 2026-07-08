@@ -1,10 +1,10 @@
 # Layang GitHub Pages
 
-This folder is the only public documentation and landing-site source for Layang.
+This folder is the public landing-site source for Layang.
 
 ## Pages
 
-- `index.html` - product landing page for the official Layang 1.0.0 release, with REST, WebSocket, gRPC, gRPC-Web, local mock, documentation, workspace, CLI, and CTA sections.
+- `index.html` - product landing page for Layang 1.0.4, including REST, WebSocket, gRPC, gRPC-Web, local mocks, manual mock file refresh, certificate settings, documentation, workspace files, CLI, and download sections.
 
 ## Assets
 

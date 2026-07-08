@@ -9,6 +9,8 @@ const { registerWebSocketMockIpc } = require("./ipc/ws-mock-ipc.cjs");
 const { registerRestMockIpc } = require("./ipc/rest-mock-ipc.cjs");
 const { registerWindowIpc } = require("./ipc/window-ipc.cjs");
 const { registerLoggerIpc } = require("./ipc/logger-ipc.cjs");
+const { registerCertificateSettingsIpc } = require("./ipc/certificate-settings-ipc.cjs");
+const { registerAppZoomIpc } = require("./ipc/app-zoom-ipc.cjs");
 const {
   normalizeActiveScenarioIds,
   normalizeEnabledMethods,
@@ -21,6 +23,11 @@ const {
 const { stopWebSocketMockServer } = require("./services/ws-mock-server.cjs");
 const { stopRestMockServer } = require("./services/rest-mock-server.cjs");
 const { configureLogger, getLogger, registerProcessErrorHandlers } = require("./utils/logger.cjs");
+const {
+  configureCertificateSettings,
+  shouldAllowCertificateError,
+} = require("./utils/certificate-settings.cjs");
+const { configureAppZoomSettings } = require("./utils/app-zoom-settings.cjs");
 const { createWindow } = require("./window/create-window.cjs");
 const { readJsonIfExists, walkDirectory, writeTextInside } = require("./utils/file-utils.cjs");
 const { windowFromEvent } = require("./utils/ipc-utils.cjs");
@@ -52,6 +59,8 @@ function startApplication() {
   registerWebSocketMockIpc();
   registerRestMockIpc();
   registerLoggerIpc();
+  registerCertificateSettingsIpc();
+  registerAppZoomIpc();
 
   if (process.platform === "win32") {
     app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
@@ -66,16 +75,23 @@ function startApplication() {
     existingWindow.focus();
   });
 
-  // Allow HTTPS endpoints with self-signed or otherwise untrusted certificates.
-  // This is intended for the local/trusted desktop API workbench use case.
-  app.on("certificate-error", (event, _webContents, url, error, _certificate, callback) => {
-    event.preventDefault();
-    mainLogger.warn("trusted desktop certificate override", { url, error });
-    callback(true);
+  app.on("certificate-error", (event, _webContents, url, error, certificate, callback) => {
+    const decision = shouldAllowCertificateError(certificate);
+    if (decision.allow) {
+      event.preventDefault();
+      mainLogger.warn("desktop certificate error accepted by user policy", { url, error, reason: decision.reason });
+      callback(true);
+      return;
+    }
+
+    mainLogger.warn("desktop certificate error rejected", { url, error, reason: decision.reason });
+    callback(false);
   });
 
   app.whenReady().then(() => {
     configureLogger({ app, appName: "Layang" });
+    configureCertificateSettings({ app });
+    configureAppZoomSettings({ app });
     registerProcessErrorHandlers(getLogger("process"));
     mainLogger.info("app ready", { version: app.getVersion(), isPackaged: app.isPackaged });
     configureAutoUpdates();

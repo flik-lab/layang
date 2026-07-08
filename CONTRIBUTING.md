@@ -33,10 +33,16 @@ Build the production app:
 pnpm run build
 ```
 
-Create the Windows MSI installer:
+Create the default Windows Squirrel installer:
 
 ```bash
-pnpm run desktop:setup
+pnpm run desktop:win:setup
+```
+
+Create the optional Windows MSI installer:
+
+```bash
+pnpm run desktop:win:setup:msi
 ```
 
 Install WiX Toolset v3 first on Windows if you need MSI builds:

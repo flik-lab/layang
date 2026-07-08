@@ -2,6 +2,7 @@
 
 import type { ChangeEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { LayangLoggerSettings, LayangLogLevel } from "../../shared/logger";
+import type { LayangCertificateSettings } from "../../shared/certificate-settings";
 
 type TextInputChangeEvent = ChangeEvent<HTMLInputElement | HTMLTextAreaElement>;
 type SelectInputChangeEvent = ChangeEvent<HTMLSelectElement>;
@@ -27,10 +28,14 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
     Select,
     Snackbar,
     Stack,
+    Switch,
     TextField,
     Typography,
     activeTransportMode,
     addMockScenarioForMethod,
+    certificateDraft,
+    certificateInfo,
+    certificateSettingsOpen,
     applyWorkspacePreference,
     chooseCustomWorkspacePreference,
     collectionDialogOpen,
@@ -58,6 +63,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
     mockScenarioEditing,
     mockServer,
     mockServerStatus,
+    importCertificateSettingsFile,
     loggerDraft,
     loggerInfo,
     loggerLevelOptions,
@@ -66,6 +72,8 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
     parsedMockConfig,
     protoPreview,
     openLogFolder,
+    clearCertificateSettingsPem,
+    removeCertificateSettingsItem,
     removeEditingEnvironment,
     requestKindDraft,
     requestNameDialogOpen,
@@ -76,6 +84,9 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
     setEnvDialogOpen,
     setEnvDraftName,
     setEnvDraftUrl,
+    saveCertificateSettings,
+    setCertificateDraft,
+    setCertificateSettingsOpen,
     setLoggerDraft,
     setLoggerSettingsOpen,
     setMockScenarioDialogOpen,
@@ -401,6 +412,124 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
           <Box sx={{ flex: 1 }} />
           <Button onClick={() => setLoggerSettingsOpen(false)}>Close</Button>
           <Button variant="contained" onClick={() => void saveLoggerSettings()}>
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog open={certificateSettingsOpen} onClose={() => setCertificateSettingsOpen(false)} fullWidth maxWidth="md">
+        <DialogTitle>Certificate settings</DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <Stack spacing={1.4} sx={{ mt: 0.5 }}>
+            <Typography variant="body2" color="text.secondary">
+              These settings are stored in desktop user data, not in the workspace. Use imported certificates for
+              internal HTTPS, self-signed APISIX, REST, gRPC-Web, or native gRPC lab targets.
+            </Typography>
+            <Paper variant="outlined" sx={{ p: 1.25, borderRadius: 2 }}>
+              <Stack spacing={0.7}>
+                <Typography variant="body2" fontWeight={700}>
+                  Bypass HTTPS certificate validation
+                </Typography>
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <Switch
+                    checked={certificateDraft.bypassTlsErrors}
+                    onChange={(event: { target: { checked: boolean } }) =>
+                      setCertificateDraft((current: LayangCertificateSettings) => ({
+                        ...current,
+                        bypassTlsErrors: event.target.checked,
+                      }))
+                    }
+                    aria-label="Bypass HTTPS certificate errors in this desktop app"
+                    title={certificateDraft.bypassTlsErrors ? "Bypass on" : "Bypass off"}
+                  />
+                  <Typography variant="body2">Bypass HTTPS certificate errors in this desktop app</Typography>
+                </Stack>
+                <Typography variant="caption" color="error">
+                  Use only for local development or trusted lab networks. This allows Electron to accept HTTPS
+                  certificate errors in the renderer network stack.
+                </Typography>
+              </Stack>
+            </Paper>
+            <Paper variant="outlined" sx={{ p: 1.25, borderRadius: 2 }}>
+              <Stack spacing={1}>
+                <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+                  <Box>
+                    <Typography variant="body2" fontWeight={700}>
+                      Imported certificates
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {certificateDraft.caCertificates.length} certificate
+                      {certificateDraft.caCertificates.length === 1 ? "" : "s"} trusted by Layang.
+                    </Typography>
+                  </Box>
+                  <Button size="small" variant="outlined" onClick={() => void importCertificateSettingsFile()}>
+                    Import certificates
+                  </Button>
+                </Stack>
+                {certificateDraft.caCertificates.length === 0 ? (
+                  <Paper variant="outlined" sx={{ p: 1.1, borderRadius: 1.5, bgcolor: "action.hover" }}>
+                    <Typography variant="body2" color="text.secondary">
+                      No certificates imported. Import one or more .crt, .cer, or .pem files to trust internal HTTPS
+                      and grpcs:// targets without using bypass mode.
+                    </Typography>
+                  </Paper>
+                ) : (
+                  <Stack spacing={0.75}>
+                    {certificateDraft.caCertificates.map((certificate: LayangCertificateSettings["caCertificates"][number]) => (
+                      <Paper key={certificate.id} variant="outlined" sx={{ p: 1, borderRadius: 1.5 }}>
+                        <Stack spacing={0.6}>
+                          <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+                            <Typography variant="body2" fontWeight={700} noWrap title={certificate.name}>
+                              {certificate.name}
+                            </Typography>
+                            <Button
+                              size="small"
+                              color="error"
+                              onClick={() => void removeCertificateSettingsItem(certificate.id)}
+                            >
+                              Remove
+                            </Button>
+                          </Stack>
+                          <Typography variant="caption" color="text.secondary" sx={{ wordBreak: "break-all" }}>
+                            SHA-256: {certificate.fingerprint || "Unknown fingerprint"}
+                          </Typography>
+                          {certificate.sourcePath ? (
+                            <Typography variant="caption" color="text.secondary" sx={{ wordBreak: "break-all" }}>
+                              Source: {certificate.sourcePath}
+                            </Typography>
+                          ) : null}
+                        </Stack>
+                      </Paper>
+                    ))}
+                  </Stack>
+                )}
+              </Stack>
+            </Paper>
+            <Paper variant="outlined" sx={{ p: 1.25, borderRadius: 2 }}>
+              <Typography variant="caption" color="text.secondary">
+                Settings file
+              </Typography>
+              <Typography variant="body2" sx={{ wordBreak: "break-all" }}>
+                {certificateInfo?.settingsFilePath || "Certificate settings are only available in the desktop app."}
+              </Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ wordBreak: "break-all" }}>
+                {certificateInfo?.fingerprint
+                  ? `Combined SHA-256 fingerprint: ${certificateInfo.fingerprint}`
+                  : "No certificate configured."}
+              </Typography>
+            </Paper>
+            <Typography variant="caption" color="text.secondary">
+              Native gRPC uses imported certificates as root certificates for grpcs:// or https:// targets. REST and
+              gRPC-Web can use either imported matching certificates or the bypass checkbox above.
+            </Typography>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button color="error" onClick={() => void clearCertificateSettingsPem()}>
+            Clear all
+          </Button>
+          <Box sx={{ flex: 1 }} />
+          <Button onClick={() => setCertificateSettingsOpen(false)}>Close</Button>
+          <Button variant="contained" onClick={() => void saveCertificateSettings()}>
             Save
           </Button>
         </DialogActions>

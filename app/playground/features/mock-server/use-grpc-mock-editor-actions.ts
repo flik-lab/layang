@@ -11,6 +11,7 @@ import type {
   WorkspaceExportBundle,
 } from "../../shared/workbench-types";
 import type { LoadedProto, RpcMethodInfo } from "@/lib/types";
+import { syncRunningMockServerFromEditor } from "./use-mock-runtime-sync";
 
 type StateSetter<T> = (value: T | ((current: T) => T)) => void;
 type MockScenarioEditorDraft = {
@@ -25,6 +26,7 @@ type ActionContext = Record<string, any> & {
   selectedMethod: RpcMethodInfo | null;
   mockServer: MockServerProject;
   setMockServer: StateSetter<MockServerProject>;
+  mockServerStatus: MockServerStatus;
   setMockServerStatus: StateSetter<MockServerStatus>;
   setMockScenarioEditorDraft: StateSetter<MockScenarioEditorDraft>;
   currentMockScenarios: MockScenario[];
@@ -39,6 +41,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
     buildDefaultMockScenario,
     clamp,
     clearInheritedMockStreamOverridesForDefaultChange,
+    clearMockServerLocalDirty,
     currentMockActiveScenario,
     currentMockEditorText,
     currentMockFile,
@@ -56,12 +59,15 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
     markMockServerLocalDirty,
     mergeExternalScenarioScenariosIntoProject,
     methodKey,
+    mockRuntimeAppliedSeqRef,
     mockRuntimeLastSyncSignatureRef,
+    mockRuntimeUpdateSeqRef,
     mockScenarioDraftId,
     mockScenarioEditing,
     mockScenarioEditorDraft,
     mockScenarioInputRef,
     mockServer,
+    mockServerStatus,
     normalizeMockBindHost,
     normalizeMockPort,
     normalizeMockStreamSettings,
@@ -603,6 +609,41 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
   }
 
   /**
+   * Manually pulls the latest mock scenario files from the workspace folder.
+   * This replaces automatic external-file polling so disk edits only apply when the user asks for them.
+   */
+  async function fetchMockScenarioFilesFromWorkspace() {
+    try {
+      const effectiveMockServer = await refreshGrpcMockServerFromWorkspace({
+        silent: true,
+        respectLocalDirty: false,
+        throwOnError: true,
+      });
+      clearMockServerLocalDirty?.();
+
+      if (mockServerStatus.running && loaded && window.electronMock?.update) {
+        await syncRunningMockServerFromEditor({
+          mockServer: effectiveMockServer,
+          mockServerStatus,
+          setMockServerStatus,
+          loaded,
+          protoFiles,
+          workspaceFolderPath,
+          updateSeqRef: mockRuntimeUpdateSeqRef,
+          appliedSeqRef: mockRuntimeAppliedSeqRef,
+          lastSyncSignatureRef: mockRuntimeLastSyncSignatureRef,
+        });
+        showToast("Mock scenario files fetched and running server updated.", "success");
+        return;
+      }
+
+      showToast("Mock scenario files fetched from workspace.", "success");
+    } catch (err) {
+      showToast(`Fetch mock scenario files failed: ${toErrorMessage(err)}`, "error");
+    }
+  }
+
+  /**
    * Opens the workspace mock scenario folder so JSON/YAML files can be edited directly on disk.
    */
   async function openMockScenarioFolder() {
@@ -758,6 +799,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
     handleMockGlobalStreamBaseChange,
     importMockScenarioFile,
     exportMockScenarioFile,
+    fetchMockScenarioFilesFromWorkspace,
     openMockScenarioFolder,
     startMockServer,
     stopMockServer,

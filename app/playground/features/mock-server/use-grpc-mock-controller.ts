@@ -78,14 +78,21 @@ export function useGrpcMockController({
   }
 
   async function refreshGrpcMockServerFromWorkspace(
-    options: { silent?: boolean; respectLocalDirty?: boolean } = {},
+    options: { silent?: boolean; respectLocalDirty?: boolean; throwOnError?: boolean } = {},
   ): Promise<MockServerProject> {
-    if (!workspaceFolderPath || !window.electronWorkspace?.readMockServer) return mockServerRef.current;
+    if (!workspaceFolderPath || !window.electronWorkspace?.readMockServer) {
+      const error = "Mock scenario file refresh is available after a workspace folder is opened or saved.";
+      if (options.throwOnError) throw new Error(error);
+      if (!options.silent) showToast(error, "warning");
+      return mockServerRef.current;
+    }
     if (options.respectLocalDirty !== false && isMockServerLocalDirty()) return mockServerRef.current;
 
     const result = await window.electronWorkspace.readMockServer(workspaceFolderPath);
     if (!result.ok) {
-      if (!options.silent) showToast(result.error || "Failed to read mock scenario files from workspace.", "error");
+      const error = result.error || "Failed to read mock scenario files from workspace.";
+      if (options.throwOnError) throw new Error(error);
+      if (!options.silent) showToast(error, "error");
       return mockServerRef.current;
     }
     if (!result.mockServer) return mockServerRef.current;

@@ -91,3 +91,26 @@ contextBridge.exposeInMainWorld("electronLogger", {
   clear: () => ipcRenderer.invoke("logger:clear"),
   isAvailable: true,
 });
+
+contextBridge.exposeInMainWorld("electronCertificateSettings", {
+  get: () => ipcRenderer.invoke("certificate-settings:get"),
+  set: (settings) => ipcRenderer.invoke("certificate-settings:set", settings),
+  clear: () => ipcRenderer.invoke("certificate-settings:clear"),
+  importFile: () => ipcRenderer.invoke("certificate-settings:import-file"),
+  isAvailable: true,
+});
+
+contextBridge.exposeInMainWorld("electronAppZoom", {
+  get: () => ipcRenderer.invoke("app-zoom:get"),
+  set: (zoomPercent) => ipcRenderer.invoke("app-zoom:set", { zoomPercent }),
+  zoomIn: () => ipcRenderer.invoke("app-zoom:in"),
+  zoomOut: () => ipcRenderer.invoke("app-zoom:out"),
+  reset: () => ipcRenderer.invoke("app-zoom:reset"),
+  onChanged: (callback) => {
+    if (typeof callback !== "function") return () => {};
+    const listener = (_event, info) => callback(info);
+    ipcRenderer.on("app-zoom:changed", listener);
+    return () => ipcRenderer.removeListener("app-zoom:changed", listener);
+  },
+  isAvailable: true,
+});

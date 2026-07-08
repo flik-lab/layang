@@ -73,6 +73,7 @@ export function WorkbenchSidebar(props: { ctx: WorkbenchViewContext }) {
     endpointGroups,
     exampleInputRef,
     exportMockScenarioFile,
+    fetchMockScenarioFilesFromWorkspace,
     exportPublicDocs,
     handleProtoFiles,
     handleWebSocketMockPortChange,
@@ -434,6 +435,7 @@ export function WorkbenchSidebar(props: { ctx: WorkbenchViewContext }) {
                   onStop={() => void stopMockServer()}
                   onImport={() => mockScenarioInputRef.current?.click()}
                   onExport={exportMockScenarioFile}
+                  onFetchFromFile={() => void fetchMockScenarioFilesFromWorkspace()}
                 />
               )}
               {sideSection === "ws-mocks" && (

@@ -57,6 +57,7 @@ export function MockServerSidebar({
   onStop,
   onImport,
   onExport,
+  onFetchFromFile,
 }: {
   mockServer: MockServerProject;
   selectedMethod: RpcMethodInfo | null;
@@ -69,6 +70,7 @@ export function MockServerSidebar({
   onStop: () => void;
   onImport: () => void;
   onExport: () => void;
+  onFetchFromFile: () => void;
 }) {
   return (
     <Stack spacing={designSystem.space.gap}>
@@ -165,6 +167,9 @@ export function MockServerSidebar({
               sx={buttonSx}
             >
               Export
+            </Button>
+            <Button size="small" variant="outlined" onClick={onFetchFromFile} sx={buttonSx}>
+              Fetch from file
             </Button>
           </Stack>
         </Stack>
@@ -479,6 +484,7 @@ export function MockServerPanel({
   onEditScenario,
   onImport,
   onExport,
+  onFetchFromFile,
   onOpenFolder,
   onOpenSettings,
 }: {
@@ -504,6 +510,7 @@ export function MockServerPanel({
   onEditScenario: (method: RpcMethodInfo, scenarioId: string) => void;
   onImport: () => void;
   onExport: () => void;
+  onFetchFromFile: () => void;
   onOpenFolder: () => void;
   onOpenSettings: () => void;
 }) {
@@ -555,6 +562,9 @@ export function MockServerPanel({
         </Button>
         <Button size="small" variant="outlined" onClick={onExport} disabled={!selectedMethod || !currentParseResult.ok}>
           Export
+        </Button>
+        <Button size="small" variant="outlined" onClick={onFetchFromFile}>
+          Fetch from file
         </Button>
         <Button size="small" variant="outlined" onClick={onOpenFolder}>
           Open folder
@@ -683,7 +693,8 @@ export function MockServerPanel({
         </Typography>
         <Typography variant="caption" color="text.secondary" display="block">
           The editor shows one selected scenario only. On disk, each scenario is saved as its own JSON file under
-          mocks/scenarios, while the active id stays in mocks/mock-server.json.
+          mocks/scenarios, while the active id stays in mocks/mock-server.json. External file edits are applied manually
+          with Fetch from file.
         </Typography>
         {currentParseResult.ok === false ? (
           <Alert severity="error" variant="filled">

@@ -1,6 +1,6 @@
 # REST Mock Scenario Guide
 
-This guide explains how Layang REST mock scenarios work in `1.0.0`.
+This guide explains how Layang REST mock scenarios work in `1.0.4`.
 
 REST mocks are designed for local/internal development. Start the mock server from the REST request **Mock** tab, choose a bind IP/port, then point your app, APISIX route, or test client to the displayed URL.
 

@@ -16,9 +16,7 @@ export function WorkbenchAppBar(props: { ctx: WorkbenchViewContext }) {
     Box,
     Button,
     Divider,
-    DocsIcon,
     Download,
-    ListItemText,
     Menu,
     MenuItem,
     RequestTabs,
@@ -35,22 +33,14 @@ export function WorkbenchAppBar(props: { ctx: WorkbenchViewContext }) {
     closeRequestSession,
     colorTokens,
     designSystem,
-    exportGeneratedProtoDocsHtml,
-    exportGeneratedProtoDocsMarkdown,
-    exportProject,
-    exportPublicDocs,
-    openLoggerSettings,
-    openProtoFolderImporter,
+    openCertificateSettings,
     openWorkspaceFolder,
-    openWorkspaceImporter,
     paletteMode,
     requestRunner,
     requestSessions,
     saveWorkspaceFolder,
     saveWorkspaceFolderAs,
-    saveWorkspaceLocally,
     setWorkspaceMenuAnchor,
-    workspaceFolderPath,
     workspaceMenuAnchor,
   } = props.ctx;
 
@@ -110,66 +100,39 @@ export function WorkbenchAppBar(props: { ctx: WorkbenchViewContext }) {
             open={Boolean(workspaceMenuAnchor)}
             onClose={() => setWorkspaceMenuAnchor(null)}
           >
-            <MenuItem onClick={saveWorkspaceLocally}>
-              <Storage fontSize="small" /> Save browser snapshot
-            </MenuItem>
-            <MenuItem onClick={() => void saveWorkspaceFolder()}>
-              <Storage fontSize="small" /> Save workspace folder
-            </MenuItem>
-            <MenuItem onClick={() => void saveWorkspaceFolderAs()}>
-              <Download fontSize="small" /> Save workspace folder as...
-            </MenuItem>
-            <MenuItem onClick={() => void openWorkspaceFolder()}>
+            <MenuItem
+              onClick={() => {
+                setWorkspaceMenuAnchor(null);
+                void openWorkspaceFolder();
+              }}
+            >
               <UploadFile fontSize="small" /> Open workspace folder
             </MenuItem>
             <MenuItem
               onClick={() => {
                 setWorkspaceMenuAnchor(null);
-                openLoggerSettings();
+                void saveWorkspaceFolder();
               }}
             >
-              <Storage fontSize="small" /> Logger settings
+              <Storage fontSize="small" /> Save workspace folder
             </MenuItem>
-            <Divider />
-            <MenuItem onClick={exportProject}>
-              <Download fontSize="small" /> Export portable JSON
-            </MenuItem>
-            <MenuItem onClick={openWorkspaceImporter}>
-              <UploadFile fontSize="small" /> Import workspace / collection / docs / examples
-            </MenuItem>
-            <MenuItem onClick={openProtoFolderImporter}>
-              <UploadFile fontSize="small" /> Import gRPC proto / collection folder
+            <MenuItem
+              onClick={() => {
+                setWorkspaceMenuAnchor(null);
+                void saveWorkspaceFolderAs();
+              }}
+            >
+              <Download fontSize="small" /> Save workspace as...
             </MenuItem>
             <Divider />
             <MenuItem
               onClick={() => {
                 setWorkspaceMenuAnchor(null);
-                exportPublicDocs();
+                openCertificateSettings();
               }}
             >
-              <DocsIcon fontSize="small" /> Export published docs
+              <Storage fontSize="small" /> Certificate settings
             </MenuItem>
-            <MenuItem
-              onClick={() => {
-                setWorkspaceMenuAnchor(null);
-                exportGeneratedProtoDocsMarkdown();
-              }}
-            >
-              <DocsIcon fontSize="small" /> Generate proto docs Markdown
-            </MenuItem>
-            <MenuItem
-              onClick={() => {
-                setWorkspaceMenuAnchor(null);
-                exportGeneratedProtoDocsHtml();
-              }}
-            >
-              <DocsIcon fontSize="small" /> Generate proto docs HTML
-            </MenuItem>
-            {workspaceFolderPath && (
-              <MenuItem disabled>
-                <ListItemText primary="Folder" secondary={workspaceFolderPath} />
-              </MenuItem>
-            )}
           </Menu>
         </Stack>
         <Box sx={{ WebkitAppRegion: "drag", minWidth: 0, flex: "1 1 auto", height: "100%", display: "flex" }}>

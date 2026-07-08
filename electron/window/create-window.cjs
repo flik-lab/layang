@@ -3,6 +3,7 @@
 const { app, BrowserWindow, Menu } = require("electron");
 const path = require("node:path");
 const { getLogger } = require("../utils/logger.cjs");
+const { attachAppZoomShortcuts } = require("../utils/app-zoom-settings.cjs");
 
 const windowLogger = getLogger("window");
 
@@ -29,6 +30,7 @@ function createWindow() {
   });
 
   attachRendererDiagnostics(win);
+  attachAppZoomShortcuts(win, { logger: windowLogger });
   loadRenderer(win);
   return win;
 }

@@ -56,7 +56,7 @@ test("gRPC mock guard rejects stale file reloads after UI scenario edit", () => 
     9000,
     3000,
   );
-  assert.deepEqual(result, { ignore: true, reason: "stale-file-update" });
+  assert.deepEqual(result, { ignore: true, reason: "stale-file-mtime", retryAfterMs: 0 });
 });
 
 test("gRPC mock guard rejects file reloads during the UI quiet period even with newer mtime", () => {
@@ -69,7 +69,9 @@ test("gRPC mock guard rejects file reloads during the UI quiet period even with 
     6500,
     3000,
   );
-  assert.deepEqual(result, { ignore: true, reason: "stale-file-update" });
+  assert.equal(result.ignore, true);
+  assert.equal(result.reason, "ui-quiet-period");
+  assert.ok(result.retryAfterMs > 0);
 });
 
 test("gRPC mock guard accepts fresh file reload before UI becomes authoritative", () => {

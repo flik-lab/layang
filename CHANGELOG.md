@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.0.4
+
+### Major
+
+- Added manual mock scenario refresh from workspace files through **Update from file**. External edits no longer need hidden automatic synchronization to reach the editor and running mock server.
+- Added multiple certificate import for `.pem`, `.crt`, and `.cer` files.
+- Changed the certificate settings dialog to show an imported certificate list instead of a raw PEM editor.
+
+### Minor
+
+- Deduplicated imported certificates by SHA-256 fingerprint.
+- Kept `caCertificatePem` as a combined PEM bundle for native gRPC compatibility while using `caCertificates` for the UI list.
+- Added persisted desktop zoom shortcuts with `Ctrl++`, `Ctrl+-`, and `Ctrl+0`.
+- Simplified the Layang logo menu so it only contains workspace actions and certificate settings.
+- Reduced surprise mock state changes by making external file refresh explicit.
+
+### Documentation
+
+- Updated README, website metadata, GitHub Pages notes, architecture notes, testing notes, and Windows release docs for `1.0.4`.
+- Replaced the old HTTPS certificate plan with current certificate settings documentation.
+- Removed stale architecture links and outdated menu references.
+
+
 ## 1.0.3
 
 ### Major

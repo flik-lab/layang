@@ -139,6 +139,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     exportCurrentBenchmark,
     exportCurrentMethodExamples,
     exportMockScenarioFile,
+    fetchMockScenarioFilesFromWorkspace,
     exportPublicDocs,
     exportResponseStable,
     exportWebSocketBenchmark,
@@ -1232,6 +1233,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                       onEditScenario={openMockScenarioManager}
                       onImport={() => mockScenarioInputRef.current?.click()}
                       onExport={exportMockScenarioFile}
+                      onFetchFromFile={() => void fetchMockScenarioFilesFromWorkspace()}
                       onOpenFolder={() => void openMockScenarioFolder()}
                       onOpenSettings={() => setMockSettingsOpen(true)}
                     />

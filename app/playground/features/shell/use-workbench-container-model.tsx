@@ -48,6 +48,7 @@ import {
   Select,
   Snackbar,
   Stack,
+  Switch,
   Table,
   TableBody,
   TableCell,
@@ -202,6 +203,23 @@ import {
   type LayangLoggerSettings,
   type LayangLogLevel,
 } from "../../shared/logger";
+import {
+  clearCertificatePem,
+  defaultCertificateSettings,
+  getCertificateSettings,
+  importCertificateFile,
+  updateCertificateSettings,
+  type LayangCertificateSettings,
+  type LayangCertificateSettingsInfo,
+} from "../../shared/certificate-settings";
+import {
+  decreaseAppZoom,
+  getAppZoomInfo,
+  increaseAppZoom,
+  resetAppZoom,
+  subscribeAppZoomChanges,
+  type LayangAppZoomInfo,
+} from "../../shared/app-zoom";
 import { toErrorMessage } from "../../shared/error-utils";
 import { formatTimestampShort, timestampForFile } from "../../shared/formatters";
 import { safeJsonParse } from "../../shared/json-utils";
@@ -230,8 +248,8 @@ import { useWorkspaceBundleActions } from "../workspace/use-workspace-bundle-act
 import { useWorkspaceLayoutPersistence } from "../workspace/use-workspace-layout-persistence";
 import { useGrpcMockController } from "../mock-server/use-grpc-mock-controller";
 import { useGrpcMockEditorActions } from "../mock-server/use-grpc-mock-editor-actions";
-import { useMockRuntimeSync } from "../mock-server/use-mock-runtime-sync";
-import { useMockWorkspaceSync, useWorkspaceFolderAutosave } from "../mock-server/use-mock-workspace-sync";
+import { syncRunningMockServerFromEditor, useMockRuntimeSync } from "../mock-server/use-mock-runtime-sync";
+import { useWorkspaceFolderAutosave } from "../mock-server/use-mock-workspace-sync";
 import { useRequestSessionController } from "../request-editor/use-request-session-controller";
 import { useRequestSessionActions } from "../request-editor/use-request-session-actions";
 import {
@@ -281,8 +299,7 @@ type RequestRunnerHandle = ReturnType<typeof useRequestRunner>;
 
 const MOCK_RUNTIME_SYNC_DELAY_MS = 120;
 const WORKSPACE_AUTOSAVE_DELAY_MS = 1400;
-const MOCK_WORKSPACE_REFRESH_INTERVAL_MS = 600;
-const MOCK_LOCAL_DIRTY_FALLBACK_MS = 8000;
+const MOCK_LOCAL_DIRTY_FALLBACK_MS = 2200;
 const loggerLevelOptions: LayangLogLevel[] = ["debug", "info", "warn", "error"];
 const defaultLoggerSettings: LayangLoggerSettings = {
   level: "info",
@@ -421,6 +438,10 @@ export function useWorkbenchContainerModel() {
   const [loggerSettingsOpen, setLoggerSettingsOpen] = useState(false);
   const [loggerInfo, setLoggerInfo] = useState<LayangLoggerInfo | null>(null);
   const [loggerDraft, setLoggerDraft] = useState<LayangLoggerSettings>(defaultLoggerSettings);
+  const [certificateSettingsOpen, setCertificateSettingsOpen] = useState(false);
+  const [certificateInfo, setCertificateInfo] = useState<LayangCertificateSettingsInfo | null>(null);
+  const [certificateDraft, setCertificateDraft] = useState<LayangCertificateSettings>(defaultCertificateSettings);
+  const [appZoomInfo, setAppZoomInfo] = useState<LayangAppZoomInfo | null>(null);
   const collectionController = useCollectionController();
   const {
     collectionMenuAnchor,
@@ -544,6 +565,126 @@ export function useWorkbenchContainerModel() {
     showToast("Log files cleared.", "success");
   }, [showToast]);
 
+  const refreshCertificateSettings = useCallback(async () => {
+    const info = await getCertificateSettings();
+    if (!info) return null;
+    setCertificateInfo(info);
+    if (info.settings) setCertificateDraft(info.settings);
+    return info;
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    void refreshCertificateSettings();
+  }, [hydrated, refreshCertificateSettings]);
+
+  const openCertificateSettings = useCallback(() => {
+    setCertificateSettingsOpen(true);
+    void refreshCertificateSettings();
+  }, [refreshCertificateSettings]);
+
+  const saveCertificateSettings = useCallback(async () => {
+    const info = await updateCertificateSettings(certificateDraft);
+    if (!info?.ok) {
+      showToast(info?.error || "Failed to update certificate settings.", "error");
+      return;
+    }
+    setCertificateInfo(info);
+    setCertificateDraft(info.settings);
+    showToast("Certificate settings updated.", "success");
+  }, [certificateDraft, showToast]);
+
+  const importCertificateSettingsFile = useCallback(async () => {
+    const info = await importCertificateFile();
+    if (!info) {
+      showToast("Certificate import is only available in the desktop app.", "warning");
+      return;
+    }
+    if (info.cancelled) return;
+    if (!info.ok) {
+      showToast(info.error || "Failed to import certificate file.", "error");
+      return;
+    }
+    setCertificateInfo(info);
+    setCertificateDraft(info.settings);
+    showToast("Certificate imported.", "success");
+  }, [showToast]);
+
+  const clearCertificateSettingsPem = useCallback(async () => {
+    const info = await clearCertificatePem();
+    if (!info?.ok) {
+      showToast(info?.error || "Failed to clear certificates.", "error");
+      return;
+    }
+    setCertificateInfo(info);
+    setCertificateDraft(info.settings);
+    showToast("Certificates cleared.", "success");
+  }, [showToast]);
+
+  const removeCertificateSettingsItem = useCallback(
+    async (certificateId: string) => {
+      const nextCertificates = certificateDraft.caCertificates.filter((certificate) => certificate.id !== certificateId);
+      const info = await updateCertificateSettings({
+        ...certificateDraft,
+        caCertificates: nextCertificates,
+        caCertificatePem: nextCertificates.map((certificate) => certificate.pem).join(""),
+      });
+      if (!info?.ok) {
+        showToast(info?.error || "Failed to remove certificate.", "error");
+        return;
+      }
+      setCertificateInfo(info);
+      setCertificateDraft(info.settings);
+      showToast("Certificate removed.", "success");
+    },
+    [certificateDraft, showToast],
+  );
+
+  const refreshAppZoomInfo = useCallback(async () => {
+    const info = await getAppZoomInfo();
+    if (!info) return null;
+    setAppZoomInfo(info);
+    return info;
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    void refreshAppZoomInfo();
+    return subscribeAppZoomChanges(setAppZoomInfo);
+  }, [hydrated, refreshAppZoomInfo]);
+
+  const applyAppZoomAction = useCallback(
+    async (action: () => Promise<LayangAppZoomInfo | null>, successMessage: string) => {
+      const info = await action();
+      if (!info) {
+        showToast("Zoom is only available in the desktop app.", "warning");
+        return;
+      }
+      if (!info.ok) {
+        showToast(info.error || "Failed to update zoom.", "error");
+        return;
+      }
+      setAppZoomInfo(info);
+      showToast(successMessage, "success");
+    },
+    [showToast],
+  );
+
+  const zoomAppIn = useCallback(
+    () => applyAppZoomAction(increaseAppZoom, "App zoom increased."),
+    [applyAppZoomAction],
+  );
+
+  const zoomAppOut = useCallback(
+    () => applyAppZoomAction(decreaseAppZoom, "App zoom decreased."),
+    [applyAppZoomAction],
+  );
+
+  const resetAppZoomLevel = useCallback(
+    () => applyAppZoomAction(resetAppZoom, "App zoom reset to 100%."),
+    [applyAppZoomAction],
+  );
+
   const grpcMock = useGrpcMockController({
     hydrated,
     workspaceFolderPath,
@@ -570,7 +711,6 @@ export function useWorkbenchContainerModel() {
     mockRuntimeLastSyncSignatureRef,
     markMockServerLocalDirty,
     clearMockServerLocalDirty,
-    isMockServerLocalDirty,
     refreshGrpcMockServerFromWorkspace,
   } = grpcMock;
 
@@ -611,15 +751,6 @@ export function useWorkbenchContainerModel() {
     ],
   });
 
-  useMockWorkspaceSync({
-    enabled: hydrated,
-    workspaceFolderPath,
-    refreshIntervalMs: MOCK_WORKSPACE_REFRESH_INTERVAL_MS,
-    isMockServerLocalDirty,
-    workspaceAutosaveRef,
-    refreshGrpcMockServerFromWorkspace,
-  });
-
   useMockRuntimeSync({
     delayMs: MOCK_RUNTIME_SYNC_DELAY_MS,
     mockServer,
@@ -632,6 +763,67 @@ export function useWorkbenchContainerModel() {
     appliedSeqRef: mockRuntimeAppliedSeqRef,
     lastSyncSignatureRef: mockRuntimeLastSyncSignatureRef,
   });
+
+
+  const flushRunningMockServersBeforeRequest = useCallback(async () => {
+    const tasks: Array<Promise<unknown>> = [];
+
+    if (mockServerStatus.running && loaded && window.electronMock?.update) {
+      tasks.push(
+        syncRunningMockServerFromEditor({
+          mockServer,
+          mockServerStatus,
+          setMockServerStatus,
+          loaded,
+          protoFiles,
+          workspaceFolderPath,
+          updateSeqRef: mockRuntimeUpdateSeqRef,
+          appliedSeqRef: mockRuntimeAppliedSeqRef,
+          lastSyncSignatureRef: mockRuntimeLastSyncSignatureRef,
+        }),
+      );
+    }
+
+    if (restMockStatus.running && window.electronRestMock?.update) {
+      tasks.push(
+        window.electronRestMock.update(buildRestMockPayloadSnapshot()).then((result) => {
+          if (result?.ok) {
+            setRestMockStatus((current) => ({ ...current, ...result, running: result.running ?? current.running }));
+          }
+          return result;
+        }),
+      );
+    }
+
+    if (wsMockStatus.running && window.electronWsMock?.update) {
+      tasks.push(
+        window.electronWsMock.update(buildWebSocketMockPayloadSnapshot()).then((result) => {
+          if (result?.ok) {
+            setWsMockStatus((current) => ({ ...current, ...result, running: result.running ?? current.running }));
+          }
+          return result;
+        }),
+      );
+    }
+
+    if (tasks.length) await Promise.allSettled(tasks);
+  }, [
+    mockServerStatus,
+    loaded,
+    mockServer,
+    setMockServerStatus,
+    protoFiles,
+    workspaceFolderPath,
+    mockRuntimeUpdateSeqRef,
+    mockRuntimeAppliedSeqRef,
+    mockRuntimeLastSyncSignatureRef,
+    restMockStatus.running,
+    buildRestMockPayloadSnapshot,
+    setRestMockStatus,
+    wsMockStatus.running,
+    buildWebSocketMockPayloadSnapshot,
+    setWsMockStatus,
+  ]);
 
   useEffect(() => {
     if (!hydrated || !workspaceFolderPath || initialMockWorkspaceRefreshPathRef.current === workspaceFolderPath) return;
@@ -1456,6 +1648,7 @@ export function useWorkbenchContainerModel() {
     upsertRequestSessionPreservingOrder,
     activateRequestSession,
     updateRequestSession,
+    beforeRunRequest: flushRunningMockServersBeforeRequest,
   });
   requestRunnerRef.current = requestRunner;
   const shellLeft = railWidth + (sidebarOpen ? sidebarWidthPx : 0);
@@ -1676,6 +1869,7 @@ export function useWorkbenchContainerModel() {
     buildDefaultMockScenario,
     clamp,
     clearInheritedMockStreamOverridesForDefaultChange,
+    clearMockServerLocalDirty,
     currentMockActiveScenario,
     currentMockEditorText,
     currentMockFile,
@@ -1696,13 +1890,16 @@ export function useWorkbenchContainerModel() {
     markMockServerLocalDirty,
     mergeExternalScenarioScenariosIntoProject,
     methodKey,
+    mockRuntimeAppliedSeqRef,
     mockRuntimeLastSyncSignatureRef,
+    mockRuntimeUpdateSeqRef,
     mockScenarioDialogOpen,
     mockScenarioDraftId,
     mockScenarioEditing,
     mockScenarioEditorDraft,
     mockScenarioInputRef,
     mockServer,
+    mockServerStatus,
     normalizeMockBindHost,
     normalizeMockPort,
     normalizeMockStreamSettings,
@@ -1752,6 +1949,7 @@ export function useWorkbenchContainerModel() {
     handleMockGlobalStreamBaseChange,
     importMockScenarioFile,
     exportMockScenarioFile,
+    fetchMockScenarioFilesFromWorkspace,
     openMockScenarioFolder,
     startMockServer,
     stopMockServer,
@@ -2196,6 +2394,7 @@ export function useWorkbenchContainerModel() {
     SidebarHeader,
     Snackbar,
     Stack,
+    Switch,
     StopCircle,
     Storage,
     Stream,
@@ -2299,6 +2498,7 @@ export function useWorkbenchContainerModel() {
     exportGeneratedProtoDocsHtml,
     exportGeneratedProtoDocsMarkdown,
     exportMockScenarioFile,
+    fetchMockScenarioFilesFromWorkspace,
     exportProject,
     exportPublicDocs,
     exportResponseStable,
@@ -2488,19 +2688,34 @@ export function useWorkbenchContainerModel() {
     updateWebSocketMockScenario,
     updateWebSocketSubprotocol,
     webSocketSubprotocolValue,
+    certificateDraft,
+    certificateInfo,
+    certificateSettingsOpen,
+    appZoomInfo,
+    clearCertificateSettingsPem,
     clearLogFiles,
+    importCertificateSettingsFile,
+    removeCertificateSettingsItem,
     loggerDraft,
     loggerInfo,
     loggerLevelOptions,
     loggerSettingsOpen,
+    openCertificateSettings,
     openLogFolder,
     openLoggerSettings,
+    refreshCertificateSettings,
     refreshLoggerSettings,
+    resetAppZoomLevel,
+    saveCertificateSettings,
     saveLoggerSettings,
+    setCertificateDraft,
+    setCertificateSettingsOpen,
     setLoggerDraft,
     setLoggerSettingsOpen,
     workspaceFolderPath,
     workspaceMenuAnchor,
+    zoomAppIn,
+    zoomAppOut,
     workspaceSetupDefaultPath,
     workspaceSetupOpen,
     workspaceSetupPending,

@@ -23,7 +23,7 @@ type UseMockRuntimeSyncOptions = {
   lastSyncSignatureRef: MutableRefObject<string>;
 };
 
-async function syncRunningMockServerFromEditor({
+export async function syncRunningMockServerFromEditor({
   mockServer,
   mockServerStatus,
   setMockServerStatus,

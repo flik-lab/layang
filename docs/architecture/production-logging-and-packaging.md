@@ -29,7 +29,7 @@ The renderer talks to Electron through logger IPC:
 - `logger:clear`
 - `logger:log`
 
-Runtime settings apply immediately and are persisted to `logger-settings.json` under Electron `userData`. This means a user can open **Layang workspace menu → Logger settings**, change the level, toggle console logging, open the log folder, or clear logs without restarting the app.
+Runtime settings apply immediately and are persisted to `logger-settings.json` under Electron `userData`. This means the renderer can open the logger settings dialog, change the level, toggle console logging, open the log folder, or clear logs without restarting the app.
 
 ## Environment variables
 
@@ -61,7 +61,7 @@ Current production logs include:
 
 - app startup and packaged/dev status
 - renderer load/fail events
-- trusted certificate overrides
+- certificate policy decisions and TLS bypass warnings
 - process uncaught exceptions and unhandled rejections
 - gRPC mock scenario watcher and hot-reload warnings
 - renderer logs sent through `createLogger(scope)`
@@ -73,11 +73,12 @@ Request and response bodies should not be logged by default. Payload logging sho
 Packaging entry points:
 
 ```bash
-pnpm run package
-pnpm run package:prod
-pnpm run package:win
-pnpm run release:win
-pnpm run release:linux
+pnpm run desktop:pack
+pnpm run desktop:dist
+pnpm run desktop:win:setup
+pnpm run desktop:win:portable
+pnpm run desktop:linux:deb
+pnpm run desktop:linux:rpm
 ```
 
-`package:prod` and release scripts run the project check before packaging.
+Release workflows read `package.json` and publish artifacts for the current version.

@@ -74,6 +74,7 @@ export type UseRequestRunnerOptions = {
   upsertRequestSessionPreservingOrder: (session: RequestSession) => void;
   activateRequestSession: (session: RequestSession) => void;
   updateRequestSession: (sessionId: string, patch: Partial<RequestSession>) => void;
+  beforeRunRequest?: () => Promise<void> | void;
 };
 
 export function useRequestRunner(options: UseRequestRunnerOptions) {
@@ -111,7 +112,10 @@ export function useRequestRunner(options: UseRequestRunnerOptions) {
         upsertRequestSessionPreservingOrder,
         activateRequestSession,
         updateRequestSession,
+        beforeRunRequest,
       } = options;
+
+      await beforeRunRequest?.();
 
       const methodToRun = overrides?.overrideMethod ?? selectedMethod;
       const collectionRequest = overrides?.overrideCollectionRequest ?? activeCollectionRequest;

@@ -22,6 +22,50 @@ export interface LayangLoggerInfo {
   error?: string;
 }
 
+export interface LayangImportedCertificate {
+  id: string;
+  name: string;
+  fingerprint: string;
+  pem: string;
+  importedAt: string;
+  sourcePath?: string;
+}
+export interface LayangCertificateSettings {
+  version: 1;
+  caCertificatePem: string;
+  caCertificates: LayangImportedCertificate[];
+  bypassTlsErrors: boolean;
+  updatedAt: string;
+}
+export interface LayangCertificateSettingsInfo {
+  ok?: boolean;
+  initialized: boolean;
+  settingsFilePath: string;
+  settings: LayangCertificateSettings;
+  fingerprint: string;
+  fingerprints?: string[];
+  filePath?: string;
+  filePaths?: string[];
+  cancelled?: boolean;
+  error?: string;
+}
+
+export interface LayangAppZoomSettings {
+  version: 1;
+  zoomPercent: number;
+  updatedAt: string;
+}
+export interface LayangAppZoomInfo {
+  ok?: boolean;
+  initialized: boolean;
+  settingsFilePath: string;
+  settings: LayangAppZoomSettings;
+  minZoomPercent: number;
+  maxZoomPercent: number;
+  zoomStepPercent: number;
+  error?: string;
+}
+
 declare global {
   interface Window {
     electronGrpc?: {
@@ -51,6 +95,22 @@ declare global {
       setSettings?: (settings: Partial<LayangLoggerSettings>) => Promise<LayangLoggerInfo>;
       openFolder?: () => Promise<{ ok: boolean; path?: string; error?: string }>;
       clear?: () => Promise<LayangLoggerInfo>;
+    };
+    electronCertificateSettings?: {
+      isAvailable: boolean;
+      get?: () => Promise<LayangCertificateSettingsInfo>;
+      set?: (settings: Partial<LayangCertificateSettings>) => Promise<LayangCertificateSettingsInfo>;
+      clear?: () => Promise<LayangCertificateSettingsInfo>;
+      importFile?: () => Promise<LayangCertificateSettingsInfo>;
+    };
+    electronAppZoom?: {
+      isAvailable: boolean;
+      get?: () => Promise<LayangAppZoomInfo>;
+      set?: (zoomPercent: number) => Promise<LayangAppZoomInfo>;
+      zoomIn?: () => Promise<LayangAppZoomInfo>;
+      zoomOut?: () => Promise<LayangAppZoomInfo>;
+      reset?: () => Promise<LayangAppZoomInfo>;
+      onChanged?: (callback: (info: LayangAppZoomInfo) => void) => () => void;
     };
     electronWorkspace?: {
       isAvailable: boolean;
