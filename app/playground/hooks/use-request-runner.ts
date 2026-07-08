@@ -256,7 +256,7 @@ export function useRequestRunner(options: UseRequestRunnerOptions) {
           showToast(`gRPC error ${status}${grpcMessage ? `: ${grpcMessage}` : ""}`, "error");
         }
         const clientSafeResult = compactGrpcResultForClient(result);
-        const resultEvents = resultToUiEvents(clientSafeResult).map(compactUiEvent);
+        const resultEvents = resultToUiEvents(result).map(compactUiEvent);
         const evaluatedAssertions = evaluateAssertions(clientSafeResult, assertionToRun);
         if (activeRequestIdRef.current === targetSessionId) {
           setEvents(resultEvents);
@@ -456,7 +456,7 @@ async function runCollectionRequest(options: CollectionRunOptions) {
       showToast(result.trailers["grpc-message"] || `${collectionRequest.kind} request failed`, "error");
     }
     const clientSafeResult = compactGrpcResultForClient(result);
-    const resultEvents = resultToUiEvents(clientSafeResult).map(compactUiEvent);
+    const resultEvents = resultToUiEvents(result).map(compactUiEvent);
     const evaluatedAssertions = evaluateAssertions(clientSafeResult, assertionToRun);
     if (activeRequestIdRef.current === targetSessionId) {
       setEvents(resultEvents);

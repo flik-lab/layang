@@ -6,7 +6,7 @@ import {
 } from "../environments/environment-model";
 import { createDefaultMockServerProject, normalizeMockServerProject } from "../mock-server/mock-scenario-model";
 import { clamp } from "../../shared/number-utils";
-import { safeJsonStringify } from "../../shared/json-utils";
+import { createLayangPayloadPreview, isPayloadPreview, safeJsonStringify } from "../../shared/json-utils";
 import { createId, savedExampleKey } from "../../shared/entity-utils";
 import { methodKey } from "../../shared/rpc-method-utils";
 import {
@@ -45,6 +45,8 @@ import type {
   WebSocketMockProject,
   WebSocketMockScenario,
 } from "../../shared/workbench-types";
+
+const maxLiveFullPayloadChars = 1_000_000;
 
 export function createDefaultRestMockProject(): RestMockProject {
   return {
@@ -514,7 +516,7 @@ export function normalizeRequestSession(session: RequestSession): RequestSession
     nativeTarget: session.nativeTarget ?? "localhost:50051",
     environmentKey: isEnvironmentKey(session.environmentKey) ? session.environmentKey : "default",
     assertionJson: session.assertionJson ?? defaultAssertion,
-    events: Array.isArray(session.events) ? session.events.slice(-maxUiEventsPerSession).map(compactUiEvent) : [],
+    events: Array.isArray(session.events) ? session.events.slice(-maxUiEventsPerSession).map(compactUiEventForStorage) : [],
     lastResult: session.lastResult ? compactGrpcResultForClient(session.lastResult) : null,
     assertionResults: Array.isArray(session.assertionResults) ? session.assertionResults : [],
     responseTab: normalizeVisibleResponseTab(session.responseTab),
@@ -554,7 +556,7 @@ export function compactRequestSessionForStorage(session: RequestSession): Reques
     ...session,
     running: false,
     status: session.status === "running" ? "cancelled" : session.status,
-    events: session.events.slice(-maxStoredEventsPerSession).map(compactUiEvent),
+    events: session.events.slice(-maxStoredEventsPerSession).map(compactUiEventForStorage),
     lastResult: session.lastResult ? compactGrpcResultForStorage(session.lastResult) : null,
   };
 }
@@ -563,9 +565,12 @@ export function compactRequestSessionForStorage(session: RequestSession): Reques
  * Compacts gRPC results before storing them in live React state.
  */
 export function compactGrpcResultForClient(result: GrpcResult): GrpcResult {
+  const messages = result.messages.slice(-maxMessagesPerRequest);
+  const latestIndex = messages.length - 1;
+
   return {
     ...result,
-    messages: result.messages.slice(-maxMessagesPerRequest).map(compactPayload),
+    messages: messages.map((message, index) => (index === latestIndex ? message : compactPayload(message))),
   };
 }
 
@@ -580,25 +585,42 @@ export function compactGrpcResultForStorage(result: GrpcResult): GrpcResult {
 }
 
 /**
- * Compacts a UI event payload for client display/storage.
+ * Compacts a UI event payload for dense rendering while keeping a live full payload when it is safe.
  */
 export function compactUiEvent(event: UiEvent): UiEvent {
-  return { ...event, payload: compactPayload(event.payload) };
+  if (isPayloadPreview(event.payload)) return event;
+
+  const compactedPayload = compactPayload(event.payload);
+  if (compactedPayload === event.payload) return event;
+
+  const serialized = safeJsonStringify(event.payload);
+  const shouldKeepFullPayload = serialized.length <= maxLiveFullPayloadChars;
+
+  return {
+    ...event,
+    payload: compactedPayload,
+    ...(shouldKeepFullPayload ? { fullPayload: event.fullPayload ?? event.payload } : {}),
+  };
+}
+
+/**
+ * Compacts a UI event before persisting it. Full payloads are intentionally dropped from storage.
+ */
+export function compactUiEventForStorage(event: UiEvent): UiEvent {
+  const { fullPayload, ...rest } = event;
+  return { ...rest, payload: compactPayload(fullPayload ?? rest.payload) };
 }
 
 /**
  * Truncates large nested payloads so the browser stays responsive.
  */
 export function compactPayload(value: unknown): unknown {
+  if (isPayloadPreview(value)) return value;
+
   const serialized = safeJsonStringify(value);
   if (serialized.length <= maxPayloadPreviewChars) return value;
 
-  return {
-    truncated: true,
-    originalType: Array.isArray(value) ? "array" : typeof value,
-    originalChars: serialized.length,
-    preview: serialized.slice(0, maxPayloadPreviewChars),
-  };
+  return createLayangPayloadPreview(value, maxPayloadPreviewChars);
 }
 
 /**

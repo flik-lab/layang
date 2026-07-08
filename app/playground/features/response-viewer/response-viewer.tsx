@@ -18,11 +18,12 @@ import { ContentCopy } from "@/components/shadcn/icons";
 import { EmptyState } from "../../shared/components/empty-state";
 import { ResizableTable, type ResizableTableColumn } from "../../shared/components/resizable-table";
 import { formatTimestampReadable, formatTimestampShort } from "../../shared/formatters";
-import { deepTextIncludes, safePrettyJson } from "../../shared/json-utils";
+import { deepTextIncludes, isPayloadPreview, payloadPreviewBodyText, safePrettyJson } from "../../shared/json-utils";
 import type { HistoryItem, UiEvent } from "../../shared/workbench-types";
 
 const maxMessageTableRows = 200;
 const maxJsonBlockChars = 60000;
+const maxInlinePayloadChars = 320;
 
 const oneLineMessageSx = {
   overflow: "hidden",
@@ -148,7 +149,7 @@ export function MessageTable({
                           aria-label="Copy message"
                           onClick={(clickEvent: MouseEvent<HTMLButtonElement>) => {
                             clickEvent.stopPropagation();
-                            void copyMessagePayload(event.payload).then((copied) => {
+                            void copyMessagePayload(event.fullPayload ?? event.payload).then((copied) => {
                               if (!copied) return;
                               setCopiedId(event.id);
                               window.setTimeout(() => setCopiedId((current) => (current === event.id ? null : current)), 1200);
@@ -171,7 +172,7 @@ export function MessageTable({
                           <ContentCopy sx={{ fontSize: 16 }} />
                         </IconButton>
                       </Tooltip>
-                      <JsonBlock value={event.payload} compact highlightQuery={filterQuery} />
+                      <JsonBlock value={event.fullPayload ?? event.payload} compact highlightQuery={filterQuery} maxChars={null} />
                     </Box>
                   </TableCell>
                 </TableRow>
@@ -194,9 +195,12 @@ function parseMessageNumber(title: string): number | null {
 
 /** Formats JSON-like payloads as one compact line for dense message rows. */
 function oneLinePayload(value: unknown): string {
-  const text = safePrettyJson(value, { parseString: true }).replace(/\s+/g, " ").trim();
+  const sourceText = isPayloadPreview(value)
+    ? payloadPreviewBodyText(value, false)
+    : safePrettyJson(value, { parseString: true });
+  const text = sourceText.replace(/\s+/g, " ").trim();
   if (!text) return "{}";
-  return text.length > 320 ? `${text.slice(0, 320)}...` : text;
+  return text.length > maxInlinePayloadChars ? `${text.slice(0, maxInlinePayloadChars)}...` : text;
 }
 
 /** Copies the selected message payload in a user-friendly raw/pretty format. */
@@ -212,6 +216,8 @@ async function copyMessagePayload(value: unknown): Promise<boolean> {
 
 /** Preserves raw text messages while pretty-printing JSON-like payloads. */
 function messagePayloadCopyText(value: unknown): string {
+  if (isPayloadPreview(value)) return payloadPreviewBodyText(value);
+
   if (typeof value === "string") {
     try {
       return JSON.stringify(JSON.parse(value), null, 2);
@@ -331,7 +337,7 @@ export function LatestResponseJsonViewer({
     return <EmptyState title="No latest response" body={empty} />;
   }
 
-  return <JsonBlock value={value} highlightQuery={filterQuery} fullHeight={fullHeight} />;
+  return <JsonBlock value={value} highlightQuery={filterQuery} fullHeight={fullHeight} maxChars={null} />;
 }
 
 /** Renders an object as formatted JSON with optional text highlighting. */
@@ -340,17 +346,15 @@ export function JsonBlock({
   compact = false,
   highlightQuery = "",
   fullHeight = false,
+  maxChars = maxJsonBlockChars,
 }: {
   value: unknown;
   compact?: boolean;
   highlightQuery?: string;
   fullHeight?: boolean;
+  maxChars?: number | null;
 }) {
-  const truncated = safePrettyJson(value, {
-    parseString: true,
-    maxChars: maxJsonBlockChars,
-    truncatedLabel: "... truncated ...",
-  });
+  const displayText = jsonBlockText(value, maxChars);
   return (
     <pre
       className={["code-viewer", compact ? "code-viewer--compact" : "", fullHeight ? "code-viewer--fill" : ""]
@@ -358,10 +362,24 @@ export function JsonBlock({
         .join(" ")}
     >
       <code>
-        <HighlightedCodeText text={truncated} query={highlightQuery} />
+        <HighlightedCodeText text={displayText} query={highlightQuery} />
       </code>
     </pre>
   );
+}
+
+function jsonBlockText(value: unknown, maxChars: number | null): string {
+  const text = isPayloadPreview(value)
+    ? payloadPreviewBodyText(value)
+    : safePrettyJson(value, {
+        parseString: true,
+        maxChars: maxChars ?? undefined,
+        truncatedLabel: "...",
+      });
+
+  if (maxChars === null || text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}
+...`;
 }
 
 /** Highlights a query in preformatted code text. */
