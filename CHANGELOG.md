@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.5
+
+### Minor
+
+- Improved response handling so smaller payload objects can be read correctly.
+- Fixed an issue where HTTPS certificates were not cleared properly and added a success notification.
+
 ## 1.0.4
 
 ### Major

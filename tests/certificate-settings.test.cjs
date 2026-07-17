@@ -74,6 +74,25 @@ const secondSamplePem = `-----BEGIN CERTIFICATE-----
 YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo=
 -----END CERTIFICATE-----`;
 
+test("certificate settings clear imported certificate list", () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), "layang-cert-clear-list-"));
+  configureCertificateSettings({ userDataPath });
+
+  importCertificatePems([
+    { name: "gateway-ca.pem", sourcePath: "/tmp/gateway-ca.pem", pemText: samplePem },
+    { name: "service-ca.pem", sourcePath: "/tmp/service-ca.pem", pemText: secondSamplePem },
+  ]);
+  const cleared = clearCertificatePem();
+  assert.equal(cleared.settings.caCertificatePem, "");
+  assert.deepEqual(cleared.settings.caCertificates, []);
+  assert.equal(cleared.fingerprint, "");
+  assert.equal(shouldAllowCertificateError({ data: samplePem }).allow, false);
+
+  const saved = JSON.parse(fs.readFileSync(path.join(userDataPath, "certificate-settings.json"), "utf8"));
+  assert.equal(saved.caCertificatePem, "");
+  assert.deepEqual(saved.caCertificates, []);
+});
+
 test("certificate settings import multiple files into a managed certificate list", () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), "layang-cert-multiple-"));
   configureCertificateSettings({ userDataPath });

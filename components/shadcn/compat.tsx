@@ -852,7 +852,20 @@ export function DialogActions({ children, sx, className, ...props }: AnyProps) {
 }
 
 /** Toast primitives. */
-export function Snackbar({ open, autoHideDuration, onClose, children }: AnyProps) {
+export function Snackbar({
+  open,
+  autoHideDuration,
+  onClose,
+  anchorOrigin,
+  children,
+  sx,
+  className,
+  style,
+  ...props
+}: AnyProps) {
+  const theme = useContext(ThemeContext);
+  const vertical = anchorOrigin?.vertical === "top" ? "top-4" : "bottom-4";
+  const horizontal = anchorOrigin?.horizontal === "left" ? "left-4" : "right-4";
   const onCloseRef = useRef(onClose);
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -863,7 +876,17 @@ export function Snackbar({ open, autoHideDuration, onClose, children }: AnyProps
     return () => window.clearTimeout(timeout);
   }, [open, autoHideDuration]);
   if (!open) return null;
-  return <div className="fixed bottom-4 right-4 z-50 max-w-[560px]">{children}</div>;
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div
+      {...props}
+      className={cn("fixed max-w-[560px]", vertical, horizontal, className)}
+      style={mergeStyles({ zIndex: 2147483000 }, sxToStyle(sx, theme), style)}
+    >
+      {children}
+    </div>,
+    document.body,
+  );
 }
 
 export function Alert({

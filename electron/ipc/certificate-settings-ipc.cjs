@@ -2,7 +2,7 @@
 
 const fs = require("node:fs/promises");
 const path = require("node:path");
-const { ipcMain, dialog } = require("electron");
+const { ipcMain, dialog, session } = require("electron");
 const {
   applyCertificateSettings,
   clearCertificatePem,
@@ -15,7 +15,9 @@ function registerCertificateSettingsIpc() {
 
   ipcMain.handle("certificate-settings:set", async (_event, payload = {}) => {
     try {
-      return applyCertificateSettings(payload);
+      const info = applyCertificateSettings(payload);
+      await closeCertificateRelatedConnections();
+      return info;
     } catch (error) {
       return { ok: false, error: error?.message ? String(error.message) : String(error) };
     }
@@ -23,7 +25,9 @@ function registerCertificateSettingsIpc() {
 
   ipcMain.handle("certificate-settings:clear", async () => {
     try {
-      return clearCertificatePem();
+      const info = clearCertificatePem();
+      await closeCertificateRelatedConnections();
+      return info;
     } catch (error) {
       return { ok: false, error: error?.message ? String(error.message) : String(error) };
     }
@@ -47,11 +51,19 @@ function registerCertificateSettingsIpc() {
           pemText: await fs.readFile(filePath, "utf8"),
         })),
       );
-      return { ...importCertificatePems(items), filePaths: result.filePaths, filePath: result.filePaths[0] };
+      const info = importCertificatePems(items);
+      await closeCertificateRelatedConnections();
+      return { ...info, filePaths: result.filePaths, filePath: result.filePaths[0] };
     } catch (error) {
       return { ok: false, error: error?.message ? String(error.message) : String(error) };
     }
   });
+}
+
+async function closeCertificateRelatedConnections() {
+  if (session?.defaultSession && typeof session.defaultSession.closeAllConnections === "function") {
+    await session.defaultSession.closeAllConnections();
+  }
 }
 
 module.exports = { registerCertificateSettingsIpc };

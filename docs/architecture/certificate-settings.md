@@ -10,7 +10,8 @@ Layang supports internal HTTPS, self-signed APISIX, REST, gRPC-Web, and native g
 - Remove one certificate at a time or clear the full trusted list.
 - Use **Bypass HTTPS certificate errors in this desktop app** only as an explicit local/lab escape hatch.
 
-The dialog is English-only. There is no PEM text editor in the UI; users manage trusted certificates through import, remove, and clear-all actions.
+The dialog is English-only. There is no PEM text editor in the UI; users manage trusted certificates through import, remove, and clear-all actions. Clear-all only removes imported certificates; bypass mode stays at the last checkbox state.
+Import, remove, and clear-all actions are persisted immediately and apply to new HTTPS, gRPC-Web, REST, and native gRPC requests without restarting the app. The Electron default session closes existing network connections after certificate settings change so subsequent renderer requests re-evaluate TLS policy.
 
 ## Storage
 

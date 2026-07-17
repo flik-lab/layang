@@ -5,12 +5,12 @@
 # Layang
 
 [![Website](https://img.shields.io/badge/website-layang.mff.web.id-blue)](https://layang.mff.web.id/)
-[![Version](https://img.shields.io/badge/version-1.0.4-blue)](https://github.com/flik-lab/layang/releases)
+[![Version](https://img.shields.io/badge/version-1.0.5-blue)](https://github.com/flik-lab/layang/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Layang is a workspace-based API workbench for testing, mocking, benchmarking, documenting, and automating APIs across REST, WebSocket, gRPC, and gRPC-Web.
 
-Layang `1.0.4` focuses on day-to-day desktop reliability: manual mock scenario refresh from workspace files, multiple imported HTTPS certificates, certificate-list management without a PEM editor, app zoom shortcuts, and a simpler workspace logo menu.
+Layang `1.0.5` focuses on day-to-day desktop reliability: manual mock scenario refresh from workspace files, multiple imported HTTPS certificates, certificate-list management without a PEM editor, app zoom shortcuts, and a simpler workspace logo menu.
 
 ![Layang workbench](github-pages/assets/layang-app-screenshot.png)
 

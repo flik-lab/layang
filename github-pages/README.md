@@ -4,7 +4,7 @@ This folder is the public landing-site source for Layang.
 
 ## Pages
 
-- `index.html` - product landing page for Layang 1.0.4, including REST, WebSocket, gRPC, gRPC-Web, local mocks, manual mock file refresh, certificate settings, documentation, workspace files, CLI, and download sections.
+- `index.html` - product landing page for Layang 1.0.5, including REST, WebSocket, gRPC, gRPC-Web, local mocks, manual mock file refresh, certificate settings, documentation, workspace files, CLI, and download sections.
 
 ## Assets
 
