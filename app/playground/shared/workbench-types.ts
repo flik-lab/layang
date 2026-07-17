@@ -80,7 +80,10 @@ export type UiEvent = {
   kind: "log" | "headers" | "message" | "trailers" | "error" | "end";
   title: string;
   level?: "debug" | "info" | "warn" | "error";
+  /** Payload used by dense tables and search. Large values may be previewed for UI performance. */
   payload: unknown;
+  /** Full payload kept only in live memory so expanded message rows can show complete JSON. */
+  fullPayload?: unknown;
   timestamp: string;
 };
 

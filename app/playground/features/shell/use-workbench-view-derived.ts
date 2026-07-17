@@ -92,7 +92,7 @@ export function useWorkbenchViewDerived(scope: WorkbenchViewDerivedScope) {
   const latestResponsePayload = useMemo(() => {
     for (let index = events.length - 1; index >= 0; index -= 1) {
       const event = events[index];
-      if (event.kind === "message") return event.payload;
+      if (event.kind === "message") return event.fullPayload ?? event.payload;
     }
 
     const resultMessages = lastResult?.messages ?? [];
