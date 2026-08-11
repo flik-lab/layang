@@ -8,4 +8,5 @@ ignoredBuiltDependencies:
   - unrs-resolver
 
 onlyBuiltDependencies:
+  - electron
   - electron-winstaller
