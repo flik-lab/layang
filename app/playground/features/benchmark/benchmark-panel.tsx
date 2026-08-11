@@ -44,6 +44,8 @@ type BenchmarkStats = {
   p50: number;
   p95: number;
   errorRate: number;
+  intervalCount: number;
+  timeToFirstMessageMs?: number;
 };
 
 const unaryBenchmarkColumns: ResizableTableColumn[] = [
@@ -57,10 +59,10 @@ const unaryBenchmarkColumns: ResizableTableColumn[] = [
 const streamingBenchmarkColumns: ResizableTableColumn[] = [
   { id: "no", label: "No", width: 44, minWidth: 36, maxWidth: 80, sx: { textAlign: "right" } },
   { id: "status", label: "Status", width: 120, minWidth: 96, maxWidth: 260 },
-  { id: "latency", label: "Latency avg", width: 112, minWidth: 96, maxWidth: 200 },
+  { id: "latency", label: "Interval avg", width: 112, minWidth: 96, maxWidth: 200 },
   { id: "throughput", label: "Throughput", width: 120, minWidth: 100, maxWidth: 220 },
   { id: "messages", label: "Messages", width: 92, minWidth: 76, maxWidth: 160, sx: { textAlign: "right" } },
-  { id: "periodDuration", label: "Period duration", width: 132, minWidth: 112, maxWidth: 220 },
+  { id: "periodDuration", label: "Sample window", width: 132, minWidth: 112, maxWidth: 220 },
   { id: "time", label: "Time", width: 136, minWidth: 112, maxWidth: 260 },
 ];
 
@@ -71,6 +73,7 @@ export function calculateBenchmarkStats(results: BenchmarkResult[]): BenchmarkSt
   const successful = results.filter((item) => item.ok);
   const failed = results.filter((item) => !item.ok);
   const durations = successful
+    .filter((item) => item.mode !== "stream-period" || item.intervalCount === undefined || item.intervalCount > 0)
     .map((item) => item.durationMs)
     .filter((duration) => Number.isFinite(duration))
     .sort((a, b) => a - b);
@@ -87,6 +90,8 @@ export function calculateBenchmarkStats(results: BenchmarkResult[]): BenchmarkSt
     p50: percentileFromSorted(durations, 50),
     p95: percentileFromSorted(durations, 95),
     errorRate,
+    intervalCount: successful.reduce((sum, item) => sum + (item.intervalCount ?? 0), 0),
+    timeToFirstMessageMs: successful.find((item) => Number.isFinite(item.timeToFirstMessageMs))?.timeToFirstMessageMs,
   };
 }
 
@@ -149,8 +154,8 @@ export function BenchmarkPanel({
       </Stack>
       {streaming && (
         <Alert severity="info">
-          Streaming benchmark samples messages per period. Latency is the average gap between received messages;
-          throughput is messages per second in that configured period.
+          The sample window groups throughput only. Time to first message is reported separately; interval latency uses
+          only gaps between consecutive messages, so warm-up does not distort cadence.
         </Alert>
       )}
       <Stack direction="row" spacing={0.8} alignItems="center" flexWrap="wrap" useFlexGap>
@@ -168,7 +173,7 @@ export function BenchmarkPanel({
         {streaming && (
           <TextField
             size="small"
-            label="Period ms"
+            label="Sample window ms"
             type="number"
             value={periodMs}
             onChange={(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
@@ -193,8 +198,13 @@ export function BenchmarkPanel({
           <>
             <Chip size="small" label={`Msgs ${totalMessages}`} variant="outlined" />
             <Chip size="small" label={`Avg ${avgThroughput.toFixed(1)} msg/s`} variant="outlined" />
-            <Chip size="small" label={`Latency ${stats.average.toFixed(1)} ms`} variant="outlined" />
-            <Chip size="small" label={`P95 ${stats.p95.toFixed(1)} ms`} variant="outlined" />
+            <Chip
+              size="small"
+              label={`First ${stats.timeToFirstMessageMs?.toFixed(1) ?? "—"} ms`}
+              variant="outlined"
+            />
+            <Chip size="small" label={`Interval ${stats.average.toFixed(1)} ms`} variant="outlined" />
+            <Chip size="small" label={`Interval P95 ${stats.p95.toFixed(1)} ms`} variant="outlined" />
           </>
         ) : (
           <>
@@ -228,7 +238,9 @@ export function BenchmarkPanel({
                     title={result.status}
                   />
                 </TableCell>
-                <TableCell>{result.durationMs.toFixed(1)} ms</TableCell>
+                <TableCell>
+                  {streaming && (result.intervalCount ?? 0) === 0 ? "—" : `${result.durationMs.toFixed(1)} ms`}
+                </TableCell>
                 {streaming && <TableCell>{(result.messagesPerSecond ?? 0).toFixed(1)} msg/s</TableCell>}
                 <TableCell sx={{ textAlign: "right" }}>{result.messageCount}</TableCell>
                 {streaming && <TableCell>{((result.periodDurationMs ?? 0) / 1000).toFixed(1)} s</TableCell>}

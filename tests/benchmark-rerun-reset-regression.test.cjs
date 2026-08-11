@@ -23,3 +23,10 @@ test("late benchmark callbacks cannot append results to a newer run", () => {
   assert.match(source, /runGeneration === runGenerationRef\.current/);
   assert.match(source, /runStreamingBenchmark\(parsedJson, runGeneration\)/);
 });
+
+test("streaming benchmark separates first-message time from inter-message cadence", () => {
+  assert.match(source, /periodTimeToFirstMessageMs = Math\.max\(0, now - streamStartedAt\)/);
+  assert.match(source, /periodLatencies\.push\(Math\.max\(0, now - lastMessageAt\)\)/);
+  assert.match(source, /intervalCount: latencies\.length/);
+  assert.doesNotMatch(source, /lastMessageAt === null \? now - streamStartedAt : now - lastMessageAt/);
+});

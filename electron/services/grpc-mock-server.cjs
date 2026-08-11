@@ -4,6 +4,7 @@ const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
+const { performance } = require("node:perf_hooks");
 const { readGitWorkspace } = require("../../lib/git-workspace.cjs");
 const grpc = require("@grpc/grpc-js");
 const protoLoader = require("@grpc/proto-loader");
@@ -1127,6 +1128,7 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
   let pendingTimerStartedAt = 0;
   let pendingPlannedDelayMs = 0;
   let pendingCompletedCycle = false;
+  let nextRuntimeCadenceAt = 0;
 
   const clearPendingTimer = () => {
     if (!pendingTimer) return;
@@ -1234,7 +1236,7 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
     if (closed) return;
     clearPendingTimer();
     const waitMs = normalizeDelayMs(delay);
-    const now = Date.now();
+    const now = performance.now();
     pendingAction = action;
     pendingActionKind = actionKind || null;
     pendingUsesRuntimeInterval = Boolean(usesRuntimeInterval);
@@ -1262,8 +1264,8 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
     if (closed || !pendingTimer || !pendingAction) return;
     const snapshot = getLiveSnapshot();
     if (!snapshot) return;
-    const startedAt = pendingTimerStartedAt || Date.now();
-    const elapsed = Math.max(0, Date.now() - startedAt);
+    const startedAt = pendingTimerStartedAt || performance.now();
+    const elapsed = Math.max(0, performance.now() - startedAt);
     const nextPlannedDelay = pendingUsesRuntimeInterval
       ? normalizeDelayMs(snapshot.timing.intervalMs)
       : normalizeDelayMs(pendingPlannedDelayMs);
@@ -1272,6 +1274,9 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
     const nextActionKind = resolved.kind;
     const nextAction = nextActionKind ? getActionForPendingKind(nextActionKind) : pendingAction;
     const remaining = Math.max(0, nextPlannedDelay - elapsed);
+    if (pendingUsesRuntimeInterval && nextActionKind === "next") {
+      nextRuntimeCadenceAt = startedAt + nextPlannedDelay;
+    }
     const nextCompletedCycle = pendingCompletedCycle && nextActionKind === "finish" && !resolved.undoCompletedCycle;
     scheduleTimer(
       remaining,
@@ -1285,11 +1290,18 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
   }
 
   const scheduleNext = (delay, usesRuntimeInterval = false) => {
-    scheduleTimer(delay, writeNext, usesRuntimeInterval, "next", Date.now(), delay, false);
+    const now = performance.now();
+    if (!usesRuntimeInterval) {
+      nextRuntimeCadenceAt = 0;
+      scheduleTimer(delay, writeNext, false, "next", now, delay, false);
+      return;
+    }
+    nextRuntimeCadenceAt = calculateNextCadenceDeadline(nextRuntimeCadenceAt, delay, now);
+    scheduleTimer(Math.max(0, nextRuntimeCadenceAt - now), writeNext, true, "next", now, delay, false);
   };
 
   const scheduleFinish = (delay, usesRuntimeInterval = false, completedCycle = false) => {
-    scheduleTimer(delay, finishStream, usesRuntimeInterval, "finish", Date.now(), delay, completedCycle);
+    scheduleTimer(delay, finishStream, usesRuntimeInterval, "finish", performance.now(), delay, completedCycle);
   };
 
   const finishStream = () => {
@@ -1378,6 +1390,7 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
     if (wrote === false && typeof call.once === "function") {
       call.once("drain", () => {
         const delay = hasExplicitResponseDelay ? nextDelay : (getLiveTiming()?.intervalMs ?? nextDelay);
+        nextRuntimeCadenceAt = 0;
         scheduleNext(delay, !hasExplicitResponseDelay);
       });
     } else {
@@ -1995,6 +2008,17 @@ function normalizeDelayMs(value) {
 }
 
 /**
+ * Advances a stream against an absolute cadence instead of chaining delays
+ * from the end of each write. Late ticks therefore do not accumulate drift.
+ */
+function calculateNextCadenceDeadline(previousDeadline, intervalMs, now) {
+  const interval = normalizeDelayMs(intervalMs);
+  const current = Number.isFinite(Number(now)) ? Number(now) : performance.now();
+  const previous = Number(previousDeadline);
+  return Number.isFinite(previous) && previous > 0 ? previous + interval : current + interval;
+}
+
+/**
  * Builds a grpc-js compatible Error with status metadata.
  */
 function grpcStatusError(code, message) {
@@ -2031,6 +2055,7 @@ module.exports = {
   normalizeMockBindHost,
   normalizeMockServerPort,
   normalizeRuntimeStreamSettings,
+  calculateNextCadenceDeadline,
   parseRuntimeScenarioText,
   startMockServer,
   stopMockServer,

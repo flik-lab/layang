@@ -76,6 +76,7 @@ export function useBenchmarkRunner({
       let lastMessageAt: number | null = null;
       let periodMessages = 0;
       let periodLatencies: number[] = [];
+      let periodTimeToFirstMessageMs: number | undefined;
       let periodIndex = 0;
       let completedPeriods = 0;
       let intervalId: number | null = null;
@@ -118,6 +119,8 @@ export function useBenchmarkRunner({
                   messagesPerSecond: throughput,
                   p50LatencyMs: percentileFromSorted(latencies, 50),
                   p95LatencyMs: percentileFromSorted(latencies, 95),
+                  intervalCount: latencies.length,
+                  timeToFirstMessageMs: periodTimeToFirstMessageMs,
                 },
               ]
             : current,
@@ -125,15 +128,19 @@ export function useBenchmarkRunner({
 
         periodMessages = 0;
         periodLatencies = [];
+        periodTimeToFirstMessageMs = undefined;
       };
 
       const recordStreamEvent = (event: GrpcEvent) => {
         if (event.type !== "message") return;
         const now = performance.now();
-        const latency = lastMessageAt === null ? now - streamStartedAt : now - lastMessageAt;
+        if (lastMessageAt === null) {
+          periodTimeToFirstMessageMs = Math.max(0, now - streamStartedAt);
+        } else {
+          periodLatencies.push(Math.max(0, now - lastMessageAt));
+        }
         lastMessageAt = now;
         periodMessages += 1;
-        periodLatencies.push(Math.max(0, latency));
       };
 
       benchmarkControl.abortController = abortController;

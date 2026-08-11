@@ -768,6 +768,8 @@ export function useRequestRunnerActions(ctx: ActionContext) {
         p50Ms: stats.p50,
         p95Ms: stats.p95,
         errorRate: stats.errorRate,
+        intervalCount: stats.intervalCount,
+        timeToFirstMessageMs: stats.timeToFirstMessageMs,
       },
       results: benchmark.results,
     };

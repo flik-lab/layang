@@ -201,6 +201,8 @@ export type BenchmarkResult = {
   messagesPerSecond?: number;
   p50LatencyMs?: number;
   p95LatencyMs?: number;
+  intervalCount?: number;
+  timeToFirstMessageMs?: number;
 };
 
 export type MethodDoc = {
