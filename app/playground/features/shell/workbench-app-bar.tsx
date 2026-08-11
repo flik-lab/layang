@@ -1,30 +1,28 @@
 "use client";
 
 import type { MouseEvent as ReactMouseEvent } from "react";
+import { Download, Settings, Storage, UploadFile } from "@/components/shadcn/icons";
+import { SidebarTrigger } from "@/components/ui/sidebar";
 import type { ColorMode } from "../../design-system";
 import type { RequestSession } from "../../shared/workbench-types";
 
 type CompatTheme = { palette: { mode: ColorMode } };
 type ButtonClickEvent = ReactMouseEvent<HTMLButtonElement>;
-
 type WorkbenchViewContext = Record<string, any>;
 
-export function WorkbenchAppBar(props: { ctx: WorkbenchViewContext }) {
+export function WorkbenchAppBar({ ctx }: { ctx: WorkbenchViewContext }) {
   const {
     AppBar,
     AppLogoIcon,
     Box,
     Button,
     Divider,
-    Download,
     Menu,
     MenuItem,
     RequestTabs,
     Stack,
-    Storage,
     Tooltip,
     Typography,
-    UploadFile,
     WindowControls,
     activateRequestSession,
     activeRequestId,
@@ -32,17 +30,22 @@ export function WorkbenchAppBar(props: { ctx: WorkbenchViewContext }) {
     closeOtherRequestSessions,
     closeRequestSession,
     colorTokens,
+    createNewWorkspaceFolder,
     designSystem,
-    openCertificateSettings,
     openWorkspaceFolder,
     paletteMode,
     requestRunner,
     requestSessions,
     saveWorkspaceFolder,
     saveWorkspaceFolderAs,
+    setProtoPreview,
+    setSettingsSection,
+    setSideSection,
+    setSidebarOpen,
     setWorkspaceMenuAnchor,
+    workspaceFolderPath,
     workspaceMenuAnchor,
-  } = props.ctx;
+  } = ctx;
 
   return (
     <AppBar
@@ -69,27 +72,15 @@ export function WorkbenchAppBar(props: { ctx: WorkbenchViewContext }) {
         spacing={0.55}
         sx={{ px: 0.65, height: "100%", width: "100%", minWidth: 0, WebkitAppRegion: "drag" }}
       >
-        <Stack
-          direction="row"
-          spacing={0.7}
-          alignItems="center"
-          sx={{ width: 166, flexShrink: 0, justifyContent: "flex-start", WebkitAppRegion: "drag" }}
-        >
-          <Tooltip title="Layang workspace">
+        <Stack direction="row" spacing={0.45} alignItems="center" sx={{ flexShrink: 0, WebkitAppRegion: "no-drag" }}>
+          <Tooltip title={workspaceFolderPath ? `Workspace: ${workspaceFolderPath}` : "Workspace menu"}>
             <Button
               size="small"
               aria-label="Layang workspace menu"
               onClick={(event: ButtonClickEvent) => setWorkspaceMenuAnchor(event.currentTarget)}
-              sx={{
-                WebkitAppRegion: "no-drag",
-                height: 28,
-                minWidth: 0,
-                px: 0.75,
-                gap: "6px",
-                borderColor: "transparent",
-              }}
+              sx={{ minWidth: 104, px: 0.65, justifyContent: "flex-start", gap: "4px", borderColor: "transparent" }}
             >
-              <AppLogoIcon size={19} />
+              <AppLogoIcon size={22} />
               <Typography variant="body2" fontWeight={700} noWrap>
                 Layang
               </Typography>
@@ -100,13 +91,28 @@ export function WorkbenchAppBar(props: { ctx: WorkbenchViewContext }) {
             open={Boolean(workspaceMenuAnchor)}
             onClose={() => setWorkspaceMenuAnchor(null)}
           >
+            {workspaceFolderPath && (
+              <MenuItem disabled>
+                <Typography variant="caption" noWrap title={workspaceFolderPath} sx={{ maxWidth: 360 }}>
+                  Active: {workspaceFolderPath}
+                </Typography>
+              </MenuItem>
+            )}
+            <MenuItem
+              onClick={() => {
+                setWorkspaceMenuAnchor(null);
+                void createNewWorkspaceFolder();
+              }}
+            >
+              <Storage fontSize="small" /> New workspace folder...
+            </MenuItem>
             <MenuItem
               onClick={() => {
                 setWorkspaceMenuAnchor(null);
                 void openWorkspaceFolder();
               }}
             >
-              <UploadFile fontSize="small" /> Open workspace folder
+              <UploadFile fontSize="small" /> Switch / open workspace folder...
             </MenuItem>
             <MenuItem
               onClick={() => {
@@ -128,18 +134,28 @@ export function WorkbenchAppBar(props: { ctx: WorkbenchViewContext }) {
             <MenuItem
               onClick={() => {
                 setWorkspaceMenuAnchor(null);
-                openCertificateSettings();
+                setSideSection("settings");
+                setSettingsSection("workspace");
+                setSidebarOpen(true);
               }}
             >
-              <Storage fontSize="small" /> Certificate settings
+              <Settings fontSize="small" /> Workspace settings
             </MenuItem>
           </Menu>
         </Stack>
+
+        <SidebarTrigger className="shrink-0" style={{ WebkitAppRegion: "no-drag" } as any} />
+
         <Box sx={{ WebkitAppRegion: "drag", minWidth: 0, flex: "1 1 auto", height: "100%", display: "flex" }}>
           <RequestTabs
             sessions={requestSessions}
             activeRequestId={activeRequestId}
-            onActivate={(session: RequestSession) => activateRequestSession(session)}
+            onActivate={(session: RequestSession) => {
+              setProtoPreview(null);
+              activateRequestSession(session);
+              setSideSection("collections");
+              setSidebarOpen(true);
+            }}
             onClose={closeRequestSession}
             onCancel={requestRunner.cancelRequest}
             onCloseAll={closeAllRequestSessions}
@@ -147,10 +163,7 @@ export function WorkbenchAppBar(props: { ctx: WorkbenchViewContext }) {
             placement="top"
           />
         </Box>
-        <Box
-          aria-label="Drag window"
-          sx={{ alignSelf: "stretch", width: 72, flexShrink: 0, WebkitAppRegion: "drag" }}
-        />
+
         <WindowControls />
       </Stack>
     </AppBar>

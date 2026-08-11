@@ -29,10 +29,15 @@ test("Add WS and Run WS action scopes receive request-session domain actions", (
   assert.match(requestRunnerScopeBlock, /\.\.\.collectionActions/, "request runner must inherit collection actions");
 });
 
-test("mock scenario hydration runs on initial workspace load", () => {
-  const model = read("app/playground/features/shell/use-workbench-container-model.tsx");
-  assert.match(model, /initialMockWorkspaceRefreshPathRef/, "initial mock workspace refresh guard should exist");
-  assert.match(model, /refreshGrpcMockServerFromWorkspace\(\{\s*silent:\s*true,\s*respectLocalDirty:\s*false\s*\}\)/s);
+test("mock scenario files use explicit manual refresh instead of overwriting a local draft", () => {
+  const controller = read("app/playground/features/mock-server/use-grpc-mock-controller.ts");
+  const actions = read("app/playground/features/mock-server/use-grpc-mock-editor-actions.ts");
+  const services = read("app/playground/features/services/services-workspace.tsx");
+  assert.match(controller, /respectLocalDirty\?: boolean/);
+  assert.match(actions, /fetchMockScenarioFilesFromWorkspace/);
+  assert.match(actions, /respectLocalDirty: false/);
+  assert.match(services, /uiCopy\.actions\.syncFile/);
+  assert.match(actions, /applyToState: false/);
 });
 
 test("deleted collection request and proto sources are handled through request-session domain cleanup", () => {
@@ -47,4 +52,53 @@ test("Windows workspace save does not replace the whole mocks/scenarios folder",
   assert.match(main, /writeScenarioFilesIncrementally/);
   assert.doesNotMatch(main, /replaceDirectoryAtomically\(scenariosDir/);
   assert.match(main, /manifest\.json/);
+});
+
+test("sidebar tooltips honor horizontal placements", () => {
+  const compat = read("components/shadcn/compat.tsx");
+  assert.match(compat, /side === "right"/);
+  assert.match(compat, /side === "left"/);
+  assert.match(compat, /translateY\(-50%\)/);
+  assert.doesNotMatch(compat, /max-w-72 -translate-x-1\/2/);
+});
+
+test("search results use a visible yellow mark instead of bold-only matches", () => {
+  const highlight = read("app/playground/shared/components/search-highlight.tsx");
+  const styles = read("app/globals.css");
+  const responseViewer = read("app/playground/features/response-viewer/response-viewer.tsx");
+
+  assert.match(highlight, /<mark className="search-highlight"/);
+  assert.match(styles, /\.search-highlight\s*\{[^}]*background:\s*#facc15/s);
+  assert.match(responseViewer, /SearchHighlightedText/);
+  assert.doesNotMatch(responseViewer, /renderBoldMatches|HighlightedCodeText|HighlightedInlineText/);
+});
+
+test("request mock can select and start a scenario without opening the editor", () => {
+  const mainPanel = read("app/playground/features/shell/workbench-main-panel.tsx");
+  const mockActions = read("app/playground/features/mock-server/use-grpc-mock-editor-actions.ts");
+
+  assert.match(mainPanel, /selectActiveRequestScenario/);
+  assert.match(mainPanel, /startActiveRequestMock/);
+  assert.match(mainPanel, /requestMockRuntimeAction === "start" \? "Starting…" : "Start"/);
+  assert.match(mainPanel, /Edit scenario/);
+  assert.match(mockActions, /startMockServer\(projectOverride\?: MockServerProject\)/);
+  assert.match(mockActions, /projectOverride \?\? mockServerRef\?\.current \?\? mockServer/);
+});
+
+test("response-to-docs action explains the outcome and opens request docs", () => {
+  const toolbar = read("app/playground/features/response-viewer/response-toolbar.tsx");
+  const mainPanel = read("app/playground/features/shell/workbench-main-panel.tsx");
+  const docsPanel = read("app/playground/features/documentation/documentation-panels.tsx");
+
+  assert.match(toolbar, /Save latest response for Docs/);
+  assert.match(toolbar, /canSaveDocs/);
+  assert.match(toolbar, /Open response full screen/);
+  assert.doesNotMatch(toolbar, />Stack</);
+  assert.doesNotMatch(toolbar, />Side</);
+  assert.match(mainPanel, /setRequestTab\("docs"\)/);
+  assert.match(mainPanel, /defaultTab="content"/);
+  assert.match(docsPanel, />\s*Markdown\s*<\/Typography>/);
+  assert.match(docsPanel, /Automatic content to insert/);
+  assert.match(docsPanel, /documentation-markdown-editor/);
+  assert.match(docsPanel, /uiCopy\.actions\.saveDraft/);
 });

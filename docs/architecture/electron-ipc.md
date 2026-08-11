@@ -101,7 +101,7 @@ Error invoking remote method
 Better:
 
 ```txt
-Workspace autosave failed because Windows locked mocks/scenarios. The save will retry.
+Workspace autosave failed because Windows locked mocks/grpc/methods. The save will retry.
 ```
 
 IPC handlers should catch known filesystem errors such as:

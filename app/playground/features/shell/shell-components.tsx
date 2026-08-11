@@ -1,4 +1,10 @@
-import { type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, useRef, useState } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type { ReactNode } from "react";
 import {
   KeyboardArrowLeft,
@@ -13,9 +19,22 @@ import { Box, Button, Chip, IconButton, Menu, MenuItem, Stack, Tooltip, Typograp
 import { designSystem } from "../../design-system";
 import { appLogoSrc, iconButtonSx } from "../../shared/workbench-constants";
 import type { RequestSession, SideSection } from "../../shared/workbench-types";
+import { uiCopy } from "../../shared/ui-copy";
 
 type TabKeyboardEvent = ReactKeyboardEvent<HTMLDivElement>;
 type ContextMenuAnchor = { getBoundingClientRect: () => DOMRect };
+
+function requestTabContextLabel(session: RequestSession) {
+  if (session.requestKind === "rest") {
+    const method = session.httpMethod || "REST";
+    return `${method} · ${session.requestUrl || session.serviceName}`;
+  }
+  if (session.requestKind === "websocket") {
+    return `WebSocket · ${session.requestUrl || session.serviceName}`;
+  }
+  const methodName = session.grpc?.methodFullName?.replace(/^\//u, "").replace("/", " / ");
+  return methodName || session.serviceName;
+}
 
 export type WorkbenchTabItem<T extends string> = { value: T; label: string; title?: string };
 
@@ -24,22 +43,49 @@ export function WorkbenchTabs<T extends string>({
   value,
   items,
   onChange,
+  idPrefix,
+  ariaLabel = "Workbench sections",
 }: {
   value: T;
   items: WorkbenchTabItem<T>[];
   onChange: (value: T) => void;
+  idPrefix?: string;
+  ariaLabel?: string;
 }) {
+  const resolvedIdPrefix = idPrefix;
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>, index: number) {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const nextIndex =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? items.length - 1
+          : (index + (event.key === "ArrowLeft" ? -1 : 1) + items.length) % items.length;
+    const next = items[nextIndex];
+    if (!next) return;
+    onChange(next.value);
+    const tabList = event.currentTarget.parentElement;
+    window.requestAnimationFrame(() =>
+      tabList?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus(),
+    );
+  }
+
   return (
-    <div className="workbench-stacked-tabs" role="tablist">
-      {items.map((item) => (
+    <div className="workbench-stacked-tabs" role="tablist" aria-label={ariaLabel}>
+      {items.map((item, index) => (
         <button
           key={item.value}
           type="button"
           role="tab"
+          id={resolvedIdPrefix ? `${resolvedIdPrefix}-tab-${item.value}` : undefined}
+          aria-controls={resolvedIdPrefix ? `${resolvedIdPrefix}-panel-${item.value}` : undefined}
+          tabIndex={item.value === value ? 0 : -1}
           aria-selected={item.value === value}
           data-active={item.value === value}
           className="workbench-stacked-tab"
           title={item.title ?? item.label}
+          onKeyDown={(event) => handleKeyDown(event, index)}
           onClick={() => onChange(item.value)}
         >
           <span className="workbench-stacked-tab__label">{item.label}</span>
@@ -131,8 +177,32 @@ export function RequestTabs({
 }) {
   const isTop = placement === "top";
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const tabRefs = useRef(new Map<string, HTMLDivElement>());
+  const [hasOverflow, setHasOverflow] = useState(false);
   const [tabMenu, setTabMenu] = useState<{ anchorEl: ContextMenuAnchor; session: RequestSession } | null>(null);
   const menuSession = tabMenu?.session ?? null;
+
+  useEffect(() => {
+    const node = scrollerRef.current;
+    if (!node) return;
+    const update = () => setHasOverflow(node.scrollWidth > node.clientWidth + 4);
+    update();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+    observer?.observe(node);
+    window.addEventListener("resize", update);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, [sessions.length]);
+
+  useEffect(() => {
+    if (!activeRequestId) return;
+    const frame = window.requestAnimationFrame(() => {
+      tabRefs.current.get(activeRequestId)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeRequestId, sessions.length]);
 
   function scrollTabs(direction: -1 | 1) {
     const node = scrollerRef.current;
@@ -173,11 +243,17 @@ export function RequestTabs({
     action(session);
   }
 
+  function activateTabFromKeyboard(session: RequestSession) {
+    onActivate(session);
+    window.requestAnimationFrame(() => tabRefs.current.get(session.id)?.focus());
+  }
+
   function activateAdjacentTab(session: RequestSession, direction: -1 | 1) {
     const index = sessions.findIndex((item) => item.id === session.id);
     if (index < 0 || sessions.length === 0) return;
     const nextIndex = (index + direction + sessions.length) % sessions.length;
-    onActivate(sessions[nextIndex]);
+    const nextSession = sessions[nextIndex];
+    if (nextSession) activateTabFromKeyboard(nextSession);
   }
 
   function handleTabKeyDown(event: TabKeyboardEvent, session: RequestSession) {
@@ -195,13 +271,15 @@ export function RequestTabs({
 
     if (event.key === "Home" && sessions.length > 0) {
       event.preventDefault();
-      onActivate(sessions[0]);
+      const firstSession = sessions[0];
+      if (firstSession) activateTabFromKeyboard(firstSession);
       return;
     }
 
     if (event.key === "End" && sessions.length > 0) {
       event.preventDefault();
-      onActivate(sessions[sessions.length - 1]);
+      const lastSession = sessions[sessions.length - 1];
+      if (lastSession) activateTabFromKeyboard(lastSession);
       return;
     }
 
@@ -234,7 +312,7 @@ export function RequestTabs({
         WebkitAppRegion: isTop ? "drag" : "auto",
       }}
     >
-      {isTop && (
+      {isTop && hasOverflow && (
         <Tooltip title="Scroll tabs left">
           <IconButton
             size="small"
@@ -278,17 +356,21 @@ export function RequestTabs({
         >
           {sessions.map((session) => {
             const active = session.id === activeRequestId;
-            const status = session.running ? "running" : session.status === "error" ? "error" : "idle";
+            const status = session.running ? "running" : session.status === "error" ? "error" : "open";
             return (
               <div
                 key={session.id}
+                ref={(node) => {
+                  if (node) tabRefs.current.set(session.id, node);
+                  else tabRefs.current.delete(session.id);
+                }}
                 role="tab"
                 tabIndex={active ? 0 : -1}
                 className="request-tab"
                 data-active={active}
                 aria-selected={active}
-                aria-label={`${session.title} tab, ${session.running ? "running" : session.status}`}
-                title={`${session.title} - ${session.serviceName} (${session.running ? "running" : session.status})`}
+                aria-label={`${session.title}, ${session.running ? "running" : session.status}`}
+                title={requestTabContextLabel(session)}
                 onClick={() => onActivate(session)}
                 onAuxClick={(event: ReactMouseEvent<HTMLElement>) => {
                   if (event.button !== 1) return;
@@ -305,20 +387,20 @@ export function RequestTabs({
                   <button
                     type="button"
                     className="request-tab__action request-tab__action--stop"
-                    title="Stop this tab"
+                    title="Stop request"
                     aria-label={`Stop ${session.title}`}
                     onClick={(event: ReactMouseEvent<HTMLButtonElement>) => {
                       event.stopPropagation();
                       onCancel(session.id);
                     }}
                   >
-                    <StopCircle sx={{ fontSize: 14 }} />
+                    <StopCircle sx={{ fontSize: 13 }} />
                   </button>
                 )}
                 <button
                   type="button"
                   className="request-tab__action"
-                  title="Close current tab"
+                  title={uiCopy.actions.closeTab}
                   aria-label={`Close ${session.title}`}
                   onClick={(event: ReactMouseEvent<HTMLButtonElement>) => {
                     event.stopPropagation();
@@ -332,7 +414,7 @@ export function RequestTabs({
           })}
         </Stack>
       </Box>
-      {isTop && (
+      {isTop && hasOverflow && (
         <Tooltip title="Scroll tabs right">
           <IconButton
             size="small"
@@ -346,13 +428,13 @@ export function RequestTabs({
       )}
       <Menu anchorEl={tabMenu?.anchorEl ?? null} open={Boolean(tabMenu)} onClose={closeTabMenu}>
         <MenuItem disabled={!menuSession} onClick={() => runTabMenuAction((session) => onClose(session.id))}>
-          Close current tab
+          {uiCopy.actions.closeTab}
         </MenuItem>
         <MenuItem
           disabled={!menuSession || sessions.length <= 1 || !onCloseOther}
           onClick={() => runTabMenuAction((session) => onCloseOther?.(session.id))}
         >
-          Close all other tabs
+          {uiCopy.actions.closeOtherTabs}
         </MenuItem>
         <MenuItem
           disabled={sessions.length === 0 || !onCloseAll}
@@ -361,7 +443,7 @@ export function RequestTabs({
             onCloseAll?.();
           }}
         >
-          Close all tabs
+          {uiCopy.actions.closeAllTabs}
         </MenuItem>
       </Menu>
     </Stack>
@@ -374,7 +456,8 @@ export function AppLogoIcon({ size = 20 }: { size?: number }) {
     <Box
       component="img"
       src={appLogoSrc}
-      alt="Layang logo"
+      alt=""
+      aria-hidden="true"
       draggable={false}
       sx={{
         width: size,
@@ -451,48 +534,40 @@ export function RailButton({
 /** Renders the active sidebar section header. */
 export function SidebarHeader({
   section,
+  collectionCount,
   protoCount,
-  exampleCount,
-  historyCount,
   docsCount,
-  mockCount,
   onHide,
   action,
 }: {
   section: SideSection;
+  collectionCount: number;
   protoCount: number;
-  exampleCount: number;
-  historyCount: number;
+  exampleCount?: number;
+  historyCount?: number;
   docsCount: number;
-  mockCount: number;
+  mockCount?: number;
   onHide: () => void;
   action?: ReactNode;
 }) {
   const title =
-    section === "registry"
-      ? "Collections"
-      : section === "examples"
-        ? "Examples"
-        : section === "history"
-          ? "History"
-          : section === "mocks"
-            ? "gRPC Mock"
-            : section === "ws-mocks"
-              ? "WS Mock"
-              : "Docs";
+    section === "collections"
+      ? "Explorer"
+      : section === "proto-schemas"
+        ? "Proto Schemas"
+        : section === "services"
+          ? "Services"
+          : section === "settings"
+            ? "Settings"
+            : "Published Docs";
   const count =
-    section === "registry"
-      ? protoCount
-      : section === "examples"
-        ? exampleCount
-        : section === "history"
-          ? historyCount
-          : section === "mocks"
-            ? mockCount
-            : section === "ws-mocks"
-              ? mockCount
-              : docsCount;
-  const showCount = section !== "mocks" && section !== "ws-mocks";
+    section === "collections"
+      ? collectionCount
+      : section === "proto-schemas"
+        ? protoCount
+        : section === "docs"
+          ? docsCount
+          : null;
   return (
     <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={0.7}>
       <Typography variant="subtitle1" noWrap>
@@ -500,9 +575,9 @@ export function SidebarHeader({
       </Typography>
       <Stack direction="row" spacing={0.4} alignItems="center">
         {action}
-        {showCount && <Chip size="small" label={count} />}
+        {count !== null && <Chip size="small" label={count} />}
         <Tooltip title="Hide sidebar">
-          <IconButton size="small" onClick={onHide}>
+          <IconButton size="small" aria-label="Hide sidebar" onClick={onHide}>
             <Close sx={{ fontSize: 14 }} />
           </IconButton>
         </Tooltip>

@@ -32,7 +32,7 @@ export function ExampleSidebar({
         <Paper key={example.id} variant="outlined" sx={compactCardSx}>
           <Stack spacing={0.7}>
             <Box sx={{ minWidth: 0 }}>
-              <Typography variant="body2" fontWeight={520} noWrap title={example.name}>
+              <Typography variant="body2" fontWeight={500} noWrap title={example.name}>
                 {example.name}
               </Typography>
               <Typography
@@ -52,7 +52,13 @@ export function ExampleSidebar({
               <Button size="small" variant="contained" onClick={() => onRun(example)} sx={buttonSx}>
                 Run
               </Button>
-              <IconButton size="small" color="error" onClick={() => onDelete(example.id)} sx={iconButtonSx}>
+              <IconButton
+                size="small"
+                color="error"
+                aria-label={`Delete ${example.name || "example"}`}
+                onClick={() => onDelete(example.id)}
+                sx={iconButtonSx}
+              >
                 <Delete sx={{ fontSize: 14 }} />
               </IconButton>
             </Stack>
@@ -75,7 +81,7 @@ export function HistorySidebar({ history, onClear }: { history: HistoryItem[]; o
           <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
             <Typography
               variant="body2"
-              fontWeight={540}
+              fontWeight={500}
               noWrap
               title={item.method.split("/").pop()}
               sx={{ minWidth: 0 }}

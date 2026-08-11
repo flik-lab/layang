@@ -2,7 +2,50 @@
 @config "../tailwind.config.ts";
 
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
+  --background: #0f1117;
+  --foreground: #e8ecf7;
+  --card: #151922;
+  --card-foreground: #e8ecf7;
+  --popover: #151922;
+  --popover-foreground: #e8ecf7;
+  --primary: #3b82f6;
+  --primary-foreground: #ffffff;
+  --secondary: #21283a;
+  --secondary-foreground: #e8ecf7;
+  --muted: #191f2b;
+  --muted-foreground: #9aa4b8;
+  --accent: rgba(59, 130, 246, 0.18);
+  --accent-foreground: #e8ecf7;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --success: #10b981;
+  --success-foreground: #86efac;
+  --warning: #f59e0b;
+  --warning-foreground: #fcd34d;
+  --info: #3b82f6;
+  --info-foreground: #ffffff;
+  --border: #252b3a;
+  --input: #252b3a;
+  --ring: #3b82f6;
+  --radius: 0.5rem;
+  --control-height: 32px;
+  --control-height-sm: 28px;
+  --control-font-size: 12px;
+  --font-size-caption: 11px;
+  --font-size-body: 12px;
+  --font-size-control: 12px;
+  --font-size-label: 11px;
+  --font-size-section: 13px;
+  --font-size-dialog-title: 14px;
+  --font-size-page-title: 15px;
+  --font-size-metric: 18px;
+  --font-size-brand: 13px;
+  --font-size-mono: 11.5px;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
 }
 
 * {
@@ -20,7 +63,11 @@ body {
   margin: 0;
   background: var(--background);
   color: var(--foreground);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family:
+    "Segoe UI Variable Text", "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-regular);
+  line-height: 1.45;
   text-rendering: optimizeLegibility;
   user-select: none;
 }
@@ -67,6 +114,41 @@ button:disabled {
   cursor: default;
 }
 
+/* Shared focus treatment for custom interactive surfaces that do not use the shadcn primitives. */
+:where(
+  button,
+  a[href],
+  input,
+  textarea,
+  select,
+  [role="button"],
+  [role="tab"],
+  [role="option"],
+  [role="menuitem"],
+  [role="separator"][tabindex]
+):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* Windows forced-colors keeps the focus indicator visible without depending on theme colors. */
+@media (forced-colors: active) {
+  :where(
+    button,
+    a[href],
+    input,
+    textarea,
+    select,
+    [role="button"],
+    [role="tab"],
+    [role="option"],
+    [role="menuitem"],
+    [role="separator"][tabindex]
+  ):focus-visible {
+    outline: 2px solid Highlight;
+  }
+}
+
 /* Explicit control typography keeps the local compatibility primitives stable
    across Tailwind/Biome formatting changes without using !important. */
 .shadcn-button,
@@ -75,7 +157,19 @@ button:disabled {
 .shadcn-menu-item,
 .shadcn-list-button,
 .shadcn-tab {
-  font-size: 12px;
+  font-size: var(--font-size-control);
+}
+
+.shadcn-button,
+.shadcn-menu-item,
+.shadcn-list-button,
+.shadcn-tab {
+  font-weight: var(--font-weight-medium);
+}
+
+.shadcn-select,
+.shadcn-input {
+  font-weight: var(--font-weight-regular);
 }
 
 .shadcn-button,
@@ -91,12 +185,14 @@ button:disabled {
 }
 
 .shadcn-textarea {
-  font-size: 11.5px;
+  font-size: var(--font-size-mono);
+  font-weight: var(--font-weight-regular);
   line-height: 1.72;
 }
 
 .shadcn-chip {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
   line-height: 1;
 }
 
@@ -196,8 +292,8 @@ button:disabled {
   border-radius: 8px 8px 0 0;
   background: var(--surface-muted);
   color: var(--muted-foreground);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-control);
+  font-weight: var(--font-weight-medium);
   line-height: 1;
   white-space: nowrap;
   transition:
@@ -256,8 +352,8 @@ button:disabled {
   border-radius: 9px 9px 0 0;
   background: var(--tab-bg);
   color: var(--tab-text);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-control);
+  font-weight: var(--font-weight-medium);
   line-height: 1;
   overflow: hidden;
   cursor: default;
@@ -288,16 +384,19 @@ button:disabled {
   height: 6px;
   border-radius: 999px;
   flex: 0 0 auto;
-  background: var(--text-muted);
-  opacity: 0.85;
+  background: transparent;
+  border: 1.5px solid var(--primary);
+  opacity: 0.9;
 }
 
 .request-tab__dot[data-status="running"] {
+  border: 0;
   background: #26d39a;
-  box-shadow: 0 0 0 3px rgba(38, 211, 154, 0.12);
+  box-shadow: none;
 }
 
 .request-tab__dot[data-status="error"] {
+  border-color: #ef4444;
   background: #ef4444;
   box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
 }
@@ -334,8 +433,24 @@ button:disabled {
   opacity: 1;
 }
 
+.request-tab__action:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+  opacity: 1;
+}
+
 .request-tab__action--stop {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: transparent;
   color: #ef4444;
+  opacity: 1;
+}
+
+.request-tab__action--stop:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
 }
 
 .titlebar-tab-action {
@@ -384,7 +499,7 @@ button:disabled {
 .json-highlight {
   border-radius: 4px;
   background: var(--selected);
-  font-weight: 700;
+  font-weight: var(--font-weight-medium);
 }
 
 .json-block--compact code {
@@ -430,13 +545,13 @@ button:disabled {
   overflow: auto;
   padding-right: 4px;
   color: var(--foreground);
-  font-size: 12.5px;
+  font-size: var(--font-size-body);
   line-height: 1.58;
 }
 
 .api-doc-preview__heading {
   margin: 0 0 8px;
-  font-weight: 650;
+  font-weight: var(--font-weight-semibold);
   letter-spacing: -0.01em;
   color: var(--foreground);
   line-height: 1.24;
@@ -503,6 +618,11 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.source-preview--fill {
+  height: 100%;
+  min-height: 0;
 }
 
 .source-preview__meta {
@@ -621,8 +741,8 @@ button:disabled {
   border: 0;
   background: transparent;
   color: var(--primary);
-  font-size: 11.4px;
-  font-weight: 600;
+  font-size: var(--font-size-control);
+  font-weight: var(--font-weight-medium);
   padding: 2px 6px;
   border-radius: 7px;
   cursor: pointer;
@@ -656,4 +776,196 @@ button:disabled {
 .request-tab__dot,
 .request-tab__title {
   -webkit-app-region: no-drag;
+}
+
+.api-doc-preview__plain-section {
+  margin-top: 18px;
+}
+
+.api-doc-preview__section {
+  margin: 14px 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.api-doc-preview__section-summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 10px 12px;
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: var(--font-weight-semibold);
+  user-select: none;
+}
+
+.api-doc-preview__section-summary::-webkit-details-marker {
+  display: none;
+}
+
+.api-doc-preview__section-summary::after {
+  content: "+";
+  float: right;
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+
+.api-doc-preview__section[open] > .api-doc-preview__section-summary::after {
+  content: "−";
+}
+
+.api-doc-preview__section[open] > .api-doc-preview__section-summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.api-doc-preview__section-content {
+  padding: 12px;
+}
+
+.api-doc-preview__table-wrap {
+  margin: 0 0 14px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.api-doc-preview__table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 11.5px;
+}
+
+.api-doc-preview__table th,
+.api-doc-preview__table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.api-doc-preview__table th {
+  background: var(--muted);
+  font-weight: var(--font-weight-semibold);
+}
+
+.api-doc-preview__table tr:last-child td {
+  border-bottom: 0;
+}
+
+.api-doc-preview__callout {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--primary);
+  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--primary) 8%, var(--card));
+  color: var(--foreground);
+}
+
+.api-doc-preview__link {
+  color: var(--primary);
+  font-weight: var(--font-weight-medium);
+  text-decoration: none;
+}
+
+.api-doc-preview__link:hover {
+  text-decoration: underline;
+}
+
+/* Global workbench density. These rules intentionally target every workspace
+   area; request side/stack layout is handled separately by the request editor. */
+.workbench-root {
+  --workbench-page-padding-x: 9px;
+  --workbench-page-padding-y: 8px;
+  --workbench-panel-gap: 6px;
+  --workbench-section-padding: 11px;
+  --workbench-card-gap: 8px;
+  --workbench-sidebar-row-height: 32px;
+}
+
+[data-density="comfortable"] .workbench-stacked-tab,
+[data-density="comfortable"] .request-tab {
+  min-height: 34px;
+  padding-inline: 12px;
+}
+
+[data-density="comfortable"] button,
+[data-density="comfortable"] input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+[data-density="comfortable"] textarea,
+[data-density="comfortable"] select {
+  min-height: 32px;
+  font-size: 13px;
+}
+
+[data-slot="checkbox-wrapper"],
+[data-slot="checkbox"],
+[data-slot="checkbox-wrapper"] svg {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  min-height: 18px;
+  max-width: 18px;
+  max-height: 18px;
+}
+
+[data-slot="switch-wrapper"],
+[data-slot="switch"] {
+  width: 44px;
+  height: 24px;
+  min-width: 44px;
+  min-height: 24px;
+  max-width: 44px;
+  max-height: 24px;
+}
+
+[data-density="comfortable"] .response-toolbar {
+  min-height: 48px;
+}
+
+[data-density="comfortable"] [data-sidebar="menu-button"] {
+  min-height: var(--workbench-sidebar-row-height);
+}
+
+[data-density="compact"] [data-sidebar="menu-button"] {
+  min-height: var(--workbench-sidebar-row-height);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.api-doc-preview__image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.api-doc-preview__list input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0 4px 0 0;
+  vertical-align: -2px;
+}
+
+.search-highlight {
+  border-radius: 3px;
+  background: #facc15;
+  color: #111827;
+  box-shadow: 0 0 0 1px rgba(161, 98, 7, 0.22);
+  padding: 0 0.12em;
+  font: inherit;
+  font-weight: inherit;
 }

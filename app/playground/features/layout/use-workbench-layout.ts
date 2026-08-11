@@ -1,7 +1,15 @@
-import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { designSystem } from "../../design-system";
 import { clamp } from "../../shared/number-utils";
 import {
+  collapsedSidebarWidth,
   defaultResponseHeight,
   layoutStorageKey,
   legacyLayoutStorageKey,
@@ -101,6 +109,45 @@ export function useWorkbenchLayout() {
     );
   }, []);
 
+  const resizeResponseByKeyboard = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      const step = event.shiftKey ? 40 : 10;
+      if (requestResponseLayout === "horizontal") {
+        const activeShellLeft = railWidth + (sidebarOpen ? sidebarWidthPx : collapsedSidebarWidth);
+        const maxWidth = Math.max(minResponseWidth, window.innerWidth - activeShellLeft - 420);
+        if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          setResponseWidth((current) => clamp(current + step, minResponseWidth, maxWidth));
+        } else if (event.key === "ArrowRight") {
+          event.preventDefault();
+          setResponseWidth((current) => clamp(current - step, minResponseWidth, maxWidth));
+        } else if (event.key === "Home") {
+          event.preventDefault();
+          setResponseWidth(minResponseWidth);
+        } else if (event.key === "End") {
+          event.preventDefault();
+          setResponseWidth(maxWidth);
+        }
+        return;
+      }
+      const maxHeight = Math.max(minResponseHeight, window.innerHeight - designSystem.size.titlebarHeight - 260);
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setResponseHeight((current) => clamp(current + step, minResponseHeight, maxHeight));
+      } else if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setResponseHeight((current) => clamp(current - step, minResponseHeight, maxHeight));
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        setResponseHeight(minResponseHeight);
+      } else if (event.key === "End") {
+        event.preventDefault();
+        setResponseHeight(maxHeight);
+      }
+    },
+    [requestResponseLayout, sidebarOpen, sidebarWidthPx],
+  );
+
   useEffect(() => {
     function stopResize() {
       sidebarResizeRef.current = false;
@@ -124,7 +171,7 @@ export function useWorkbenchLayout() {
 
       if (responseResizeRef.current) {
         if (requestResponseLayout === "horizontal") {
-          const activeShellLeft = railWidth + (sidebarOpen ? sidebarWidthPx : 0);
+          const activeShellLeft = railWidth + (sidebarOpen ? sidebarWidthPx : collapsedSidebarWidth);
           const maxWidth = Math.max(minResponseWidth, window.innerWidth - activeShellLeft - 420);
           setResponseWidth(clamp(window.innerWidth - event.clientX - 10, minResponseWidth, maxWidth));
         } else {
@@ -160,6 +207,7 @@ export function useWorkbenchLayout() {
     setRequestCollapsed,
     beginSidebarResize,
     beginResponseResize,
+    resizeResponseByKeyboard,
     toggleRequestResponseLayout,
     snapshot,
     applySnapshot,

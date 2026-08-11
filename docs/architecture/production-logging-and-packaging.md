@@ -63,7 +63,7 @@ Current production logs include:
 - renderer load/fail events
 - certificate policy decisions and TLS bypass warnings
 - process uncaught exceptions and unhandled rejections
-- gRPC mock scenario watcher and hot-reload warnings
+- gRPC mock scenario manual-sync and runtime update warnings
 - renderer logs sent through `createLogger(scope)`
 
 Request and response bodies should not be logged by default. Payload logging should only be added behind explicit `debug` behavior when needed.

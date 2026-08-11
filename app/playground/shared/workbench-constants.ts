@@ -6,7 +6,8 @@ declare const process: { env?: Record<string, string | undefined> } | undefined;
 export const projectStorageKey = "layang-project-v2";
 export const legacyWorkspaceKey = "grpc-lab-workspaces-v1";
 export const legacyActiveWorkspaceKey = "grpc-lab-active-workspace-v1";
-export const railWidth = 46;
+export const railWidth = 52;
+export const collapsedSidebarWidth = 0;
 export const sidebarWidth = 278;
 export const minSidebarWidth = 224;
 export const maxSidebarWidth = 440;
@@ -66,14 +67,9 @@ export const defaultAssertion = "";
 export const defaultMockPort = 50055;
 export const defaultMockStreamIntervalMs = 1000;
 export const defaultMockStreamLoop = false;
-export const defaultMockScenarioText = JSON.stringify(
-  {
-    version: 1,
-    scenarios: [],
-  },
-  null,
-  2,
-);
+export const defaultMockScenarioText = `version: 1
+scenarios: []
+`;
 
 export const sampleProto = `syntax = "proto3";
 

@@ -1,11 +1,29 @@
 "use client";
 
 import type React from "react";
-import { Children, cloneElement, createContext, isValidElement, useContext, useEffect, useRef, useState } from "react";
+import {
+  Children,
+  cloneElement,
+  createContext,
+  isValidElement,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { CSSProperties, ElementType, ReactElement, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
-import { colorTokens, paletteMode, type ColorMode } from "@/app/playground/design-system";
+import { colorTokens, designSystem, paletteMode, type ColorMode } from "@/lib/design-system";
+import { Badge as UiBadge } from "@/components/ui/badge";
+import { Button as UiButton, type ButtonProps as UiButtonProps } from "@/components/ui/button";
+import { Checkbox as UiCheckbox } from "@/components/ui/checkbox";
+import { Input as UiInput } from "@/components/ui/input";
+import { Select as UiSelect } from "@/components/ui/select";
+import { Switch as UiSwitch } from "@/components/ui/switch";
+import { Textarea as UiTextarea } from "@/components/ui/textarea";
 
 type StyleMap = Record<string, unknown>;
 type SxValue = StyleMap | ((theme: ShadcnTheme) => StyleMap) | Array<StyleMap | false | undefined> | undefined;
@@ -41,14 +59,37 @@ type ShadcnTheme = {
     action: { hover: string; selected: string };
   };
   shape?: { borderRadius?: number };
-  typography?: AnyProps;
-  components?: AnyProps;
+};
+
+type ShadcnThemeInput = Omit<Partial<ShadcnTheme>, "palette"> & {
+  palette?: {
+    mode?: ColorMode;
+    primary?: Partial<ShadcnTheme["palette"]["primary"]>;
+    secondary?: Partial<ShadcnTheme["palette"]["secondary"]>;
+    background?: Partial<ShadcnTheme["palette"]["background"]>;
+    divider?: string;
+    text?: Partial<ShadcnTheme["palette"]["text"]>;
+    action?: Partial<ShadcnTheme["palette"]["action"]>;
+  };
 };
 
 type DivProps = React.HTMLAttributes<HTMLDivElement>;
 
 const defaultTheme = buildTheme("dark");
 const ThemeContext = createContext<ShadcnTheme>(defaultTheme);
+const LegacyDialogContext = createContext<{ titleId: string } | null>(null);
+const TableSectionContext = createContext<"head" | "body" | null>(null);
+
+// Keep portal layers explicit so notifications remain visible above dialogs and
+// fullscreen editors, while menus and tooltips opened inside a dialog still render
+// above that dialog.
+const portalLayer = {
+  dialog: 2147483200,
+  menuBackdrop: 2147483300,
+  menu: 2147483301,
+  tooltip: 2147483400,
+  notification: 2147483600,
+} as const;
 
 /** Builds the CSS variable bridge used by shadcn-style primitives, including portal content. */
 function cssVariableStyle(resolved: ShadcnTheme): CSSProperties {
@@ -88,11 +129,34 @@ function cssVariableStyle(resolved: ShadcnTheme): CSSProperties {
     "--tab-active-border": tokens.tabActiveBorder,
     "--hover": tokens.hover,
     "--selected": tokens.selected,
+    "--success": themeColor(resolved.palette.mode, "success"),
+    "--success-foreground": themeColor(resolved.palette.mode, "successForeground"),
+    "--warning": themeColor(resolved.palette.mode, "warning"),
+    "--warning-foreground": themeColor(resolved.palette.mode, "warningForeground"),
+    "--info": tokens.primary,
+    "--info-foreground": "#ffffff",
+    "--control-height": `${designSystem.size.buttonHeight + 2}px`,
+    "--control-height-sm": `${designSystem.size.buttonSmallHeight}px`,
+    "--control-font-size": `${designSystem.font.control}px`,
+    "--font-size-caption": `${designSystem.font.caption}px`,
+    "--font-size-body": `${designSystem.font.body}px`,
+    "--font-size-control": `${designSystem.font.control}px`,
+    "--font-size-label": `${designSystem.font.label}px`,
+    "--font-size-section": `${designSystem.font.section}px`,
+    "--font-size-dialog-title": `${designSystem.font.dialogTitle}px`,
+    "--font-size-page-title": `${designSystem.font.pageTitle}px`,
+    "--font-size-metric": `${designSystem.font.metric}px`,
+    "--font-size-brand": `${designSystem.font.brand}px`,
+    "--font-size-mono": `${designSystem.font.mono}px`,
+    "--font-weight-regular": designSystem.weight.regular,
+    "--font-weight-medium": designSystem.weight.medium,
+    "--font-weight-semibold": designSystem.weight.semibold,
+    "--font-weight-bold": designSystem.weight.bold,
   } as CSSProperties;
 }
 
 /** Creates a lightweight shadcn/Tailwind theme object compatible with legacy workbench style calls. */
-export function createTheme(input: Partial<ShadcnTheme> & AnyProps = {}): ShadcnTheme {
+export function createTheme(input: ShadcnThemeInput = {}): ShadcnTheme {
   const mode = paletteMode(input.palette?.mode ?? "dark");
   const base = buildTheme(mode);
   return {
@@ -114,11 +178,33 @@ export function createTheme(input: Partial<ShadcnTheme> & AnyProps = {}): Shadcn
 /** Provides CSS variables used by the local shadcn-style component layer. */
 export function ThemeProvider({ theme, children }: { theme?: ShadcnTheme; children: ReactNode }) {
   const resolved = theme ?? defaultTheme;
+  const variables = useMemo(() => cssVariableStyle(resolved), [resolved]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const previousTheme = root.dataset.theme;
+    const previousValues = new Map<string, string>();
+    root.dataset.theme = resolved.palette.mode;
+    for (const [name, value] of Object.entries(variables)) {
+      if (!name.startsWith("--") || value === undefined || value === null) continue;
+      previousValues.set(name, root.style.getPropertyValue(name));
+      root.style.setProperty(name, String(value));
+    }
+    return () => {
+      if (previousTheme) root.dataset.theme = previousTheme;
+      else delete root.dataset.theme;
+      for (const [name, value] of previousValues) {
+        if (value) root.style.setProperty(name, value);
+        else root.style.removeProperty(name);
+      }
+    };
+  }, [resolved.palette.mode, variables]);
+
   return (
     <ThemeContext.Provider value={resolved}>
       <div
         data-theme={resolved.palette.mode}
-        style={cssVariableStyle(resolved)}
+        style={variables}
         className="min-h-screen bg-background text-foreground antialiased"
       >
         {children}
@@ -172,14 +258,15 @@ export function Stack({
   ...props
 }: AnyProps) {
   const theme = useContext(ThemeContext);
+  const resolvedDirection = pickResponsive(direction);
   const baseStyle: CSSProperties = {
     display: "flex",
-    flexDirection: direction === "row" ? "row" : "column",
-    alignItems: alignItems as CSSProperties["alignItems"],
-    justifyContent: justifyContent as CSSProperties["justifyContent"],
-    flexWrap: flexWrap as CSSProperties["flexWrap"],
-    textAlign: textAlign as CSSProperties["textAlign"],
-    gap: toSpacing(spacing) as CSSProperties["gap"],
+    flexDirection: resolvedDirection === "row" ? "row" : "column",
+    alignItems: pickResponsive(alignItems) as CSSProperties["alignItems"],
+    justifyContent: pickResponsive(justifyContent) as CSSProperties["justifyContent"],
+    flexWrap: pickResponsive(flexWrap) as CSSProperties["flexWrap"],
+    textAlign: pickResponsive(textAlign) as CSSProperties["textAlign"],
+    gap: toSpacing(pickResponsive(spacing)) as CSSProperties["gap"],
   };
   const style = mergeStyles(baseStyle, sxToStyle(sx, theme), props.style);
   const divProps = omit(props, ["useFlexGap", "textAlign"]) as DivProps;
@@ -243,15 +330,18 @@ export function Typography({
   const theme = useContext(ThemeContext);
   const Component = (component ?? (variant === "h6" ? "h2" : "span")) as ElementType;
   const safeProps = omit(props, ["maxWidth", "gutterBottom", "paragraph", "align"]);
-  const resolvedDisplay = display ?? (variant === "caption" ? undefined : "block");
+  const resolvedDisplay = display ?? (noWrap ? "block" : variant === "caption" ? undefined : "block");
   return (
     <Component
       {...safeProps}
       className={cn(
-        variant === "subtitle1" && "text-[13px] font-medium leading-tight",
-        variant === "caption" && "text-[11px] leading-snug",
-        variant === "body2" && "text-[12px] leading-snug",
-        variant === "body1" && "text-[12.5px] leading-normal",
+        variant === "h5" && "text-[length:var(--font-size-metric)] font-semibold leading-tight",
+        variant === "h6" && "text-[length:var(--font-size-page-title)] font-semibold leading-tight",
+        variant === "subtitle1" && "text-[length:var(--font-size-section)] font-semibold leading-snug",
+        variant === "subtitle2" && "text-[length:var(--font-size-body)] font-medium leading-snug",
+        variant === "caption" && "text-[length:var(--font-size-caption)] font-normal leading-snug",
+        variant === "body2" && "text-[length:var(--font-size-body)] font-normal leading-snug",
+        variant === "body1" && "text-[length:var(--font-size-body)] font-normal leading-normal",
         noWrap && "truncate",
         className,
       )}
@@ -272,7 +362,7 @@ export function Typography({
   );
 }
 
-/** Button primitive using shadcn variants. */
+/** Legacy button adapter backed by the standard shadcn Button primitive. */
 export function Button({
   variant = "text",
   color,
@@ -290,48 +380,64 @@ export function Button({
 }: AnyProps) {
   const theme = useContext(ThemeContext);
   const safeProps = omit(props, ["disableElevation", "disableRipple"]);
+  const mappedVariant: UiButtonProps["variant"] =
+    variant === "contained"
+      ? color === "error"
+        ? "destructive"
+        : "default"
+      : variant === "outlined"
+        ? "outline"
+        : "ghost";
+  const mappedSize: UiButtonProps["size"] = size === "small" ? "sm" : "default";
   return (
-    <button
+    <UiButton
       {...safeProps}
       type={safeProps.type ?? "button"}
       disabled={disabled}
+      variant={mappedVariant}
+      size={mappedSize}
       className={cn(
-        "shadcn-button inline-flex min-w-fit items-center justify-center gap-1.5 whitespace-nowrap rounded-md border text-[12px] font-medium leading-none transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
-        size === "small" ? "h-7 px-2.5" : "h-8 px-3",
+        "shadcn-button",
         fullWidth && "w-full",
-        variant === "contained" && "border-primary bg-primary text-primary-foreground hover:opacity-90",
-        variant === "outlined" && "border-border bg-transparent hover:bg-accent hover:text-accent-foreground",
-        variant !== "contained" &&
-          variant !== "outlined" &&
-          "border-transparent bg-transparent hover:bg-accent hover:text-accent-foreground",
-        color === "error" && "border-destructive text-destructive hover:bg-destructive/10",
+        color === "warning" && variant === "contained" && "bg-warning text-warning-foreground hover:bg-warning/90",
+        color === "warning" && variant !== "contained" && "text-warning hover:bg-warning/10",
+        color === "error" && variant !== "contained" && "text-destructive hover:bg-destructive/10",
         className,
       )}
       style={mergeStyles(sxToStyle(sx, theme), props.style)}
     >
-      {startIcon ? <span className="inline-flex shrink-0">{startIcon}</span> : null}
+      {startIcon ? (
+        <span data-icon="inline-start" className="inline-flex shrink-0">
+          {startIcon}
+        </span>
+      ) : null}
       {typeof children === "string" || typeof children === "number" ? (
         <span className="inline-flex min-w-0 items-center">{children}</span>
       ) : (
         children
       )}
-      {endIcon ? <span className="inline-flex shrink-0">{endIcon}</span> : null}
-    </button>
+      {endIcon ? (
+        <span data-icon="inline-end" className="inline-flex shrink-0">
+          {endIcon}
+        </span>
+      ) : null}
+    </UiButton>
   );
 }
 
-/** Icon-only button primitive. */
+/** Legacy icon-button adapter backed by the standard shadcn Button primitive. */
 export function IconButton({ size = "medium", color, sx, className, children, disabled, ...props }: AnyProps) {
   const theme = useContext(ThemeContext);
   return (
-    <button
+    <UiButton
       {...props}
       type={props.type ?? "button"}
       disabled={disabled}
+      variant="ghost"
+      size={size === "small" ? "icon-sm" : "icon"}
       className={cn(
-        "shadcn-icon-button inline-flex items-center justify-center rounded-md border border-transparent transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50",
-        size === "small" ? "h-7 w-7" : "h-8 w-8",
-        color === "warning" && "text-amber-500",
+        "shadcn-icon-button",
+        color === "warning" && "text-warning-foreground",
         color === "error" && "text-destructive",
         color === "primary" && "text-primary",
         className,
@@ -339,30 +445,38 @@ export function IconButton({ size = "medium", color, sx, className, children, di
       style={mergeStyles(sxToStyle(sx, theme), props.style)}
     >
       {children}
-    </button>
+    </UiButton>
   );
 }
 
-/** Compact badge/chip primitive. */
-export function Chip({ label, color = "default", variant, size: _size, sx, className, ...props }: AnyProps) {
+/** Legacy chip adapter backed by the standard shadcn Badge primitive. */
+export function Chip({ label, color = "default", variant, size = "medium", sx, className, ...props }: AnyProps) {
   const theme = useContext(ThemeContext);
+  const sxRecord = sx && !Array.isArray(sx) && typeof sx !== "function" ? (sx as StyleMap) : undefined;
+  const labelSx = sxRecord?.["& .MuiChip-label"] as StyleMap | undefined;
+  const mappedVariant =
+    variant === "outlined"
+      ? "outline"
+      : color === "primary"
+        ? "default"
+        : color === "secondary" || color === "success"
+          ? "success"
+          : color === "warning"
+            ? "warning"
+            : color === "error"
+              ? "destructive"
+              : "muted";
   return (
-    <span
+    <UiBadge
       {...props}
-      className={cn(
-        "shadcn-chip inline-flex h-[22px] max-w-full items-center rounded-full border px-2 text-[11px] leading-none",
-        variant === "outlined" ? "border-border bg-transparent" : "border-transparent bg-muted text-muted-foreground",
-        color === "primary" && "border-primary/40 bg-primary/10 text-primary",
-        color === "secondary" && "border-emerald-500/40 bg-emerald-500/10 text-emerald-500",
-        color === "success" && "border-emerald-500/40 bg-emerald-500/10 text-emerald-500",
-        color === "warning" && "border-amber-500/40 bg-amber-500/10 text-amber-500",
-        color === "error" && "border-destructive/40 bg-destructive/10 text-destructive",
-        className,
-      )}
+      variant={mappedVariant}
+      className={cn("shadcn-chip", size === "small" && "h-5 px-1.5", className)}
       style={mergeStyles(sxToStyle(sx, theme), props.style)}
     >
-      <span className="truncate">{label}</span>
-    </span>
+      <span className="truncate" style={sxToStyle(labelSx, theme)}>
+        {label}
+      </span>
+    </UiBadge>
   );
 }
 
@@ -431,7 +545,7 @@ export function FormControl({
   );
 }
 
-/** Native select styled like shadcn Select trigger. */
+/** Legacy select adapter backed by the native shadcn Select primitive. */
 export function Select({
   value,
   onChange,
@@ -443,6 +557,8 @@ export function Select({
   fullWidth: _fullWidth,
   variant: _variant,
   label: _label,
+  inputProps,
+  style,
   ...props
 }: AnyProps) {
   const theme = useContext(ThemeContext);
@@ -453,22 +569,20 @@ export function Select({
       return { value: option.props.value, label: option.props.children };
     });
   return (
-    <select
+    <UiSelect
+      {...inputProps}
       {...props}
       value={value}
       onChange={onChange}
-      className={cn(
-        "shadcn-select h-8 w-full rounded-md border border-input bg-background px-2 text-[12px] outline-none ring-offset-background focus:ring-1 focus:ring-ring",
-        className,
-      )}
-      style={mergeStyles(sxToStyle(sx, theme), props.style)}
+      className={cn("shadcn-select", inputProps?.className, className)}
+      style={mergeStyles(sxToStyle(sx, theme), inputProps?.style, style)}
     >
       {options.map((option) => (
         <option key={String(option.value)} value={String(option.value ?? "")}>
           {option.label}
         </option>
       ))}
-    </select>
+    </UiSelect>
   );
 }
 
@@ -477,7 +591,7 @@ export function InputAdornment({ children }: AnyProps) {
   return <span className="inline-flex items-center text-muted-foreground">{children}</span>;
 }
 
-/** Text input / textarea primitive. */
+/** Legacy text-field adapter composed from shadcn Input and Textarea primitives. */
 export function TextField({
   value,
   onChange,
@@ -508,89 +622,123 @@ export function TextField({
   variant: _variant,
   margin: _margin,
   color: _color,
-  FormHelperTextProps: _FormHelperTextProps,
+  FormHelperTextProps,
   ...props
 }: AnyProps) {
   const theme = useContext(ThemeContext);
-  const helperTitle = typeof helperText === "string" || typeof helperText === "number" ? String(helperText) : undefined;
+  const generatedId = useId();
+  const controlId = id ?? generatedId;
+  const helperId = helperText ? `${controlId}-helper` : undefined;
+  const commonProps = {
+    ...props,
+    ...inputProps,
+    id: controlId,
+    name,
+    disabled,
+    required,
+    "aria-invalid": error ? true : undefined,
+    "aria-describedby": helperId,
+    autoFocus,
+    spellCheck,
+    value,
+    onChange,
+    onBlur,
+    onKeyDown,
+    placeholder,
+  };
   const control = multiline ? (
-    <textarea
-      {...props}
-      {...inputProps}
-      id={id}
-      name={name}
-      disabled={disabled}
-      required={required}
-      aria-invalid={error ? true : undefined}
-      autoFocus={autoFocus}
-      spellCheck={spellCheck}
-      value={value}
-      onChange={onChange}
-      onBlur={onBlur}
-      onKeyDown={onKeyDown}
-      placeholder={placeholder}
+    <UiTextarea
+      {...commonProps}
       rows={rows ?? minRows}
-      className={cn(
-        "shadcn-textarea min-h-[72px] w-full resize-y rounded-md border border-input bg-background px-2.5 py-2 font-mono text-[11.5px] leading-relaxed outline-none ring-offset-background placeholder:text-muted-foreground focus:ring-1 focus:ring-ring",
-        className,
-      )}
-      style={{ maxHeight: maxRows ? `${Number(maxRows) * 24}px` : undefined }}
+      className={cn("shadcn-textarea font-mono leading-relaxed", inputProps?.className, className)}
+      style={mergeStyles({ maxHeight: maxRows ? `${Number(maxRows) * 24}px` : undefined }, inputProps?.style)}
     />
   ) : (
     <div className="relative flex w-full items-center">
       {InputProps?.startAdornment ? (
-        <span className="absolute left-2 z-10 flex items-center">{InputProps.startAdornment}</span>
+        <span className="absolute left-2 z-10 flex items-center text-muted-foreground">
+          {InputProps.startAdornment}
+        </span>
       ) : null}
-      <input
-        {...props}
-        {...inputProps}
-        id={id}
-        name={name}
-        disabled={disabled}
-        required={required}
-        aria-invalid={error ? true : undefined}
-        autoFocus={autoFocus}
+      <UiInput
+        {...commonProps}
         type={type ?? "text"}
-        spellCheck={spellCheck}
-        value={value}
-        onChange={onChange}
-        onBlur={onBlur}
-        onKeyDown={onKeyDown}
-        placeholder={placeholder}
-        className={cn(
-          "shadcn-input h-8 w-full rounded-md border border-input bg-background px-2.5 text-[12px] outline-none ring-offset-background placeholder:text-muted-foreground focus:ring-1 focus:ring-ring",
-          InputProps?.startAdornment && "pl-8",
-          className,
-        )}
+        className={cn("shadcn-input", InputProps?.startAdornment && "pl-8", inputProps?.className, className)}
+        style={inputProps?.style}
       />
     </div>
   );
 
   return (
-    <label
-      className={cn("block", fullWidth && "w-full")}
-      title={helperTitle}
-      style={mergeStyles(sxToStyle(sx, theme), style)}
-    >
-      {label ? <span className="mb-1 block text-[11px] text-muted-foreground">{label}</span> : null}
+    <div className={cn("grid gap-1.5", fullWidth && "w-full")} style={mergeStyles(sxToStyle(sx, theme), style)}>
+      {label ? (
+        <label htmlFor={controlId} className="text-[11px] font-medium text-foreground">
+          {label}
+          {required ? (
+            <span aria-hidden="true" className="ml-0.5 text-destructive">
+              *
+            </span>
+          ) : null}
+        </label>
+      ) : null}
       {control}
-    </label>
+      {helperText ? (
+        <div
+          id={helperId}
+          className={cn("text-[11px] text-muted-foreground", error && "text-destructive")}
+          {...FormHelperTextProps}
+        >
+          {helperText}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
-/** Floating menu anchored to a button. */
+/** Floating menu anchored to a button with keyboard navigation and focus restoration. */
 export function Menu({ anchorEl, open, onClose, children }: AnyProps) {
   const theme = useContext(ThemeContext);
   const tokens = colorTokens[paletteMode(theme.palette.mode)];
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const onCloseRef = useRef(onClose);
   const rect = anchorEl?.getBoundingClientRect?.();
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   useEffect(() => {
     if (!open) return;
+    const focusableItems = () =>
+      Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])') ?? []);
+    queueMicrotask(() => focusableItems()[0]?.focus());
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose?.();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCloseRef.current?.();
+        return;
+      }
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+      const items = focusableItems();
+      if (items.length === 0) return;
+      const currentIndex = items.indexOf(document.activeElement as HTMLElement);
+      const nextIndex =
+        event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? items.length - 1
+            : event.key === "ArrowDown"
+              ? (Math.max(currentIndex, -1) + 1) % items.length
+              : (currentIndex <= 0 ? items.length : currentIndex) - 1;
+      event.preventDefault();
+      items[nextIndex]?.focus();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      anchorEl?.focus?.();
+    };
+  }, [anchorEl, open]);
   if (!open || typeof document === "undefined") return null;
 
   const menuWidth = 288;
@@ -607,14 +755,16 @@ export function Menu({ anchorEl, open, onClose, children }: AnyProps) {
 
   return createPortal(
     <>
-      <button
-        type="button"
-        aria-label="Close menu"
+      <div
+        aria-hidden="true"
         className="fixed inset-0 cursor-default bg-transparent"
-        style={{ zIndex: 2147483000, WebkitAppRegion: "no-drag" } as CSSProperties}
-        onClick={onClose}
+        style={{ zIndex: portalLayer.menuBackdrop, WebkitAppRegion: "no-drag" } as CSSProperties}
+        onMouseDown={onClose}
       />
       <div
+        ref={menuRef}
+        role="menu"
+        aria-orientation="vertical"
         className="floating-menu-surface fixed min-w-48 overflow-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-2xl"
         style={
           {
@@ -624,7 +774,7 @@ export function Menu({ anchorEl, open, onClose, children }: AnyProps) {
             minWidth: 192,
             maxWidth: menuWidth,
             maxHeight: Math.min(menuMaxHeight, viewportHeight - 16),
-            zIndex: 2147483001,
+            zIndex: portalLayer.menu,
             WebkitAppRegion: "no-drag",
             backgroundColor: tokens.surface,
             color: tokens.text,
@@ -659,7 +809,7 @@ export function MenuItem({ selected, onClick, children, sx, className, disabled,
         }
       }}
       className={cn(
-        "shadcn-menu-item flex min-h-8 w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[12px] outline-none hover:bg-accent focus:bg-accent",
+        "shadcn-menu-item flex min-h-8 w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[length:var(--font-size-control)] font-medium outline-none hover:bg-accent focus:bg-accent",
         selected && "bg-accent text-accent-foreground",
         disabled && "pointer-events-none opacity-50",
         className,
@@ -681,22 +831,32 @@ export function List({ children, sx, className, dense: _dense, disablePadding: _
   );
 }
 
-export function ListItemButton({ selected, onClick, sx, className, children, ...props }: AnyProps) {
+export function ListItemButton({
+  selected,
+  onClick,
+  sx,
+  className,
+  children,
+  component = "button",
+  ...props
+}: AnyProps) {
   const theme = useContext(ThemeContext);
+  const Component = component as React.ElementType;
+  const componentProps = component === "button" ? { type: "button" } : {};
   return (
-    <button
+    <Component
       {...props}
-      type="button"
+      {...componentProps}
       onClick={onClick}
       className={cn(
-        "shadcn-list-button flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] hover:bg-accent",
+        "shadcn-list-button flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[length:var(--font-size-control)] font-medium hover:bg-accent",
         selected && "bg-accent text-accent-foreground",
         className,
       )}
       style={mergeStyles(sxToStyle(sx, theme), props.style)}
     >
       {children}
-    </button>
+    </Component>
   );
 }
 
@@ -755,7 +915,10 @@ export function ListItemText({
     >
       <span
         title={primaryTypographyProps?.title}
-        className={cn("block truncate text-[12px] leading-4", primaryTypographyProps?.noWrap && "truncate")}
+        className={cn(
+          "block truncate text-[length:var(--font-size-body)] font-normal leading-4",
+          primaryTypographyProps?.noWrap && "truncate",
+        )}
         style={primaryStyle}
       >
         {primary}
@@ -763,7 +926,7 @@ export function ListItemText({
       {secondary ? (
         <span
           title={secondaryTypographyProps?.title}
-          className="block truncate text-[11px] leading-4 text-muted-foreground"
+          className="block truncate text-[length:var(--font-size-caption)] font-normal leading-4 text-muted-foreground"
           style={secondaryStyle}
         >
           {secondary}
@@ -773,10 +936,61 @@ export function ListItemText({
   );
 }
 
-/** Dialog primitives. */
-export function Dialog({ open, onClose, children, fullWidth, maxWidth = "sm" }: AnyProps) {
+/** Legacy dialog adapter with modal semantics, focus trapping, and focus restoration. */
+export function Dialog({ open, onClose, children, fullWidth, fullScreen = false, maxWidth = "sm" }: AnyProps) {
   const theme = useContext(ThemeContext);
   const tokens = colorTokens[paletteMode(theme.palette.mode)];
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  const titleId = useId();
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusable = () =>
+      Array.from(
+        dialogRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+    queueMicrotask(() => focusable()[0]?.focus() ?? dialogRef.current?.focus());
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCloseRef.current?.();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (items.length === 0) {
+        event.preventDefault();
+        dialogRef.current?.focus();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      previouslyFocused?.focus();
+    };
+  }, [open]);
+
   if (!open || typeof document === "undefined") return null;
   const widthBySize: Record<string, string> = { xs: "420px", sm: "560px", md: "760px", lg: "980px", xl: "1180px" };
   const maxDialogWidth = widthBySize[String(maxWidth)] ?? String(maxWidth ?? "560px");
@@ -786,27 +1000,40 @@ export function Dialog({ open, onClose, children, fullWidth, maxWidth = "sm" }: 
       style={
         {
           ...cssVariableStyle(theme),
-          zIndex: 2147482900,
+          zIndex: portalLayer.dialog,
           WebkitAppRegion: "no-drag",
           backgroundColor: theme.palette.mode === "dark" ? "rgba(15, 17, 23, 0.78)" : "rgba(247, 248, 251, 0.78)",
         } as CSSProperties
       }
       onMouseDown={(event: React.MouseEvent<HTMLDivElement>) => {
-        if (event.target === event.currentTarget) onClose?.();
+        if (event.target === event.currentTarget) onCloseRef.current?.();
       }}
     >
-      <div
-        className="flex max-h-[calc(100vh-32px)] flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-xl"
-        style={{
-          width: fullWidth ? `min(${maxDialogWidth}, calc(100vw - 32px))` : undefined,
-          maxWidth: `calc(100vw - 32px)`,
-          backgroundColor: tokens.surface,
-          color: tokens.text,
-          borderColor: tokens.border,
-        }}
-      >
-        {children}
-      </div>
+      <LegacyDialogContext.Provider value={{ titleId }}>
+        <div
+          ref={dialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          tabIndex={-1}
+          className={`flex flex-col overflow-hidden border border-border bg-card text-card-foreground shadow-xl outline-none ${fullScreen ? "rounded-lg" : "max-h-[calc(100vh-32px)] rounded-lg"}`}
+          style={{
+            width: fullScreen
+              ? "calc(100vw - 32px)"
+              : fullWidth
+                ? `min(${maxDialogWidth}, calc(100vw - 32px))`
+                : undefined,
+            height: fullScreen ? "calc(100vh - 32px)" : undefined,
+            maxWidth: fullScreen ? "100vw" : `calc(100vw - 32px)`,
+            maxHeight: fullScreen ? "calc(100vh - 32px)" : undefined,
+            backgroundColor: tokens.surface,
+            color: tokens.text,
+            borderColor: tokens.border,
+          }}
+        >
+          {children}
+        </div>
+      </LegacyDialogContext.Provider>
     </div>,
     document.body,
   );
@@ -814,14 +1041,19 @@ export function Dialog({ open, onClose, children, fullWidth, maxWidth = "sm" }: 
 
 export function DialogTitle({ children, sx, className, ...props }: AnyProps) {
   const theme = useContext(ThemeContext);
+  const dialog = useContext(LegacyDialogContext);
   return (
-    <div
+    <h2
       {...props}
-      className={cn("shrink-0 border-b border-border px-4 py-3 text-[14px] font-medium", className)}
+      id={props.id ?? dialog?.titleId}
+      className={cn(
+        "shrink-0 border-b border-border px-4 py-3 text-[length:var(--font-size-dialog-title)] font-semibold leading-tight",
+        className,
+      )}
       style={mergeStyles(sxToStyle(sx, theme), props.style)}
     >
       {children}
-    </div>
+    </h2>
   );
 }
 
@@ -843,7 +1075,10 @@ export function DialogActions({ children, sx, className, ...props }: AnyProps) {
   return (
     <div
       {...props}
-      className={cn("flex shrink-0 justify-end gap-2 border-t border-border px-4 py-3", className)}
+      className={cn(
+        "flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border px-4 py-3",
+        className,
+      )}
       style={mergeStyles(sxToStyle(sx, theme), props.style)}
     >
       {children}
@@ -881,7 +1116,7 @@ export function Snackbar({
     <div
       {...props}
       className={cn("fixed max-w-[560px]", vertical, horizontal, className)}
-      style={mergeStyles({ zIndex: 2147483000 }, sxToStyle(sx, theme), style)}
+      style={mergeStyles({ zIndex: portalLayer.notification }, sxToStyle(sx, theme), style)}
     >
       {children}
     </div>,
@@ -893,6 +1128,7 @@ export function Alert({
   severity = "info",
   variant = "standard",
   onClose,
+  action,
   sx,
   className,
   children,
@@ -934,14 +1170,25 @@ export function Alert({
   return (
     <div
       {...domProps}
-      role="alert"
-      className={cn("flex items-start gap-3 rounded-md border px-3 py-2 text-[12px] shadow-lg", className)}
+      role={severity === "error" || severity === "warning" ? "alert" : "status"}
+      aria-live={severity === "error" || severity === "warning" ? "assertive" : "polite"}
+      aria-atomic="true"
+      className={cn(
+        "flex items-start gap-3 rounded-md border px-3 py-2 text-[length:var(--font-size-body)] font-normal shadow-lg",
+        className,
+      )}
       style={mergeStyles(severityStyles[String(severity)] ?? severityStyles.info, sxToStyle(sx, theme), style)}
     >
       <span className="min-w-0 flex-1">{children}</span>
+      {action ? <span className="shrink-0">{action}</span> : null}
       {onClose ? (
-        <button type="button" className="text-current opacity-80 hover:opacity-100" onClick={onClose}>
-          ×
+        <button
+          type="button"
+          aria-label="Dismiss notification"
+          className="rounded-sm text-current opacity-80 outline-none hover:opacity-100 focus-visible:ring-2 focus-visible:ring-current"
+          onClick={onClose}
+        >
+          <span aria-hidden="true">×</span>
         </button>
       ) : null}
     </div>
@@ -973,6 +1220,29 @@ export function Tabs({
   return (
     <div
       {...props}
+      role={props.role ?? "tablist"}
+      onKeyDown={(event: React.KeyboardEvent<HTMLDivElement>) => {
+        props.onKeyDown?.(event);
+        if (
+          event.defaultPrevented ||
+          (event.key !== "ArrowRight" && event.key !== "ArrowLeft" && event.key !== "Home" && event.key !== "End")
+        )
+          return;
+        const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]:not(:disabled)'));
+        if (tabs.length === 0) return;
+        const currentIndex = tabs.indexOf(document.activeElement as HTMLButtonElement);
+        const nextIndex =
+          event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? tabs.length - 1
+              : event.key === "ArrowRight"
+                ? (Math.max(currentIndex, -1) + 1) % tabs.length
+                : (currentIndex <= 0 ? tabs.length : currentIndex) - 1;
+        event.preventDefault();
+        tabs[nextIndex]?.focus();
+        tabs[nextIndex]?.click();
+      }}
       className={cn("flex min-h-8 items-center gap-1 overflow-x-auto", className)}
       style={mergeStyles(sxToStyle(sx, theme), props.style)}
     >
@@ -999,9 +1269,12 @@ export function Tab({
     <button
       {...props}
       type="button"
+      role="tab"
+      aria-selected={Boolean(active)}
+      tabIndex={active ? 0 : -1}
       onClick={() => onSelect?.(value)}
       className={cn(
-        "shadcn-tab h-8 shrink-0 rounded-md px-3 text-[12px] font-medium leading-none text-muted-foreground hover:bg-accent",
+        "shadcn-tab h-8 shrink-0 rounded-md px-3 text-[length:var(--font-size-control)] font-medium leading-none text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
         active && "bg-accent text-accent-foreground",
         className,
       )}
@@ -1030,7 +1303,7 @@ export function Table({ children, sx, className, size: _size, stickyHeader: _sti
   return (
     <table
       {...props}
-      className={cn("w-full caption-bottom text-[12px]", className)}
+      className={cn("w-full caption-bottom text-[length:var(--font-size-body)]", className)}
       style={mergeStyles(sxToStyle(sx, theme), props.style)}
     >
       {children}
@@ -1039,16 +1312,20 @@ export function Table({ children, sx, className, size: _size, stickyHeader: _sti
 }
 export function TableHead({ children, className, ...props }: AnyProps) {
   return (
-    <thead {...props} className={cn("bg-muted/50", className)}>
-      {children}
-    </thead>
+    <TableSectionContext.Provider value="head">
+      <thead {...props} className={cn("bg-muted/50", className)}>
+        {children}
+      </thead>
+    </TableSectionContext.Provider>
   );
 }
 export function TableBody({ children, className, ...props }: AnyProps) {
   return (
-    <tbody {...props} className={cn("[&_tr:last-child]:border-0", className)}>
-      {children}
-    </tbody>
+    <TableSectionContext.Provider value="body">
+      <tbody {...props} className={cn("[&_tr:last-child]:border-0", className)}>
+        {children}
+      </tbody>
+    </TableSectionContext.Provider>
   );
 }
 export function TableRow({ children, className, hover: _hover, selected, sx, ...props }: AnyProps) {
@@ -1063,60 +1340,219 @@ export function TableRow({ children, className, hover: _hover, selected, sx, ...
     </tr>
   );
 }
-export function TableCell({ children, colSpan, width, sx, className, ...props }: AnyProps) {
+export function TableCell({ children, colSpan, width, sx, className, component, scope, ...props }: AnyProps) {
   const theme = useContext(ThemeContext);
+  const section = useContext(TableSectionContext);
+  const Component = (component ?? (section === "head" ? "th" : "td")) as ElementType;
   return (
-    <td
+    <Component
       {...props}
       colSpan={colSpan}
       width={width}
-      className={cn("px-2.5 py-2 align-middle text-[12px]", className)}
+      scope={Component === "th" ? (scope ?? "col") : scope}
+      className={cn(
+        "px-2.5 py-2 align-middle text-[length:var(--font-size-body)]",
+        Component === "th" && "text-left font-semibold text-foreground",
+        className,
+      )}
       style={mergeStyles(sxToStyle(sx, theme), props.style)}
     >
       {children}
-    </td>
+    </Component>
   );
 }
 
-/** Lightweight tooltip using native title to avoid hydration/runtime tooltip overhead. */
+/** Accessible tooltip that opens on pointer hover and keyboard focus. */
 export function Tooltip({
   title,
   children,
-  placement: _placement,
+  placement = "bottom",
 }: {
   title?: ReactNode;
   children: ReactNode;
   placement?: string;
 }) {
-  if (!isValidElement(children)) return <span title={String(title ?? "")}>{children}</span>;
-  const existing = (children as ReactElement<AnyProps>).props.title;
-  return cloneElement(children as ReactElement<AnyProps>, {
-    title: existing ?? (typeof title === "string" ? title : undefined),
+  const tooltipId = useId();
+  const [open, setOpen] = useState(false);
+  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [open]);
+
+  if (!title) return <>{children}</>;
+  if (!isValidElement(children)) {
+    return <span aria-describedby={tooltipId}>{children}</span>;
+  }
+
+  const element = children as ReactElement<AnyProps>;
+  const existingDescribedBy = element.props["aria-describedby"];
+  const describedBy = [existingDescribedBy, tooltipId].filter(Boolean).join(" ");
+  const show = (target: EventTarget | null) => {
+    if (target instanceof HTMLElement) setAnchorRect(target.getBoundingClientRect());
+    setOpen(true);
+  };
+  const hide = () => setOpen(false);
+  const trigger = cloneElement(element, {
+    "aria-describedby": describedBy,
+    onMouseEnter: (event: React.MouseEvent<HTMLElement>) => {
+      element.props.onMouseEnter?.(event);
+      show(event.currentTarget);
+    },
+    onMouseLeave: (event: React.MouseEvent<HTMLElement>) => {
+      element.props.onMouseLeave?.(event);
+      hide();
+    },
+    onFocus: (event: React.FocusEvent<HTMLElement>) => {
+      element.props.onFocus?.(event);
+      show(event.currentTarget);
+    },
+    onBlur: (event: React.FocusEvent<HTMLElement>) => {
+      element.props.onBlur?.(event);
+      hide();
+    },
+    onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => {
+      element.props.onKeyDown?.(event);
+      if (event.key === "Escape") hide();
+    },
   });
+
+  const side = placement.split("-")[0];
+  const anchorCenterX = anchorRect ? anchorRect.left + anchorRect.width / 2 : 0;
+  const anchorCenterY = anchorRect ? anchorRect.top + anchorRect.height / 2 : 0;
+  const top = anchorRect
+    ? side === "top"
+      ? Math.max(8, anchorRect.top - 8)
+      : side === "bottom"
+        ? Math.min(window.innerHeight - 8, anchorRect.bottom + 8)
+        : Math.min(Math.max(12, anchorCenterY), window.innerHeight - 12)
+    : 0;
+  const left = anchorRect
+    ? side === "left"
+      ? Math.max(8, anchorRect.left - 8)
+      : side === "right"
+        ? Math.min(window.innerWidth - 8, anchorRect.right + 8)
+        : Math.min(Math.max(12, anchorCenterX), window.innerWidth - 12)
+    : 0;
+  const transform =
+    side === "top"
+      ? "translate(-50%, -100%)"
+      : side === "bottom"
+        ? "translateX(-50%)"
+        : side === "left"
+          ? "translate(-100%, -50%)"
+          : "translateY(-50%)";
+
+  return (
+    <>
+      {trigger}
+      {open && anchorRect && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              id={tooltipId}
+              role="tooltip"
+              className="pointer-events-none fixed max-w-72 rounded-md border border-border bg-popover px-2 py-1 text-[11px] leading-snug text-popover-foreground shadow-lg"
+              style={{
+                zIndex: portalLayer.tooltip,
+                top,
+                left,
+                transform,
+              }}
+            >
+              {title}
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
+  );
 }
 
-/** Shadcn-style switch. */
-export function Switch({ checked, onChange, size: _size, ...props }: AnyProps) {
+/** Legacy checkbox adapter backed by the standard shadcn Checkbox primitive. */
+export function Checkbox({
+  checked,
+  onChange,
+  inputProps,
+  className,
+  disabled,
+  size: _size,
+  sx,
+  style,
+  ...props
+}: AnyProps) {
+  const theme = useContext(ThemeContext);
   return (
-    <button
-      {...props}
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      onClick={(event: React.MouseEvent<HTMLButtonElement>) => onChange?.({ ...event, target: { checked: !checked } })}
-      className={cn(
-        "inline-flex h-4 w-8 shrink-0 items-center rounded-full border border-border p-0.5 transition-colors",
-        checked ? "bg-primary" : "bg-muted",
-      )}
+    <span
+      className="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center align-middle leading-none"
+      style={mergeStyles(sxToStyle(sx, theme), style)}
     >
-      <span
-        className={cn(
-          "block h-3 w-3 rounded-full bg-background shadow transition-transform",
-          checked ? "translate-x-4" : "translate-x-0",
-        )}
+      <UiCheckbox
+        {...props}
+        {...inputProps}
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange?.(event, event.target.checked)}
+        className={cn("h-[18px] w-[18px]", "min-h-[18px] min-w-[18px]", inputProps?.className, className)}
+        style={inputProps?.style}
       />
-    </button>
+    </span>
   );
+}
+
+/** Legacy switch adapter backed by the standard shadcn Switch primitive. */
+export function Switch({
+  checked,
+  onChange,
+  size: _size,
+  inputProps,
+  className,
+  disabled,
+  sx,
+  style,
+  ...props
+}: AnyProps) {
+  const theme = useContext(ThemeContext);
+  return (
+    <span
+      className="inline-flex h-6 w-11 shrink-0 items-center justify-center align-middle leading-none"
+      style={mergeStyles(sxToStyle(sx, theme), style)}
+    >
+      <UiSwitch
+        {...props}
+        {...inputProps}
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange?.(event, event.target.checked)}
+        className={cn("h-6 w-11", "min-h-6 min-w-11", inputProps?.className, className)}
+        style={inputProps?.style}
+      />
+    </span>
+  );
+}
+
+function themeColor(mode: ColorMode, token: "success" | "successForeground" | "warning" | "warningForeground") {
+  const values = {
+    dark: {
+      success: "#10b981",
+      successForeground: "#86efac",
+      warning: "#f59e0b",
+      warningForeground: "#fcd34d",
+    },
+    light: {
+      success: "#059669",
+      successForeground: "#047857",
+      warning: "#d97706",
+      warningForeground: "#92400e",
+    },
+  } as const;
+  return values[mode][token];
 }
 
 function buildTheme(mode: ColorMode): ShadcnTheme {
@@ -1153,14 +1589,14 @@ function sxToStyle(sx: SxValue, theme: ShadcnTheme): CSSProperties {
 
 function assignSxKey(style: CSSProperties, key: string, value: unknown, theme: ShadcnTheme) {
   const spacingKeys: Record<string, string[]> = {
-    p: ["padding"],
+    p: ["paddingTop", "paddingRight", "paddingBottom", "paddingLeft"],
     px: ["paddingLeft", "paddingRight"],
     py: ["paddingTop", "paddingBottom"],
     pt: ["paddingTop"],
     pr: ["paddingRight"],
     pb: ["paddingBottom"],
     pl: ["paddingLeft"],
-    m: ["margin"],
+    m: ["marginTop", "marginRight", "marginBottom", "marginLeft"],
     mx: ["marginLeft", "marginRight"],
     my: ["marginTop", "marginBottom"],
     mt: ["marginTop"],

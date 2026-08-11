@@ -7,7 +7,13 @@ import { methodLabel } from "@/lib/proto-loader";
 import type { GrpcResult, LoadedProto, MetadataPair, RpcMethodInfo } from "@/lib/types";
 import { buildRestRequestUrl } from "../rest/rest-model";
 import { safeJsonParse } from "../../shared/json-utils";
-import type { ApiCollectionRequest, RequestSession, RequestTab, SavedExample, UiEvent } from "../../shared/workbench-types";
+import type {
+  ApiCollectionRequest,
+  RequestSession,
+  RequestTab,
+  SavedExample,
+  UiEvent,
+} from "../../shared/workbench-types";
 
 type CollectionNamedRequest = ApiCollectionRequest & { collectionName?: string };
 
@@ -129,37 +135,46 @@ export function useWorkbenchViewDerived(scope: WorkbenchViewDerivedScope) {
     () =>
       activeIsWebSocket
         ? [
-            { value: "body", label: "Message" },
+            { value: "body", label: "Messages" },
+            { value: "auth", label: "Auth" },
             { value: "metadata", label: "Headers" },
             { value: "examples", label: currentExamples.length ? `Examples ${currentExamples.length}` : "Examples" },
-            { value: "mock", label: "Mock" },
             { value: "docs", label: "Docs" },
-            { value: "benchmark", label: "Benchmark" },
+            { value: "mock", label: "Mock" },
+            { value: "more", label: "More" },
           ]
         : activeIsRest
           ? [
-              { value: "body", label: "Body" },
+              { value: "schema", label: "Params" },
+              { value: "auth", label: "Auth" },
               { value: "metadata", label: "Headers" },
-              { value: "schema", label: "Auth & Params" },
-              { value: "docs", label: "Docs" },
+              { value: "body", label: "Body" },
               { value: "examples", label: currentExamples.length ? `Examples ${currentExamples.length}` : "Examples" },
+              { value: "docs", label: "Docs" },
               { value: "mock", label: "Mock" },
+              { value: "more", label: "More" },
             ]
           : [
-              { value: "body", label: "Body" },
+              { value: "body", label: "Message" },
+              { value: "auth", label: "Auth" },
               { value: "metadata", label: "Metadata" },
-              { value: "schema", label: "Schema" },
-              { value: "docs", label: "Docs" },
-              { value: "benchmark", label: "Benchmark" },
               { value: "examples", label: currentExamples.length ? `Examples ${currentExamples.length}` : "Examples" },
+              { value: "docs", label: "Docs" },
               { value: "mock", label: "Mock" },
+              { value: "more", label: "More" },
             ],
     [activeIsWebSocket, activeIsRest, currentExamples.length],
   );
 
   useEffect(() => {
-    if (!requestTabItems.some((item: { value: string }) => item.value === requestTab)) setRequestTab("body");
-  }, [requestTab, requestTabItems, setRequestTab]);
+    const hiddenAdvancedTabs: RequestTab[] = activeIsRest ? ["benchmark"] : ["benchmark", "schema"];
+    if (
+      !requestTabItems.some((item: { value: string }) => item.value === requestTab) &&
+      !hiddenAdvancedTabs.includes(requestTab)
+    ) {
+      setRequestTab(activeIsRest ? "schema" : "body");
+    }
+  }, [activeIsRest, requestTab, requestTabItems, setRequestTab]);
 
   const hasActiveWorkbenchRequest = Boolean(selectedMethod || activeCollectionRequest);
   const showEmptyWorkbench = hydrated && requestSessions.length === 0 && !hasActiveWorkbenchRequest;
