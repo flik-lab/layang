@@ -47,10 +47,7 @@ test("certificate settings reject invalid PEM on strict update", () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), "layang-cert-invalid-"));
   configureCertificateSettings({ userDataPath });
 
-  assert.throws(
-    () => applyCertificateSettings({ caCertificatePem: "not a certificate" }),
-    /BEGIN CERTIFICATE/,
-  );
+  assert.throws(() => applyCertificateSettings({ caCertificatePem: "not a certificate" }), /BEGIN CERTIFICATE/);
 });
 
 test("certificate settings clear PEM while preserving bypass setting", () => {

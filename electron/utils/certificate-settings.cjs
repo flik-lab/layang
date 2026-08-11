@@ -130,7 +130,9 @@ function shouldAllowCertificateError(certificate) {
 function normalizeCertificateSettings(value = {}, options = {}) {
   const source = value && typeof value === "object" ? value : {};
   const imported = Array.isArray(source.caCertificates)
-    ? source.caCertificates.flatMap((certificate, index) => normalizeImportedCertificate(certificate, index)).filter(Boolean)
+    ? source.caCertificates
+        .flatMap((certificate, index) => normalizeImportedCertificate(certificate, index))
+        .filter(Boolean)
     : [];
   const legacyPem = normalizePemCertificate(source.caCertificatePem, {
     allowEmpty: true,
@@ -183,7 +185,9 @@ function normalizePemBlock(block) {
 
 function certificatesFromPemText(pemText, options = {}) {
   const normalizedPem = normalizePemCertificate(pemText, { allowEmpty: false, strict: options.strict });
-  const blocks = Array.from(normalizedPem.matchAll(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g)).map((match) => `${match[0]}\n`);
+  const blocks = Array.from(
+    normalizedPem.matchAll(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g),
+  ).map((match) => `${match[0]}\n`);
   if (blocks.length === 0 && options.strict) {
     throw new Error("Certificate PEM must include BEGIN CERTIFICATE and END CERTIFICATE blocks.");
   }
@@ -207,7 +211,10 @@ function normalizeImportedCertificate(certificate, index) {
   if (!pem) return null;
   const fingerprint = fingerprintPem(pem);
   return {
-    id: typeof certificate.id === "string" && certificate.id.trim() ? certificate.id.trim() : certificateIdFromFingerprint(fingerprint),
+    id:
+      typeof certificate.id === "string" && certificate.id.trim()
+        ? certificate.id.trim()
+        : certificateIdFromFingerprint(fingerprint),
     name: sanitizeCertificateName(certificate.name, "Imported certificate", index, 1),
     fingerprint,
     pem,
@@ -271,7 +278,9 @@ function fingerprintPem(pemText) {
 function cloneSettings(settings) {
   return {
     ...settings,
-    caCertificates: Array.isArray(settings.caCertificates) ? settings.caCertificates.map((certificate) => ({ ...certificate })) : [],
+    caCertificates: Array.isArray(settings.caCertificates)
+      ? settings.caCertificates.map((certificate) => ({ ...certificate }))
+      : [],
   };
 }
 
