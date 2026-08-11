@@ -11,6 +11,10 @@ import type {
   SavedExample,
 } from "../../shared/workbench-types";
 import type { LoadedProto, MetadataPair, ProtoSourceFile, RpcMethodInfo } from "@/lib/types";
+import type { ProtoRuntimeRegistry } from "@/lib/proto-runtime-registry";
+import { savedExampleAssertionJson } from "../../shared/entity-utils";
+import { createPinnedGrpcBinding, findProtoVersion, grpcBindingIdentity } from "../proto-library/proto-library-domain";
+import type { ProtoLibrary } from "../proto-library/proto-library-types";
 
 type StateSetter<T> = (value: T | ((current: T) => T)) => void;
 type CollectionNamedRequest = ApiCollectionRequest & { collectionName?: string };
@@ -33,12 +37,18 @@ type ActionContext = Record<string, any> & {
   environments: EnvironmentConfig[];
   selectedMethod: RpcMethodInfo | null;
   activeCollectionRequest?: CollectionNamedRequest | null;
+  protoLibraries: ProtoLibrary[];
+  activeProtoLibraryId: string;
+  activeProtoVersionId: string;
+  protoRuntimeRegistry: ProtoRuntimeRegistry;
   activateRequestSession: (session: RequestSession) => void;
 };
 
 export function useDocsActions(ctx: ActionContext) {
   const {
     activeBaseUrl,
+    activeProtoLibraryId,
+    activeProtoVersionId,
     activeCollectionRequest,
     activeDocsResult,
     activeExampleKey,
@@ -73,6 +83,8 @@ export function useDocsActions(ctx: ActionContext) {
     patchActiveCollectionRequest,
     previewUrl,
     protoFiles,
+    protoLibraries,
+    protoRuntimeRegistry,
     publishedDocs,
     renderMethodPublicationMarkdown,
     renderPublicDocsMarkdown,
@@ -83,7 +95,6 @@ export function useDocsActions(ctx: ActionContext) {
     requestJson,
     requestSessions,
     restDocKey,
-    savedDocResultByMethod,
     savedExampleKey,
     selectedMethod,
     setDocResults,
@@ -103,6 +114,16 @@ export function useDocsActions(ctx: ActionContext) {
     webSocketDocKey,
   } = ctx;
 
+  function activeGrpcBinding() {
+    if (!selectedMethod) return undefined;
+    const activeProto = findProtoVersion(protoLibraries, activeProtoLibraryId, activeProtoVersionId);
+    return activeProto ? createPinnedGrpcBinding(activeProto.library, activeProto.version, selectedMethod) : undefined;
+  }
+
+  function activeGrpcIdentity(): string {
+    return grpcBindingIdentity(activeGrpcBinding(), selectedMethod ? methodKey(selectedMethod) : "");
+  }
+
   function saveCurrentExample() {
     if (!selectedMethod && !activeCollectionRequest) return;
     const serviceName = selectedMethod?.serviceName ?? activeCollectionRequest?.collectionName ?? "Collection";
@@ -115,10 +136,16 @@ export function useDocsActions(ctx: ActionContext) {
       requestJson,
       metadata,
       expectedJson: assertionJson,
+      expectedStatus: "",
+      expectedTrailers: [],
+      assertions: "",
+      tags: [],
+      enabled: true,
+      documentation: { summary: "", whenThisHappens: "", explanation: "", notes: [] },
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
     setExamples((current) => [example, ...current]);
-    setSideSection("examples");
     setRequestTab("examples");
   }
 
@@ -185,13 +212,20 @@ export function useDocsActions(ctx: ActionContext) {
     const key = methodKey(selectedMethod);
     const snapshot: DocResultSnapshot = {
       methodKey: key,
+      grpc: activeGrpcBinding(),
       serviceName: selectedMethod.serviceName,
       methodName: selectedMethod.methodName,
       result: compactGrpcResultForStorage(sourceResult),
       savedAt: new Date().toISOString(),
     };
-    setDocResults((current) => [snapshot, ...current.filter((item) => item.methodKey !== key)].slice(0, 500));
-    showToast("Latest response saved for generated docs.", "success");
+    const identity = grpcBindingIdentity(snapshot.grpc, key);
+    setDocResults((current) =>
+      [snapshot, ...current.filter((item) => grpcBindingIdentity(item.grpc, item.methodKey) !== identity)].slice(
+        0,
+        500,
+      ),
+    );
+    showToast("Latest response saved. Enable Response example in Docs settings to include it.", "success");
   }
 
   function publishCurrentMethodDoc() {
@@ -200,6 +234,7 @@ export function useDocsActions(ctx: ActionContext) {
     setMethodDocs((current) =>
       upsertMethodDoc(current, {
         methodKey: key,
+        grpc: activeGrpcBinding(),
         serviceName: selectedMethod.serviceName,
         methodName: selectedMethod.methodName,
         published: true,
@@ -213,10 +248,12 @@ export function useDocsActions(ctx: ActionContext) {
 
   function unpublishCurrentMethodDoc() {
     if (!selectedMethod) return;
-    const key = methodKey(selectedMethod);
+    const identity = activeGrpcIdentity();
     setMethodDocs((current) =>
       current.map((doc) =>
-        doc.methodKey === key ? { ...doc, published: false, updatedAt: new Date().toISOString() } : doc,
+        grpcBindingIdentity(doc.grpc, doc.methodKey) === identity
+          ? { ...doc, published: false, updatedAt: new Date().toISOString() }
+          : doc,
       ),
     );
     showToast("Method docs unpublished.", "success");
@@ -224,9 +261,9 @@ export function useDocsActions(ctx: ActionContext) {
 
   function deleteCurrentMethodDoc() {
     if (!selectedMethod) return;
-    const key = methodKey(selectedMethod);
-    setMethodDocs((current) => current.filter((doc) => doc.methodKey !== key));
-    setDocResults((current) => current.filter((item) => item.methodKey !== key));
+    const identity = activeGrpcIdentity();
+    setMethodDocs((current) => current.filter((doc) => grpcBindingIdentity(doc.grpc, doc.methodKey) !== identity));
+    setDocResults((current) => current.filter((item) => grpcBindingIdentity(item.grpc, item.methodKey) !== identity));
     showToast("Generated docs entry removed for this method.", "success");
   }
 
@@ -283,6 +320,7 @@ export function useDocsActions(ctx: ActionContext) {
       collectionRequest: activeCollectionRequest,
       url: previewUrl,
       latestResult: lastResult,
+      examples: currentExamples,
     });
   }
 
@@ -346,7 +384,7 @@ export function useDocsActions(ctx: ActionContext) {
 
   function exportGeneratedProtoDocsMarkdown() {
     if (!loaded || loaded.methods.length === 0) {
-      showToast("Import proto files before generating docs.", "warning");
+      showToast("Open a gRPC request from a collection before generating docs.", "warning");
       return;
     }
     const markdown = renderWorkspaceProtoDocsMarkdown({
@@ -363,7 +401,7 @@ export function useDocsActions(ctx: ActionContext) {
 
   function exportGeneratedProtoDocsHtml() {
     if (!loaded || loaded.methods.length === 0) {
-      showToast("Import proto files before generating docs.", "warning");
+      showToast("Open a gRPC request from a collection before generating docs.", "warning");
       return;
     }
     const markdown = renderWorkspaceProtoDocsMarkdown({
@@ -411,6 +449,7 @@ export function useDocsActions(ctx: ActionContext) {
       const key = request
         ? `${request.collectionName ?? "Collection"}/${request.name}`
         : `${doc.serviceName}/${doc.methodName}`;
+      const requestExamples = examples.filter((example) => savedExampleKey(example) === key);
       setDocsPreview({
         title: key,
         markdown: request
@@ -418,29 +457,45 @@ export function useDocsActions(ctx: ActionContext) {
               collectionRequest: request,
               url: session?.requestUrl || buildRestRequestUrl(request, session?.baseUrl || request.url),
               latestResult: session?.lastResult ?? null,
+              examples: requestExamples,
             })
           : doc.generatedMarkdown || "# REST docs\n\nRequest not found in this workspace.",
       });
       return;
     }
 
-    const found = loaded?.methods.find(
-      (method) => method.serviceName === doc.serviceName && method.methodName === doc.methodName,
+    const compiled = doc.grpc ? protoRuntimeRegistry.resolveVersion(doc.grpc.libraryId, doc.grpc.versionId) : null;
+    const docLoaded = compiled?.loaded ?? loaded;
+    const found = docLoaded?.methods.find(
+      (method) => methodKey(method) === (doc.grpc?.methodFullName ?? doc.methodKey),
     );
-    if (!found) return;
+    if (!found) {
+      setDocsPreview({
+        title: `${doc.serviceName}/${doc.methodName}`,
+        markdown:
+          "# Unresolved proto reference\n\nThe documented method is pinned to a proto library or version that is no longer available.",
+      });
+      return;
+    }
     const key = methodKey(found);
+    const identity = grpcBindingIdentity(doc.grpc, key);
     const methodExamples = examples.filter((example) => savedExampleKey(example) === key);
     const methodMocks = allMockScenarios.filter(
       (scenario) => scenario.service === found.serviceName && scenario.method === found.methodName,
     );
-    const session = requestSessions.find((item) => item.methodKey === key);
+    const session = requestSessions.find(
+      (item) => grpcBindingIdentity(item.grpc, item.methodKey) === identity || item.methodKey === key,
+    );
+    const savedResult = [...docResults]
+      .sort((a, b) => b.savedAt.localeCompare(a.savedAt))
+      .find((item) => grpcBindingIdentity(item.grpc, item.methodKey) === identity)?.result;
     setDocsPreview({
-      title: `${found.serviceName}/${found.methodName}`,
+      title: `${found.serviceName}/${found.methodName}${compiled ? ` · ${compiled.version.version}` : ""}`,
       markdown: renderMethodPublicationMarkdown({
         method: found,
         examples: methodExamples,
-        protoFiles,
-        latestResult: savedDocResultByMethod.get(key) ?? latestResultByMethod.get(key) ?? null,
+        protoFiles: compiled?.version.files ?? protoFiles,
+        latestResult: savedResult ?? latestResultByMethod.get(key) ?? null,
         mockScenarios: methodMocks,
         currentRequestJson: session?.requestJson,
         currentMetadata: session?.metadata,
@@ -448,10 +503,14 @@ export function useDocsActions(ctx: ActionContext) {
     });
   }
 
-  function unpublishMethodDoc(key: string) {
+  function unpublishMethodDoc(target: MethodDoc | string) {
+    const identity = typeof target === "string" ? target : grpcBindingIdentity(target.grpc, target.methodKey);
     setMethodDocs((current) =>
       current.map((doc) =>
-        doc.methodKey === key ? { ...doc, published: false, updatedAt: new Date().toISOString() } : doc,
+        grpcBindingIdentity(doc.grpc, doc.methodKey) === identity ||
+        (typeof target === "string" && doc.methodKey === target)
+          ? { ...doc, published: false, updatedAt: new Date().toISOString() }
+          : doc,
       ),
     );
     showToast("Method docs unpublished.", "success");
@@ -476,7 +535,7 @@ export function useDocsActions(ctx: ActionContext) {
             ...existing,
             requestJson: example.requestJson,
             metadata: example.metadata.map((item) => ({ ...item })),
-            assertionJson: example.expectedJson,
+            assertionJson: savedExampleAssertionJson(example),
             updatedAt: new Date().toISOString(),
           }
         : createRequestSession(loaded.root, found, {
@@ -485,7 +544,7 @@ export function useDocsActions(ctx: ActionContext) {
             transportMode: activeTransportMode,
             baseUrl: activeBaseUrl,
             nativeTarget: activeNativeTarget,
-            assertionJson: example.expectedJson,
+            assertionJson: savedExampleAssertionJson(example),
           });
 
       upsertRequestSessionPreservingOrder(session);
@@ -512,7 +571,7 @@ export function useDocsActions(ctx: ActionContext) {
             ...existing,
             requestJson: example.requestJson,
             metadata: example.metadata.map((item) => ({ ...item })),
-            assertionJson: example.expectedJson,
+            assertionJson: savedExampleAssertionJson(example),
             updatedAt: new Date().toISOString(),
           }
         : createCollectionRequestSession(collection, {
