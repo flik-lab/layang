@@ -5,14 +5,7 @@ import { toErrorMessage } from "../../shared/error-utils";
 import { workspaceFolderStorageKey } from "../../shared/workbench-constants";
 import type { ProjectData, WorkspaceExportBundle } from "../../shared/workbench-types";
 import { readStoredProject } from "./workspace-model";
-
-type WorkspaceAutosaveState = {
-  lastPayload: string;
-  saving: boolean;
-  pendingPayload: string;
-  pendingBundle: WorkspaceExportBundle | null;
-  pendingPath: string;
-};
+import { createWorkspaceAutosaveState } from "./workspace-autosave";
 
 type ToastSeverity = "info" | "success" | "warning" | "error";
 
@@ -44,13 +37,10 @@ export function useWorkspaceController({
   const [workspaceSetupOpen, setWorkspaceSetupOpen] = useState(false);
   const [workspaceSetupDefaultPath, setWorkspaceSetupDefaultPath] = useState("");
   const [workspaceSetupPending, setWorkspaceSetupPending] = useState(false);
-  const workspaceAutosaveRef = useRef<WorkspaceAutosaveState>({
-    lastPayload: "",
-    saving: false,
-    pendingPayload: "",
-    pendingBundle: null,
-    pendingPath: "",
-  });
+  const workspaceAutosaveRef = useRef(createWorkspaceAutosaveState());
+  const externalRevisionRef = useRef("");
+  const pendingExternalRevisionRef = useRef({ fingerprint: "", seen: 0 });
+  const externalReloadBusyRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -122,7 +112,7 @@ export function useWorkspaceController({
         try {
           const defaultWorkspaceBundle: WorkspaceExportBundle = {
             type: "layang-workspace",
-            version: 4,
+            version: 5,
             exportedAt: new Date().toISOString(),
             app: "Layang",
             project: cachedProject,
@@ -155,6 +145,70 @@ export function useWorkspaceController({
       cancelled = true;
     };
   }, [prefersDark]);
+
+  useEffect(() => {
+    if (!workspaceFolderPath || !window.electronWorkspace?.getRevision || !window.electronWorkspace?.openFolder) return;
+    let cancelled = false;
+    externalRevisionRef.current = "";
+
+    async function checkExternalWorkspaceChanges() {
+      if (cancelled || externalReloadBusyRef.current) return;
+      const autosave = workspaceAutosaveRef.current;
+      if (autosave.saving || autosave.pendingBundle || autosave.flushPromise) return;
+
+      const revision = await window.electronWorkspace?.getRevision?.(workspaceFolderPath).catch(() => null);
+      if (!revision?.ok || !revision.fingerprint || revision.writeInProgress) return;
+
+      // Internal autosave can touch many files. The main process records the final
+      // fingerprint so those writes never masquerade as an external edit.
+      if (revision.internalFingerprint && revision.fingerprint === revision.internalFingerprint) {
+        externalRevisionRef.current = revision.fingerprint;
+        pendingExternalRevisionRef.current = { fingerprint: "", seen: 0 };
+        return;
+      }
+
+      if (!externalRevisionRef.current) {
+        externalRevisionRef.current = revision.fingerprint;
+        return;
+      }
+      if (externalRevisionRef.current === revision.fingerprint) {
+        pendingExternalRevisionRef.current = { fingerprint: "", seen: 0 };
+        return;
+      }
+      if (Date.now() - Number(revision.internalWriteAt || 0) < 2_000) return;
+
+      // Wait until the same external fingerprint is observed twice. This avoids
+      // reloading halfway through a Git checkout or an editor saving several files.
+      const pending = pendingExternalRevisionRef.current;
+      if (pending.fingerprint !== revision.fingerprint) {
+        pendingExternalRevisionRef.current = { fingerprint: revision.fingerprint, seen: 1 };
+        return;
+      }
+      pending.seen += 1;
+      if (pending.seen < 2) return;
+
+      externalReloadBusyRef.current = true;
+      try {
+        const result = await window.electronWorkspace?.openFolder?.(workspaceFolderPath);
+        if (!cancelled && result?.ok && result.bundle && applyWorkspaceBundle(result.bundle)) {
+          externalRevisionRef.current = revision.fingerprint;
+          pendingExternalRevisionRef.current = { fingerprint: "", seen: 0 };
+          showToast("Workspace reloaded after external file changes.", "info");
+        }
+      } catch (error) {
+        if (!cancelled) showToast(`External workspace reload failed: ${toErrorMessage(error)}`, "warning");
+      } finally {
+        externalReloadBusyRef.current = false;
+      }
+    }
+
+    void checkExternalWorkspaceChanges();
+    const interval = window.setInterval(() => void checkExternalWorkspaceChanges(), 2_500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [workspaceFolderPath, applyWorkspaceBundle, showToast]);
 
   async function applyWorkspacePreference(directoryPath?: string) {
     if (!window.electronWorkspace?.ensureFolder) return;

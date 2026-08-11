@@ -1,12 +1,30 @@
 import type { GrpcResult, ProtoSourceFile, RpcMethodInfo } from "@/lib/types";
+import { normalizeDocumentationState } from "@/lib/docs-core.mjs";
 import {
   defaultEnvironments,
   isEnvironmentKey,
   mergeEnvironments as featureMergeEnvironments,
 } from "../environments/environment-model";
 import { createDefaultMockServerProject, normalizeMockServerProject } from "../mock-server/mock-scenario-model";
+import {
+  createLegacyGrpcBinding,
+  grpcBindingIdentity,
+  normalizeGrpcRequestBinding,
+  normalizeProtoLibrariesWithRemap,
+  remapGrpcBindingToGlobalLibrary,
+  type ProtoLibraryNormalizationResult,
+  findProtoVersion,
+  projectProtoFilesFromLibraries,
+} from "../proto-library/proto-library-domain";
+import { resolveGrpcBindingStatus } from "../proto-library/proto-version-management";
+import { normalizeCollectionHierarchy } from "../collection/collection-tree-domain";
 import { clamp } from "../../shared/number-utils";
-import { createLayangPayloadPreview, isPayloadPreview, safeJsonStringify } from "../../shared/json-utils";
+import {
+  createLayangPayloadPreview,
+  isPayloadPreview,
+  normalizeEditableText,
+  safeJsonStringify,
+} from "../../shared/json-utils";
 import { createId, savedExampleKey } from "../../shared/entity-utils";
 import { methodKey } from "../../shared/rpc-method-utils";
 import {
@@ -33,6 +51,7 @@ import type {
   ProjectData,
   ApiCollection,
   ApiCollectionRequest,
+  CollectionFolder,
   RequestSession,
   ResponseTab,
   SavedExample,
@@ -203,14 +222,17 @@ function normalizeRestMockScenarios(input: unknown): RestMockScenario[] {
 
 export function defaultProjectData(): ProjectData {
   return {
-    version: 2,
+    version: 3,
     updatedAt: new Date().toISOString(),
     transportMode: "grpc-web",
-    baseUrl: "http://localhost:9080/grpc/web",
+    baseUrl: "http://127.0.0.1:8080",
     nativeTarget: "localhost:50051",
     environmentKey: "default",
     environments: defaultEnvironments,
     protoFiles: [],
+    protoLibraries: [],
+    activeProtoLibraryId: "",
+    activeProtoVersionId: "",
     collections: [],
     selectedMethodKey: "",
     requestJson: "{}",
@@ -218,6 +240,7 @@ export function defaultProjectData(): ProjectData {
     examples: [],
     methodDocs: [],
     docResults: [],
+    documentation: normalizeDocumentationState(),
     assertionJson: defaultAssertion,
     history: [],
     mockServer: createDefaultMockServerProject(),
@@ -276,35 +299,75 @@ export function readStoredProject(): ProjectData {
 export function normalizeProjectData(input: Partial<ProjectData> | LegacyWorkspace | undefined | null): ProjectData {
   const defaults = defaultProjectData();
   const data = input ?? {};
+  const legacyProtoFiles = Array.isArray(data.protoFiles) ? data.protoFiles.filter(isProtoSourceFile) : [];
+  const protoNormalization = normalizeProtoLibrariesWithRemap((data as ProjectData).protoLibraries, legacyProtoFiles);
+  const protoLibraries = protoNormalization.libraries;
   const normalizedTabs = Array.isArray((data as ProjectData).requestTabs)
-    ? dedupeRequestSessions((data as ProjectData).requestTabs.map(normalizeRequestSession))
+    ? dedupeRequestSessions(
+        (data as ProjectData).requestTabs.map(normalizeRequestSession).map((session) => ({
+          ...session,
+          grpc: remapGrpcBindingToGlobalLibrary(session.grpc, protoNormalization),
+        })),
+      )
     : [];
   const activeRequestId =
     typeof (data as ProjectData).activeRequestId === "string" &&
     normalizedTabs.some((tab) => tab.id === (data as ProjectData).activeRequestId)
       ? (data as ProjectData).activeRequestId
       : (normalizedTabs[0]?.id ?? "");
+  const normalizedCollections = normalizeApiCollections(
+    (data as ProjectData).collections,
+    protoLibraries,
+    protoNormalization,
+  );
+  const activeProto = findProtoVersion(
+    protoLibraries,
+    protoNormalization.libraryIdMap.get((data as ProjectData).activeProtoLibraryId) ??
+      (data as ProjectData).activeProtoLibraryId,
+    protoNormalization.versionIdMap.get(
+      `${(data as ProjectData).activeProtoLibraryId}:${(data as ProjectData).activeProtoVersionId}`,
+    ) ?? (data as ProjectData).activeProtoVersionId,
+  );
+  const projectedProtoFiles = activeProto?.version.files ?? projectProtoFilesFromLibraries(protoLibraries);
+  const normalizedMockServer = normalizeMockServerProject((data as ProjectData).mockServer);
+  normalizedMockServer.methodBindings = Object.fromEntries(
+    Object.entries(normalizedMockServer.methodBindings ?? {}).map(([key, binding]) => [
+      key,
+      remapGrpcBindingToGlobalLibrary(binding, protoNormalization) ?? binding,
+    ]),
+  );
+
   return {
     ...defaults,
     ...data,
-    version: 2,
+    version: 3,
     updatedAt: data.updatedAt ?? new Date().toISOString(),
     environmentKey: isEnvironmentKey((data as ProjectData).environmentKey)
       ? (data as ProjectData).environmentKey
       : "default",
     environments: featureMergeEnvironments((data as ProjectData).environments),
-    protoFiles: Array.isArray(data.protoFiles) ? data.protoFiles : [],
-    collections: normalizeApiCollections((data as ProjectData).collections),
+    protoFiles: projectedProtoFiles.length ? projectedProtoFiles : legacyProtoFiles,
+    protoLibraries,
+    activeProtoLibraryId: activeProto?.library.id ?? "",
+    activeProtoVersionId: activeProto?.version.id ?? "",
+    collections: normalizedCollections,
     metadata: Array.isArray(data.metadata) ? data.metadata : defaultMetadata,
-    examples: Array.isArray(data.examples) ? data.examples : [],
+    examples: normalizeSavedExamples(data.examples),
     methodDocs: Array.isArray((data as ProjectData).methodDocs)
-      ? (data as ProjectData).methodDocs.filter(isMethodDoc)
+      ? (data as ProjectData).methodDocs.filter(isMethodDoc).map((doc) => ({
+          ...doc,
+          grpc: remapGrpcBindingToGlobalLibrary(normalizeGrpcRequestBinding(doc.grpc), protoNormalization),
+        }))
       : [],
+    documentation: normalizeDocumentationState((data as ProjectData).documentation),
     docResults: Array.isArray((data as ProjectData).docResults)
-      ? (data as ProjectData).docResults.filter(isDocResultSnapshot)
+      ? (data as ProjectData).docResults.filter(isDocResultSnapshot).map((result) => ({
+          ...result,
+          grpc: remapGrpcBindingToGlobalLibrary(normalizeGrpcRequestBinding(result.grpc), protoNormalization),
+        }))
       : [],
     history: Array.isArray(data.history) ? data.history : [],
-    mockServer: normalizeMockServerProject((data as ProjectData).mockServer),
+    mockServer: normalizedMockServer,
     restMockServer: normalizeRestMockProject((data as ProjectData).restMockServer),
     wsMockServer: normalizeWebSocketMockProject((data as ProjectData).wsMockServer),
     requestTabs: normalizedTabs,
@@ -316,7 +379,7 @@ export function normalizeProjectData(input: Partial<ProjectData> | LegacyWorkspa
     baseUrl: data.baseUrl ?? defaults.baseUrl,
     nativeTarget: data.nativeTarget ?? defaults.nativeTarget,
     selectedMethodKey: data.selectedMethodKey ?? "",
-    requestJson: data.requestJson ?? "{}",
+    requestJson: normalizeEditableText((data as ProjectData & { requestJson?: unknown }).requestJson, "{}"),
     assertionJson: data.assertionJson ?? defaultAssertion,
   };
 }
@@ -329,6 +392,7 @@ export function looksLikeProjectData(value: unknown): value is Partial<ProjectDa
   const record = value as Partial<ProjectData>;
   return (
     Array.isArray(record.protoFiles) ||
+    Array.isArray((record as ProjectData).protoLibraries) ||
     Array.isArray((record as ProjectData).collections) ||
     Array.isArray(record.environments) ||
     Array.isArray(record.requestTabs) ||
@@ -342,37 +406,78 @@ export function looksLikeProjectData(value: unknown): value is Partial<ProjectDa
   );
 }
 
+function normalizeCollectionFolders(input: unknown, collectionId: string): CollectionFolder[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((folder): folder is Partial<CollectionFolder> => Boolean(folder && typeof folder === "object"))
+    .map((folder, index) => {
+      const now = new Date().toISOString();
+      return {
+        id: typeof folder.id === "string" && folder.id ? folder.id : createId(),
+        collectionId,
+        parentId: typeof folder.parentId === "string" ? folder.parentId : null,
+        name: typeof folder.name === "string" && folder.name.trim() ? folder.name : "Untitled Folder",
+        description: typeof folder.description === "string" ? folder.description : undefined,
+        order: Number.isFinite(folder.order) ? Math.max(0, Math.trunc(Number(folder.order))) : index,
+        createdAt: typeof folder.createdAt === "string" ? folder.createdAt : now,
+        updatedAt: typeof folder.updatedAt === "string" ? folder.updatedAt : now,
+      };
+    });
+}
+
 /**
  * Normalizes custom API collections used for WebSocket, gRPC, and future request types.
  */
-export function normalizeApiCollections(input: unknown): ApiCollection[] {
+export function normalizeApiCollections(
+  input: unknown,
+  protoLibraries: ProjectData["protoLibraries"] = [],
+  protoNormalization?: ProtoLibraryNormalizationResult,
+): ApiCollection[] {
   if (!Array.isArray(input)) return [];
   return input
     .filter((collection): collection is Partial<ApiCollection> => Boolean(collection && typeof collection === "object"))
     .map((collection) => {
       const id = typeof collection.id === "string" && collection.id ? collection.id : createId();
       const now = new Date().toISOString();
-      return {
+      return normalizeCollectionHierarchy({
         id,
         name: typeof collection.name === "string" && collection.name.trim() ? collection.name : "Untitled Collection",
-        requests: normalizeApiCollectionRequests(collection.requests, id),
+        description: typeof collection.description === "string" ? collection.description : undefined,
+        folders: normalizeCollectionFolders(collection.folders, id),
+        requests: normalizeApiCollectionRequests(collection.requests, id, protoLibraries, protoNormalization),
         createdAt: typeof collection.createdAt === "string" ? collection.createdAt : now,
         updatedAt: typeof collection.updatedAt === "string" ? collection.updatedAt : now,
-      };
+      });
     });
 }
 
-function normalizeApiCollectionRequests(input: unknown, collectionId: string): ApiCollectionRequest[] {
+function normalizeApiCollectionRequests(
+  input: unknown,
+  collectionId: string,
+  protoLibraries: ProjectData["protoLibraries"],
+  protoNormalization?: ProtoLibraryNormalizationResult,
+): ApiCollectionRequest[] {
   if (!Array.isArray(input)) return [];
   return input
     .filter((request): request is Partial<ApiCollectionRequest> => Boolean(request && typeof request === "object"))
-    .map((request) => {
+    .map((request, index) => {
       const now = new Date().toISOString();
       const kind: ApiCollectionRequest["kind"] =
         request.kind === "grpc" || request.kind === "rest" || request.kind === "websocket" ? request.kind : "websocket";
+      const grpcMethodKey = typeof request.grpcMethodKey === "string" ? request.grpcMethodKey : undefined;
+      const normalizedGrpc =
+        remapGrpcBindingToGlobalLibrary(
+          normalizeGrpcRequestBinding(request.grpc),
+          protoNormalization ?? { libraries: protoLibraries, libraryIdMap: new Map(), versionIdMap: new Map() },
+        ) ?? (grpcMethodKey ? createLegacyGrpcBinding(grpcMethodKey, protoLibraries) : undefined);
+      const grpc = normalizedGrpc
+        ? { ...normalizedGrpc, status: resolveGrpcBindingStatus(protoLibraries, normalizedGrpc) }
+        : undefined;
       return {
         id: typeof request.id === "string" && request.id ? request.id : createId(),
         collectionId,
+        parentId: typeof request.parentId === "string" ? request.parentId : null,
+        order: Number.isFinite(request.order) ? Math.max(0, Math.trunc(Number(request.order))) : index,
         name:
           typeof request.name === "string" && request.name.trim() ? request.name : defaultCollectionRequestName(kind),
         kind,
@@ -383,13 +488,16 @@ function normalizeApiCollectionRequests(input: unknown, collectionId: string): A
               ? "GET"
               : undefined,
         url: typeof request.url === "string" ? request.url : defaultCollectionRequestUrl(kind),
-        grpcMethodKey: typeof request.grpcMethodKey === "string" ? request.grpcMethodKey : undefined,
-        body: typeof request.body === "string" ? request.body : kind === "websocket" || kind === "rest" ? "" : "{}",
+        grpcMethodKey,
+        grpc,
+        body: normalizeEditableText(request.body, kind === "websocket" || kind === "rest" ? "" : "{}"),
         headers: Array.isArray(request.headers) ? request.headers : [],
         restParams: Array.isArray(request.restParams) ? request.restParams : [],
         restPathParams: Array.isArray(request.restPathParams) ? request.restPathParams : [],
         restAuth: normalizeRestAuth(request.restAuth),
         restBodyType: normalizeRestBodyType(request.restBodyType),
+        environmentKey:
+          typeof request.environmentKey === "string" && request.environmentKey ? request.environmentKey : undefined,
         mockResponse:
           typeof request.mockResponse === "string" ? request.mockResponse : kind === "rest" ? "{}" : undefined,
         createdAt: typeof request.createdAt === "string" ? request.createdAt : now,
@@ -408,7 +516,7 @@ function defaultCollectionRequestName(kind: ApiCollectionRequest["kind"]): strin
 function defaultCollectionRequestUrl(kind: ApiCollectionRequest["kind"]): string {
   if (kind === "websocket") return "ws://localhost:8080";
   if (kind === "rest") return "http://127.0.0.1:3000";
-  if (kind === "grpc") return "http://localhost:9080/grpc/web";
+  if (kind === "grpc") return "http://127.0.0.1:8080";
   return "http://127.0.0.1:3000";
 }
 
@@ -461,9 +569,9 @@ export function mergeMethodDocs(current: MethodDoc[], incoming: MethodDoc[]): Me
  */
 export function mergeDocResults(current: DocResultSnapshot[], incoming: DocResultSnapshot[]): DocResultSnapshot[] {
   const byKey = new Map<string, DocResultSnapshot>();
-  for (const result of current) byKey.set(result.methodKey, result);
+  for (const result of current) byKey.set(grpcBindingIdentity(result.grpc, result.methodKey), result);
   for (const result of incoming) {
-    byKey.set(result.methodKey, {
+    byKey.set(grpcBindingIdentity(result.grpc, result.methodKey), {
       ...result,
       savedAt: result.savedAt || new Date().toISOString(),
       result: compactGrpcResultForStorage(result.result),
@@ -476,11 +584,31 @@ export function mergeDocResults(current: DocResultSnapshot[], incoming: DocResul
  * Keeps only one tab per service/method pair while preserving the newest session.
  */
 export function dedupeRequestSessions(sessions: RequestSession[]): RequestSession[] {
-  const seen = new Set<string>();
+  const explicitGrpcIdentities = new Set(
+    sessions
+      .filter((session) => Boolean(session.sourceRequestId ?? (session.requestKind ? session.methodKey : "")))
+      .map((session) => grpcBindingIdentity(session.grpc, ""))
+      .filter(Boolean),
+  );
+  const seenRequestIds = new Set<string>();
+  const seenLegacyIdentities = new Set<string>();
   const output: RequestSession[] = [];
+
   for (const session of sessions) {
-    if (!session.methodKey || seen.has(session.methodKey)) continue;
-    seen.add(session.methodKey);
+    if (!session.methodKey) continue;
+    const requestId = session.sourceRequestId ?? (session.requestKind ? session.methodKey : "");
+    if (requestId) {
+      if (seenRequestIds.has(requestId)) continue;
+      seenRequestIds.add(requestId);
+      output.push(session);
+      continue;
+    }
+
+    const grpcIdentity = grpcBindingIdentity(session.grpc, "");
+    if (grpcIdentity && explicitGrpcIdentities.has(grpcIdentity)) continue;
+    const legacyIdentity = grpcIdentity ? `grpc:${grpcIdentity}` : `method:${session.methodKey}`;
+    if (seenLegacyIdentities.has(legacyIdentity)) continue;
+    seenLegacyIdentities.add(legacyIdentity);
     output.push(session);
   }
   return output;
@@ -490,15 +618,23 @@ export function dedupeRequestSessions(sessions: RequestSession[]): RequestSessio
  * Maps hidden/deprecated response tabs to visible tabs.
  */
 export function normalizeVisibleResponseTab(tab: ResponseTab | undefined): ResponseTab {
-  return tab === "latest" || tab === "raw" || tab === "history" || tab === "report" ? tab : "messages";
+  return tab === "latest" || tab === "headers" || tab === "trailers" || tab === "tests" ? tab : "messages";
 }
 
 /**
  * Normalizes a request tab loaded from persisted state.
  */
 export function normalizeRequestSession(session: RequestSession): RequestSession {
+  const requestFallback = session.requestKind === "rest" || session.requestKind === "websocket" ? "" : "{}";
   return {
     ...session,
+    requestJson: normalizeEditableText(
+      (session as RequestSession & { requestJson?: unknown }).requestJson,
+      requestFallback,
+    ),
+    sourceRequestId:
+      typeof session.sourceRequestId === "string" && session.sourceRequestId ? session.sourceRequestId : undefined,
+    grpc: normalizeGrpcRequestBinding(session.grpc),
     metadata: Array.isArray(session.metadata) ? session.metadata : [],
     transportMode:
       session.transportMode === "native-grpc" ||
@@ -512,11 +648,13 @@ export function normalizeRequestSession(session: RequestSession): RequestSession
         : undefined,
     requestUrl: session.requestUrl ?? "",
     httpMethod: session.httpMethod ?? "GET",
-    baseUrl: session.baseUrl ?? "http://localhost:9080/grpc/web",
+    baseUrl: session.baseUrl ?? "http://127.0.0.1:8080",
     nativeTarget: session.nativeTarget ?? "localhost:50051",
     environmentKey: isEnvironmentKey(session.environmentKey) ? session.environmentKey : "default",
     assertionJson: session.assertionJson ?? defaultAssertion,
-    events: Array.isArray(session.events) ? session.events.slice(-maxUiEventsPerSession).map(compactUiEventForStorage) : [],
+    events: Array.isArray(session.events)
+      ? session.events.slice(-maxUiEventsPerSession).map(compactUiEventForStorage)
+      : [],
     lastResult: session.lastResult ? compactGrpcResultForClient(session.lastResult) : null,
     assertionResults: Array.isArray(session.assertionResults) ? session.assertionResults : [],
     responseTab: normalizeVisibleResponseTab(session.responseTab),
@@ -691,6 +829,55 @@ export function isProtoSourceFile(value: unknown): value is ProtoSourceFile {
   );
 }
 
+function normalizeSavedExamples(input: unknown): SavedExample[] {
+  if (!Array.isArray(input)) return [];
+  const now = new Date().toISOString();
+  return input
+    .filter((value): value is Partial<SavedExample> => Boolean(value && typeof value === "object"))
+    .map((example) => ({
+      id: typeof example.id === "string" && example.id ? example.id : createId(),
+      name: typeof example.name === "string" && example.name.trim() ? example.name : "Saved example",
+      serviceName: typeof example.serviceName === "string" ? example.serviceName : "",
+      methodName: typeof example.methodName === "string" ? example.methodName : "",
+      requestJson: normalizeEditableText(
+        (example as Partial<SavedExample> & { requestJson?: unknown }).requestJson,
+        "{}",
+      ),
+      metadata: Array.isArray(example.metadata) ? example.metadata : [],
+      expectedJson: normalizeEditableText(
+        (example as Partial<SavedExample> & { expectedJson?: unknown }).expectedJson,
+        "{}",
+      ),
+      expectedStatus: typeof example.expectedStatus === "string" ? example.expectedStatus : "",
+      expectedTrailers: Array.isArray(example.expectedTrailers) ? example.expectedTrailers : [],
+      assertions: normalizeEditableText((example as Partial<SavedExample> & { assertions?: unknown }).assertions, ""),
+      tags: Array.isArray(example.tags)
+        ? example.tags
+            .filter((tag): tag is string => typeof tag === "string" && Boolean(tag.trim()))
+            .map((tag) => tag.trim())
+        : [],
+      enabled: example.enabled !== false,
+      documentation: {
+        summary: typeof example.documentation?.summary === "string" ? example.documentation.summary : "",
+        whenThisHappens:
+          typeof example.documentation?.whenThisHappens === "string" ? example.documentation.whenThisHappens : "",
+        explanation: typeof example.documentation?.explanation === "string" ? example.documentation.explanation : "",
+        notes: Array.isArray(example.documentation?.notes)
+          ? example.documentation.notes
+              .filter((note): note is string => typeof note === "string" && Boolean(note.trim()))
+              .map((note) => note.trim())
+          : [],
+      },
+      createdAt: typeof example.createdAt === "string" ? example.createdAt : now,
+      updatedAt:
+        typeof example.updatedAt === "string"
+          ? example.updatedAt
+          : typeof example.createdAt === "string"
+            ? example.createdAt
+            : now,
+    }));
+}
+
 /**
  * Validates a saved example payload.
  */
@@ -740,6 +927,7 @@ export function mergeExamples(current: SavedExample[], incoming: SavedExample[])
       ...example,
       id: example.id || createId(),
       createdAt: example.createdAt || new Date().toISOString(),
+      updatedAt: example.updatedAt || example.createdAt || new Date().toISOString(),
     };
     const key = `${savedExampleKey(normalized)}:${normalized.name}:${normalized.requestJson}`;
     if (seen.has(key)) continue;
@@ -753,7 +941,8 @@ export function mergeExamples(current: SavedExample[], incoming: SavedExample[])
  * Inserts or replaces one method documentation entry.
  */
 export function upsertMethodDoc(current: MethodDoc[], next: MethodDoc): MethodDoc[] {
-  const without = current.filter((doc) => doc.methodKey !== next.methodKey);
+  const identity = grpcBindingIdentity(next.grpc, next.methodKey);
+  const without = current.filter((doc) => grpcBindingIdentity(doc.grpc, doc.methodKey) !== identity);
   return [{ ...next, updatedAt: next.updatedAt || new Date().toISOString() }, ...without].slice(0, 500);
 }
 

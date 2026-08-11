@@ -39,7 +39,7 @@ export function useWorkspaceBundleActions(scope: WorkspaceBundleActionsScope) {
   function buildWorkspaceExportBundle(project = getProjectSnapshot()): WorkspaceExportBundle {
     return {
       type: "layang-workspace" as const,
-      version: 4,
+      version: 5,
       exportedAt: new Date().toISOString(),
       app: "Layang",
       project,
