@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.1.0
+
+### Major
+
+- Introduced Git-friendly Workspace Format v6 with split YAML files, immutable proto snapshots, local-only runtime state, migration, and validation.
+- Reworked Collections, Proto Schemas, request tabs, and gRPC Mock into clearer context-based workflows with grouped services, methods, and scenarios.
+- Added unified Markdown documentation authoring, generated references, static-site and wiki exports, CLI build/check commands, and desktop deep links.
+- Added embedded gRPC Gateway and browser gRPC-Web access with Mock, Hybrid, and Gateway modes, streaming, TLS/mTLS, CORS, traffic capture, and runtime controls.
+- Added cross-platform Web Access HTTPS certificate setup, validation, trust installation, and secure passphrase storage.
+
+### Minor
+
+- Standardized the design system, typography, controls, dialogs, navigation, status indicators, accessibility behavior, and concise UI copy.
+- Made YAML the canonical gRPC mock format while retaining JSON import and automatic migration compatibility.
+- Improved proto revision import, duplicate handling, source diffing, deleted-schema restoration, and request-reference repair.
+- Expanded CLI parity for workspace validation, saved requests, schemas, documentation, mocks, Git, and gateway operations.
+
+### Fixed
+
+- Corrected request creation, proto selection, scenario activation, draft saving, runtime refresh, and parallel same-method execution behavior.
+- Fixed streaming response display, mock readiness, environment editing, response search and resizing, and several React accessibility/style warnings.
+- Added regression coverage across workspace migration, documentation, schema lifecycle, mock runtime, gateway, UI composition, and accessibility.
+
 ## 1.0.5
 
 ### Minor
@@ -28,7 +51,6 @@
 - Updated README, website metadata, GitHub Pages notes, architecture notes, testing notes, and Windows release docs for `1.0.4`.
 - Replaced the old HTTPS certificate plan with current certificate settings documentation.
 - Removed stale architecture links and outdated menu references.
-
 
 ## 1.0.3
 
@@ -87,6 +109,7 @@
 - Added latest response data in the Response tab.
 - Added left-right panel layout mode.
 - Added layout switcher for top-bottom and left-right response/body views.
+
 ## 1.0.0
 
 ### Major
@@ -110,7 +133,6 @@
 
 - REST, WebSocket, gRPC, and gRPC-Web workflows are now part of the official `1.0.0` release.
 - Local mock behavior is intended for local and internal development.
-
 
 ## 1.0.0-rc.2
 
