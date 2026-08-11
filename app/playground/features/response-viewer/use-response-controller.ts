@@ -8,6 +8,8 @@ export function useResponseController() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [assertionResults, setAssertionResults] = useState<AssertionResult[]>([]);
   const [responseFilter, setResponseFilter] = useState("");
+  const [responseSearchScope, setResponseSearchScope] = useState<"current" | "latest" | "all">("current");
+  const [pendingMessageCount, setPendingMessageCount] = useState(0);
   const deferredResponseFilter = useDeferredValue(responseFilter);
   const responseBodyRef = useRef<HTMLDivElement | null>(null);
   const [showMessageTopButton, setShowMessageTopButton] = useState(false);
@@ -23,6 +25,10 @@ export function useResponseController() {
     setAssertionResults,
     responseFilter,
     setResponseFilter,
+    responseSearchScope,
+    setResponseSearchScope,
+    pendingMessageCount,
+    setPendingMessageCount,
     deferredResponseFilter,
     responseBodyRef,
     showMessageTopButton,

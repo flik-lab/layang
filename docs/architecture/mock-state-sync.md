@@ -33,10 +33,10 @@ External mock scenario file edits are applied by an explicit UI action instead o
 
 ```txt
 1. Click Open folder from the mock scenario panel
-2. Edit mocks/mock-server.json or mocks/scenarios/** in an external editor
+2. Edit mocks/grpc/server.yml or mocks/grpc/methods/** in an external editor
 3. Save the file
 4. Click Update from file in Layang
-5. Layang reads mocks/mock-server.json and mocks/scenarios/** again
+5. Layang reads mocks/grpc/server.yml and mocks/grpc/methods/** again
 6. If the gRPC mock server is running, Layang pushes the refreshed config to the runtime immediately
 ```
 
@@ -90,8 +90,8 @@ A scenario file stores a single scenario.
 
 When a workspace opens or **Update from file** is clicked, the UI must read both:
 
-1. `mocks/mock-server.json`
-2. all files under `mocks/scenarios/**`
+1. `mocks/grpc/server.yml`
+2. all files under `mocks/grpc/methods/**`
 
 Then it should rebuild the in-memory mock model.
 
@@ -117,7 +117,7 @@ Expected behavior:
 
 ## Disk write rule
 
-Do not replace the entire `mocks/scenarios` folder when only one scenario changes.
+Do not replace the entire `mocks/grpc/methods` folder when only one scenario changes.
 
 Preferred behavior:
 

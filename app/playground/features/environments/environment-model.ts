@@ -14,7 +14,7 @@ export const defaultEnvironments: EnvironmentConfig[] = [
   {
     key: "dev",
     label: "Develop Env",
-    grpcWebBaseUrl: "http://127.0.0.1:9080/grpc/web",
+    grpcWebBaseUrl: "http://127.0.0.1:8080",
     nativeTarget: "127.0.0.1:50051",
     websocketUrl: "ws://127.0.0.1:8080",
     restBaseUrl: "http://127.0.0.1:3000",
@@ -22,7 +22,7 @@ export const defaultEnvironments: EnvironmentConfig[] = [
   {
     key: "testing",
     label: "Testing Env",
-    grpcWebBaseUrl: "http://127.0.0.1:9081/grpc/web",
+    grpcWebBaseUrl: "http://127.0.0.1:8081",
     nativeTarget: "127.0.0.1:50052",
     websocketUrl: "ws://127.0.0.1:8081",
     restBaseUrl: "http://127.0.0.1:3001",
@@ -30,7 +30,7 @@ export const defaultEnvironments: EnvironmentConfig[] = [
   {
     key: "prod",
     label: "Prod Env",
-    grpcWebBaseUrl: "https://grpc.example.com/grpc/web",
+    grpcWebBaseUrl: "https://grpc.example.com",
     nativeTarget: "grpc.example.com:443",
     websocketUrl: "wss://ws.example.com",
     restBaseUrl: "https://api.example.com",

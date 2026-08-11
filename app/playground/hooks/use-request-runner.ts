@@ -5,6 +5,7 @@ import { invokeNativeGrpc } from "@/lib/native-grpc-client";
 import type { GrpcEvent, GrpcResult, LoadedProto, MetadataPair, ProtoSourceFile, RpcMethodInfo } from "@/lib/types";
 import { getEnvironmentTarget as featureGetEnvironmentTarget } from "../features/environments/environment-model";
 import { createRequestSession } from "../features/request-runner/request-session-model";
+import { findReusableGrpcRequestSession } from "../features/request-editor/request-session-domain";
 import {
   decodeGrpcMessageForUi,
   evaluateAssertions,
@@ -156,24 +157,43 @@ export function useRequestRunner(options: UseRequestRunnerOptions) {
       if (!loaded || !methodToRun) return;
 
       const key = methodKey(methodToRun);
-      const reusableSession =
-        requestSessions.find((session) => session.methodKey === key) ??
-        (activeSession?.methodKey === key ? activeSession : null);
+      const collectionGrpcRequest = collectionRequest?.kind === "grpc" ? collectionRequest : null;
+      const reusableSession = findReusableGrpcRequestSession(
+        requestSessions,
+        activeSession,
+        key,
+        collectionGrpcRequest?.id,
+      );
       if (reusableSession?.running) {
-        showToast(`${methodToRun.methodName} is already running in ${reusableSession.title}.`, "warning");
+        showToast(
+          `${collectionGrpcRequest?.name ?? methodToRun.methodName} is already running in ${reusableSession.title}.`,
+          "warning",
+        );
         return;
       }
 
-      const runSession =
+      const createdSession = createRequestSession(loaded.root, methodToRun, {
+        requestJson: requestToRun,
+        metadata: metadataToRun,
+        transportMode: activeTransportMode,
+        baseUrl: activeBaseUrl,
+        nativeTarget: activeNativeTarget,
+        assertionJson: assertionToRun,
+      });
+      const runSession: RequestSession =
         reusableSession ??
-        createRequestSession(loaded.root, methodToRun, {
-          requestJson: requestToRun,
-          metadata: metadataToRun,
-          transportMode: activeTransportMode,
-          baseUrl: activeBaseUrl,
-          nativeTarget: activeNativeTarget,
-          assertionJson: assertionToRun,
-        });
+        (collectionGrpcRequest
+          ? {
+              ...createdSession,
+              methodKey: collectionGrpcRequest.id,
+              sourceRequestId: collectionGrpcRequest.id,
+              grpc: collectionGrpcRequest.grpc,
+              title: collectionGrpcRequest.name,
+              serviceName: collectionGrpcRequest.collectionName ?? methodToRun.serviceName,
+              requestKind: "grpc",
+              requestUrl: collectionGrpcRequest.url,
+            }
+          : createdSession);
       const targetSessionId = runSession.id;
       const targetTransportMode = reusableSession?.transportMode ?? activeTransportMode;
       const targetEnvironmentKey = reusableSession?.environmentKey ?? activeEnvironmentKey;

@@ -137,7 +137,7 @@ export function BenchmarkPanel({
             Export benchmark
           </Button>
           {running ? (
-            <Button size="small" variant="outlined" color="warning" startIcon={<StopCircle />} onClick={onStop}>
+            <Button size="small" variant="outlined" color="error" startIcon={<StopCircle />} onClick={onStop}>
               Stop benchmark
             </Button>
           ) : (

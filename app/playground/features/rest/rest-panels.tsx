@@ -1,10 +1,9 @@
 import type { ChangeEvent } from "react";
-import { Add, Delete, Download, PlayArrow } from "@/components/shadcn/icons";
+import { Add, Delete, Download, PlayArrow, StopCircle } from "@/components/shadcn/icons";
 import {
   Alert,
   Box,
   Button,
-  Chip,
   FormControl,
   IconButton,
   MenuItem,
@@ -23,6 +22,7 @@ import {
 import { MarkdownPreview as FeatureMarkdownPreview } from "../docs-publisher/docs-publisher-panel";
 import { CodeTextField as FeatureCodeTextField } from "../request-editor/request-editor-panels";
 import { formatTimestampShort } from "../../shared/formatters";
+import { uiCopy } from "../../shared/ui-copy";
 import type {
   ApiCollectionRequest,
   MethodDoc,
@@ -63,7 +63,7 @@ export function RestPairEditor({
             <TableRow>
               <TableCell>Key</TableCell>
               <TableCell>Value</TableCell>
-              <TableCell width={56}>Action</TableCell>
+              <TableCell width={56}>Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -75,6 +75,7 @@ export function RestPairEditor({
                       size="small"
                       fullWidth
                       value={item.key}
+                      inputProps={{ "aria-label": `${title} key ${index + 1}` }}
                       onChange={(event: TextInputChangeEvent) => onUpdate(index, "key", event.target.value)}
                     />
                   </TableCell>
@@ -83,11 +84,17 @@ export function RestPairEditor({
                       size="small"
                       fullWidth
                       value={item.value}
+                      inputProps={{ "aria-label": `${title} value ${index + 1}` }}
                       onChange={(event: TextInputChangeEvent) => onUpdate(index, "value", event.target.value)}
                     />
                   </TableCell>
                   <TableCell>
-                    <IconButton size="small" color="error" onClick={() => onRemove(index)}>
+                    <IconButton
+                      size="small"
+                      color="error"
+                      aria-label={`Remove ${title} row ${index + 1}`}
+                      onClick={() => onRemove(index)}
+                    >
                       <Delete sx={{ fontSize: 16 }} />
                     </IconButton>
                   </TableCell>
@@ -97,7 +104,7 @@ export function RestPairEditor({
               <TableRow>
                 <TableCell colSpan={3}>
                   <Typography variant="caption" color="text.secondary">
-                    No {title.toLowerCase()} configured.
+                    No entries.
                   </Typography>
                 </TableCell>
               </TableRow>
@@ -218,40 +225,56 @@ export function RestMockPanel({
   return (
     <Stack spacing={1.2}>
       <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap" useFlexGap>
-        <Box>
-          <Typography variant="subtitle1">REST mock server</Typography>
-          <Typography variant="caption" color="text.secondary">
-            Mock saved REST requests with scenario priority, query/header/body matching, delay, and templates.
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="subtitle1">REST mock</Typography>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            noWrap
+            title={
+              request
+                ? `${request.name} · ${status.url ?? `http://${project.bindHost}:${project.port}`}`
+                : "Select a REST request."
+            }
+          >
+            {request
+              ? `${request.name} · ${status.url ?? `http://${project.bindHost}:${project.port}`}`
+              : "Select a REST request."}
           </Typography>
         </Box>
         <Stack direction="row" spacing={0.7} alignItems="center" flexWrap="wrap" useFlexGap>
-          <Chip
+          <Button
             size="small"
-            color={status.running ? "success" : "default"}
-            label={status.running ? "Running" : "Stopped"}
-          />
-          {status.running ? (
-            <Button size="small" variant="outlined" color="warning" onClick={onStop}>
-              Stop
-            </Button>
-          ) : (
-            <Button size="small" variant="contained" startIcon={<PlayArrow />} onClick={onStart}>
-              Start
-            </Button>
-          )}
+            variant="contained"
+            startIcon={<PlayArrow />}
+            disabled={status.running}
+            onClick={onStart}
+          >
+            Start
+          </Button>
+          <Button
+            size="small"
+            variant="outlined"
+            color="error"
+            startIcon={<StopCircle />}
+            disabled={!status.running}
+            onClick={onStop}
+          >
+            Stop
+          </Button>
         </Stack>
       </Stack>
       <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
         <TextField
           size="small"
-          label="Bind IP"
+          label={uiCopy.fields.host}
           value={project.bindHost}
           onChange={(event: TextInputChangeEvent) => onBindHostChange(event.target.value)}
           sx={{ width: 180 }}
         />
         <TextField
           size="small"
-          label="Port"
+          label={uiCopy.fields.port}
           type="number"
           value={project.port}
           onChange={(event: TextInputChangeEvent) => onPortChange(Number(event.target.value))}
@@ -267,6 +290,7 @@ export function RestMockPanel({
             <FormControl size="small" sx={{ minWidth: 240 }}>
               <Select
                 value={activeScenario.id}
+                inputProps={{ "aria-label": uiCopy.sections.scenario }}
                 onChange={(event: SelectInputChangeEvent) => onScenarioSelect(String(event.target.value))}
               >
                 {scenarios.map((scenario) => (
@@ -299,7 +323,7 @@ export function RestMockPanel({
             />
             <TextField
               size="small"
-              label="Path"
+              label={uiCopy.fields.path}
               value={activeScenario.path}
               onChange={(event: TextInputChangeEvent) => onScenarioChange({ path: event.target.value })}
               sx={{ minWidth: 220 }}
@@ -307,7 +331,7 @@ export function RestMockPanel({
             <TextField
               size="small"
               type="number"
-              label="Status"
+              label={uiCopy.fields.statusCode}
               value={activeScenario.status}
               onChange={(event: TextInputChangeEvent) => onScenarioChange({ status: Number(event.target.value) })}
               sx={{ width: 105 }}
@@ -315,7 +339,7 @@ export function RestMockPanel({
             <TextField
               size="small"
               type="number"
-              label="Priority"
+              label={uiCopy.fields.priority}
               value={activeScenario.priority ?? 0}
               onChange={(event: TextInputChangeEvent) => onScenarioChange({ priority: Number(event.target.value) })}
               sx={{ width: 105 }}
@@ -323,7 +347,7 @@ export function RestMockPanel({
             <TextField
               size="small"
               type="number"
-              label="Delay ms"
+              label={uiCopy.fields.delayMs}
               value={activeScenario.delayMs ?? 0}
               onChange={(event: TextInputChangeEvent) => onScenarioChange({ delayMs: Number(event.target.value) })}
               sx={{ width: 115 }}
@@ -342,16 +366,16 @@ export function RestMockPanel({
           </Stack>
           <Paper variant="outlined" sx={{ p: 1, borderRadius: 2 }}>
             <Stack spacing={1}>
-              <Typography variant="subtitle1">Matchers</Typography>
+              <Typography variant="subtitle1">{uiCopy.sections.matchers}</Typography>
               <RestPairEditor
-                title="Query must equal"
+                title="Query"
                 rows={activeScenario.matchQuery ?? []}
                 onAdd={() => onScenarioPairAdd("matchQuery")}
                 onUpdate={(index, field, value) => onScenarioPairUpdate("matchQuery", index, field, value)}
                 onRemove={(index) => onScenarioPairRemove("matchQuery", index)}
               />
               <RestPairEditor
-                title="Headers must equal"
+                title="Headers"
                 rows={activeScenario.matchHeaders ?? []}
                 onAdd={() => onScenarioPairAdd("matchHeaders")}
                 onUpdate={(index, field, value) => onScenarioPairUpdate("matchHeaders", index, field, value)}
@@ -387,7 +411,7 @@ export function RestMockPanel({
             </Stack>
           </Paper>
           <Stack spacing={0.8}>
-            <Typography variant="subtitle1">Response body</Typography>
+            <Typography variant="subtitle1">{uiCopy.sections.response}</Typography>
             <FeatureCodeTextField
               value={mockResponseText}
               onChange={onMockResponseTextChange}
@@ -397,20 +421,23 @@ export function RestMockPanel({
               formatAriaLabel="Prettier JSON"
               fullscreenTitle="REST mock response editor"
             />
-            <Typography variant="caption" color="text.secondary">
-              Templates: {"{{now}}"}, {"{{timestamp}}"}, {"{{uuid}}"}, {"{{request.path.id}}"},{" "}
-              {"{{request.query.name}}"}, {"{{request.header.authorization}}"}, {"{{request.bodyJson.data.id}}"}
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              title="Available variables: {{now}}, {{timestamp}}, {{uuid}}, {{request.path.*}}, {{request.query.*}}, {{request.header.*}}, and {{request.bodyJson.*}}."
+            >
+              Variables: now, uuid, and request.*
             </Typography>
           </Stack>
         </Stack>
       ) : (
         <Alert severity="info" variant="outlined">
-          Select a REST request to edit its mock scenarios.
+          Select a REST request.
         </Alert>
       )}
       {status.requestLog?.length ? (
         <Paper variant="outlined" sx={{ p: 1, borderRadius: 2 }}>
-          <Typography variant="subtitle1">Recent mock requests</Typography>
+          <Typography variant="subtitle1">{uiCopy.sections.requests}</Typography>
           <TableContainer>
             <Table size="small">
               <TableHead>
@@ -429,7 +456,7 @@ export function RestMockPanel({
                     <TableCell>{entry.method}</TableCell>
                     <TableCell>{entry.path}</TableCell>
                     <TableCell>{entry.status}</TableCell>
-                    <TableCell>{entry.scenarioId ?? "miss"}</TableCell>
+                    <TableCell>{entry.scenarioId ?? uiCopy.status.unmatched}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

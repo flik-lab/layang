@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import type {
   MockFormat,
   MockMethodScenarioFile,
@@ -22,8 +23,9 @@ export function useGrpcMockController({
   localDirtyFallbackMs,
   showToast,
 }: UseGrpcMockControllerOptions) {
-  const [mockServer, setMockServer] = useState<MockServerProject>(() => createDefaultMockServerProject());
+  const [mockServer, setMockServerState] = useState<MockServerProject>(() => createDefaultMockServerProject());
   const [mockServerStatus, setMockServerStatus] = useState<MockServerStatus>({ running: false });
+  const [webAccessStatus, setWebAccessStatus] = useState<MockServerStatus>({ running: false, runtimeKind: "gateway" });
   const [mockSettingsOpen, setMockSettingsOpen] = useState(false);
   const [mockScenarioEditorDraft, setMockScenarioEditorDraft] = useState<{
     methodKey: string;
@@ -31,6 +33,8 @@ export function useGrpcMockController({
     format: MockFormat;
     text: string;
   } | null>(null);
+  const [mockScenarioEditorDirty, setMockScenarioEditorDirty] = useState(false);
+  const [mockScenarioEditorError, setMockScenarioEditorError] = useState("");
   const [mockScenarioDialogOpen, setMockScenarioDialogOpen] = useState(false);
   const [mockScenarioEditing, setMockScenarioEditing] = useState<{ methodKey: string; scenarioId: string } | null>(
     null,
@@ -58,6 +62,23 @@ export function useGrpcMockController({
     return mockServerLocalDirtyRef.current || Date.now() < mockServerLocalDirtyUntilRef.current;
   }
 
+  // Keep the ref and dirty guard in sync before React commits the next render.
+  // Start can be clicked immediately after editing a scenario; without this wrapper
+  // the disk refresh path can still observe the previous state and replace the draft.
+  const setMockServer = useCallback<Dispatch<SetStateAction<MockServerProject>>>(
+    (update) => {
+      mockServerLocalDirtyRef.current = true;
+      mockServerLocalDirtyUntilRef.current = Date.now() + localDirtyFallbackMs;
+      setMockServerState((current) => {
+        const next =
+          typeof update === "function" ? (update as (value: MockServerProject) => MockServerProject)(current) : update;
+        mockServerRef.current = next;
+        return next;
+      });
+    },
+    [localDirtyFallbackMs],
+  );
+
   function mockServerDiskSignature(value: MockServerProject): string {
     const normalized = normalizeMockServerProject(value);
     const methodFiles = Object.fromEntries(
@@ -67,18 +88,24 @@ export function useGrpcMockController({
     );
     return JSON.stringify({
       port: normalized.port,
+      protoSources: normalized.protoSources,
+      security: normalized.security,
+      limits: normalized.limits,
       bindHost: normalized.bindHost,
       format: normalized.format,
       streamDefaults: normalized.streamDefaults,
       selectedScenarioIds: normalized.selectedScenarioIds,
       enabledMethods: normalized.enabledMethods,
       methodFiles,
+      methodBindings: normalized.methodBindings,
+      gatewayProfiles: normalized.gatewayProfiles,
+      activeGatewayProfileId: normalized.activeGatewayProfileId,
       scenarioText: normalized.scenarioText,
     });
   }
 
   async function refreshGrpcMockServerFromWorkspace(
-    options: { silent?: boolean; respectLocalDirty?: boolean; throwOnError?: boolean } = {},
+    options: { silent?: boolean; respectLocalDirty?: boolean; throwOnError?: boolean; applyToState?: boolean } = {},
   ): Promise<MockServerProject> {
     if (!workspaceFolderPath || !window.electronWorkspace?.readMockServer) {
       const error = "Mock scenario file refresh is available after a workspace folder is opened or saved.";
@@ -99,14 +126,48 @@ export function useGrpcMockController({
 
     const next = normalizeMockServerProject(result.mockServer as Partial<MockServerProject>);
     const nextSignature = mockServerDiskSignature(next);
-    if (nextSignature !== mockServerDiskSignature(mockServerRef.current)) {
+    if (options.applyToState !== false && nextSignature !== mockServerDiskSignature(mockServerRef.current)) {
       mockServerApplyingWorkspaceRefreshRef.current = true;
       setMockScenarioEditorDraft(null);
-      setMockServer(next);
+      setMockScenarioEditorDirty(false);
+      setMockScenarioEditorError("");
+      mockServerRef.current = next;
+      setMockServerState(next);
       if (!options.silent) showToast("Mock scenario files reloaded from workspace.", "success");
     }
     return next;
   }
+
+  useEffect(() => {
+    if (!webAccessStatus.running || !window.electronGateway?.status) return;
+    const profileId = mockServer.activeGatewayProfileId;
+    let cancelled = false;
+    const refresh = async () => {
+      const result = await window.electronGateway?.status?.({ profileId });
+      if (cancelled || !result?.ok) return;
+      setWebAccessStatus((current: MockServerStatus) =>
+        current.running
+          ? {
+              ...current,
+              gateway: result,
+              port: result.listenPort ?? current.port,
+              bindHost: result.listenHost ?? current.bindHost,
+              bindAddress: result.bindAddress ?? current.bindAddress,
+              url: result.webUrl ?? result.url ?? current.url,
+              methodCount: result.methodCount ?? current.methodCount,
+              activeCallCount: result.activeCallCount,
+              updatedAt: new Date().toISOString(),
+            }
+          : current,
+      );
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [webAccessStatus.running, mockServer.activeGatewayProfileId]);
 
   useEffect(() => {
     mockServerRef.current = mockServer;
@@ -124,10 +185,16 @@ export function useGrpcMockController({
     setMockServer,
     mockServerStatus,
     setMockServerStatus,
+    webAccessStatus,
+    setWebAccessStatus,
     mockSettingsOpen,
     setMockSettingsOpen,
     mockScenarioEditorDraft,
     setMockScenarioEditorDraft,
+    mockScenarioEditorDirty,
+    setMockScenarioEditorDirty,
+    mockScenarioEditorError,
+    setMockScenarioEditorError,
     mockScenarioDialogOpen,
     setMockScenarioDialogOpen,
     mockScenarioEditing,

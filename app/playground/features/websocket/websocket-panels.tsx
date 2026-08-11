@@ -23,10 +23,12 @@ import {
 import type { GrpcResult } from "@/lib/types";
 import { calculateBenchmarkStats } from "../benchmark/benchmark-panel";
 import { MarkdownPreview as FeatureMarkdownPreview } from "../docs-publisher/docs-publisher-panel";
+import { renderExampleDocBlock } from "../docs-publisher/docs-renderer";
 import { CodeTextField as FeatureCodeTextField } from "../request-editor/request-editor-panels";
 import { JsonBlock as FeatureJsonBlock } from "../response-viewer/response-viewer";
 import { ResizableTable, type ResizableTableColumn } from "../../shared/components/resizable-table";
 import { formatTimestampReadable, formatTimestampShort } from "../../shared/formatters";
+import { uiCopy } from "../../shared/ui-copy";
 import type {
   ApiCollectionRequest,
   BenchmarkResult,
@@ -96,27 +98,20 @@ export function WebSocketMockSidebar({
     <Stack spacing={1.1}>
       <Paper variant="outlined" sx={{ p: 1, borderRadius: 2 }}>
         <Stack spacing={0.9}>
-          <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
-            <Box sx={{ minWidth: 0 }}>
-              <Typography variant="body2" fontWeight={600} noWrap>
-                WebSocket mock server
-              </Typography>
-              <Typography variant="caption" color="text.secondary" noWrap title={`ws://${host}:${port}`}>
-                {status.running ? `Running · ${status.clientCount ?? 0} client` : "Stopped"}
-              </Typography>
-            </Box>
-            <Chip
-              size="small"
-              label={status.running ? "Running" : "Stopped"}
-              color={status.running ? "success" : "default"}
-            />
-          </Stack>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="body2" fontWeight={600} noWrap>
+              {uiCopy.sections.server}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" noWrap title={`ws://${host}:${port}`}>
+              {`ws://${host}:${port} · ${status.running ? `${status.clientCount ?? 0} clients` : uiCopy.status.stopped}`}
+            </Typography>
+          </Box>
           <Stack direction="row" spacing={0.7} alignItems="end" flexWrap="wrap" useFlexGap>
-            <TextField size="small" label="IP" value={host} disabled sx={{ width: 118 }} />
+            <TextField size="small" label={uiCopy.fields.host} value={host} disabled sx={{ width: 118 }} />
             <TextField
               size="small"
               type="number"
-              label="Port"
+              label={uiCopy.fields.port}
               value={String(port)}
               onChange={(event: TextInputChangeEvent) =>
                 onPortChange(Math.max(1, Math.floor(Number(event.target.value) || 8090)))
@@ -124,21 +119,25 @@ export function WebSocketMockSidebar({
               disabled={status.running}
               sx={{ width: 92 }}
             />
-            {status.running ? (
-              <Button size="small" color="warning" variant="outlined" startIcon={<StopCircle />} onClick={onStop}>
-                Stop
-              </Button>
-            ) : (
-              <Button
-                size="small"
-                variant="contained"
-                startIcon={<PlayArrow />}
-                onClick={onStart}
-                disabled={rows.length === 0}
-              >
-                Start
-              </Button>
-            )}
+            <Button
+              size="small"
+              variant="contained"
+              startIcon={<PlayArrow />}
+              onClick={onStart}
+              disabled={status.running || rows.length === 0}
+            >
+              Start
+            </Button>
+            <Button
+              size="small"
+              color="error"
+              variant="outlined"
+              startIcon={<StopCircle />}
+              disabled={!status.running}
+              onClick={onStop}
+            >
+              Stop
+            </Button>
           </Stack>
         </Stack>
       </Paper>
@@ -147,13 +146,13 @@ export function WebSocketMockSidebar({
         <Stack spacing={0.8}>
           <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
             <Typography variant="body2" fontWeight={600}>
-              Active requests
+              {uiCopy.sections.requests}
             </Typography>
             <Chip size="small" label={rows.length} />
           </Stack>
           {rows.length === 0 ? (
             <Alert severity="info" variant="outlined">
-              Create a WebSocket request, then configure its Mock tab.
+              Create a WebSocket request to configure its mock.
             </Alert>
           ) : (
             <Stack spacing={0.65}>
@@ -202,7 +201,7 @@ export function WebSocketMockSidebar({
                       <Stack direction="row" spacing={0.55} alignItems="end" flexWrap="wrap" useFlexGap>
                         <TextField
                           size="small"
-                          label="Path"
+                          label={uiCopy.fields.path}
                           value={row.path}
                           onChange={(event: TextInputChangeEvent) =>
                             onScenarioChange(row.scenarioId, { path: event.target.value })
@@ -215,7 +214,7 @@ export function WebSocketMockSidebar({
                         <TextField
                           size="small"
                           type="number"
-                          label="Interval"
+                          label={uiCopy.fields.intervalMs}
                           value={String(row.intervalMs ?? 1000)}
                           onChange={(event: TextInputChangeEvent) =>
                             onScenarioChange(row.scenarioId, {
@@ -227,6 +226,7 @@ export function WebSocketMockSidebar({
                         <FormControl size="small" sx={{ width: 70 }}>
                           <Select
                             value={row.loop ? "yes" : "no"}
+                            inputProps={{ "aria-label": "Loop" }}
                             onChange={(event: SelectInputChangeEvent) =>
                               onScenarioChange(row.scenarioId, { loop: event.target.value === "yes" })
                             }
@@ -238,7 +238,7 @@ export function WebSocketMockSidebar({
                         <TextField
                           size="small"
                           type="number"
-                          label="Max"
+                          label={uiCopy.fields.loopCount}
                           value={String(row.maxLoops ?? 0)}
                           onChange={(event: TextInputChangeEvent) =>
                             onScenarioChange(row.scenarioId, {
@@ -278,6 +278,7 @@ export function renderWebSocketDocsMarkdown({
     : "WebSocket Request";
   const requestUrl = url || collectionRequest?.url || "ws://localhost:8080";
   const latestMessage = latestResult?.messages?.at(-1) ?? latestResult?.messages?.[0] ?? null;
+  const visibleExamples = examples.filter((example) => example.enabled !== false);
   const lines = [
     `# ${title}`,
     "",
@@ -304,21 +305,8 @@ export function renderWebSocketDocsMarkdown({
       : "No response snapshot saved yet. Connect the request and publish again to include the latest response.",
     "",
     "## Examples",
-    examples.length
-      ? examples
-          .map((example, index) =>
-            [
-              `### ${index + 1}. ${example.name}`,
-              "",
-              "Request:",
-              "",
-              "```json",
-              example.requestJson?.trim() || "{}",
-              "```",
-              "",
-            ].join("\n"),
-          )
-          .join("\n")
+    visibleExamples.length
+      ? visibleExamples.flatMap((example, index) => renderExampleDocBlock(example, index)).join("\n")
       : "No saved examples yet.",
     "",
   ];
@@ -396,7 +384,7 @@ export function WebSocketMockPanel({
   mockResponseText,
   onMockResponseTextChange,
   status,
-  port,
+  port: _port,
   pathValue,
   intervalMs,
   loop,
@@ -450,28 +438,42 @@ export function WebSocketMockPanel({
     <Stack spacing={1.2}>
       <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1} flexWrap="wrap" useFlexGap>
         <Box sx={{ minWidth: 0 }}>
-          <Typography variant="subtitle1" noWrap title={request?.name ?? "WebSocket mock"}>
-            WebSocket mock{request ? ` · ${request.name}` : ""}
-          </Typography>
-          <Typography variant="caption" color="text.secondary" noWrap title={status.url ?? request?.url ?? ""}>
-            Configure this request mock here. Use the sidebar for server control.
+          <Typography variant="subtitle1">WebSocket mock</Typography>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            noWrap
+            title={
+              request
+                ? `${request.name} · ${status.url ?? request.url}${status.running ? ` · ${status.clientCount ?? 0} clients` : ""}`
+                : "Select a WebSocket request."
+            }
+          >
+            {request
+              ? `${request.name} · ${status.url ?? request.url}${status.running ? ` · ${status.clientCount ?? 0} clients` : ""}`
+              : "Select a WebSocket request."}
           </Typography>
         </Box>
         <Stack direction="row" spacing={0.6} alignItems="center" flexWrap="wrap" justifyContent="flex-end" useFlexGap>
-          <Chip
+          <Button
             size="small"
-            label={status.running ? `${status.clientCount ?? 0} client` : request ? `Port ${port}` : "No request"}
-            color={status.running ? "success" : request ? "primary" : "default"}
-          />
-          {status.running ? (
-            <Button size="small" variant="outlined" color="warning" startIcon={<StopCircle />} onClick={onStop}>
-              Stop
-            </Button>
-          ) : (
-            <Button size="small" variant="contained" startIcon={<PlayArrow />} onClick={onStart} disabled={!request}>
-              Start
-            </Button>
-          )}
+            variant="contained"
+            startIcon={<PlayArrow />}
+            onClick={onStart}
+            disabled={status.running || !request}
+          >
+            Start
+          </Button>
+          <Button
+            size="small"
+            variant="outlined"
+            color="error"
+            startIcon={<StopCircle />}
+            disabled={!status.running}
+            onClick={onStop}
+          >
+            Stop
+          </Button>
         </Stack>
       </Stack>
 
@@ -481,6 +483,7 @@ export function WebSocketMockPanel({
             <FormControl size="small" sx={{ minWidth: 240 }}>
               <Select
                 value={activeScenario?.id ?? ""}
+                inputProps={{ "aria-label": uiCopy.sections.scenario }}
                 onChange={(event: SelectInputChangeEvent) => onScenarioSelect(String(event.target.value))}
               >
                 {scenarios.map((scenario) => (
@@ -491,7 +494,7 @@ export function WebSocketMockPanel({
               </Select>
             </FormControl>
             <Button size="small" variant="outlined" onClick={onAddScenario} disabled={!request}>
-              Add scenario
+              {uiCopy.actions.addScenario}
             </Button>
             <Button
               size="small"
@@ -500,10 +503,10 @@ export function WebSocketMockPanel({
               onClick={onSendOnce}
               disabled={!status.running || !activeScenario}
             >
-              Send one
+              {uiCopy.actions.sendOnce}
             </Button>
             <Button size="small" variant="outlined" startIcon={<ContentCopy />} onClick={onCopy} disabled={!request}>
-              Copy body
+              {uiCopy.actions.copyResponse}
             </Button>
           </Stack>
 
@@ -532,13 +535,13 @@ export function WebSocketMockPanel({
 
               <Paper variant="outlined" sx={{ p: 1, borderRadius: 1.5 }}>
                 <Stack spacing={0.9}>
-                  <Typography variant="body2" fontWeight={560}>
-                    Scenario settings
+                  <Typography variant="body2" fontWeight={500}>
+                    Delivery
                   </Typography>
                   <Stack direction="row" spacing={0.8} alignItems="end" flexWrap="wrap" useFlexGap>
                     <TextField
                       size="small"
-                      label="Path"
+                      label={uiCopy.fields.path}
                       value={pathValue}
                       onChange={(event: TextInputChangeEvent) => onPathChange(event.target.value)}
                       disabled={status.running}
@@ -547,6 +550,7 @@ export function WebSocketMockPanel({
                     <FormControl size="small" sx={{ width: 160 }}>
                       <Select
                         value={streamOnConnect ? "periodic" : activeScenario.sendOnMessage ? "incoming" : "manual"}
+                        inputProps={{ "aria-label": "Delivery mode" }}
                         onChange={(event: SelectInputChangeEvent) => {
                           const value = event.target.value;
                           onScenarioChange({
@@ -555,7 +559,7 @@ export function WebSocketMockPanel({
                           });
                         }}
                       >
-                        <MenuItem value="manual">Send one only</MenuItem>
+                        <MenuItem value="manual">Manual</MenuItem>
                         <MenuItem value="periodic">Periodic</MenuItem>
                         <MenuItem value="incoming">On incoming match</MenuItem>
                       </Select>
@@ -563,7 +567,7 @@ export function WebSocketMockPanel({
                     <TextField
                       size="small"
                       type="number"
-                      label="Interval"
+                      label={uiCopy.fields.intervalMs}
                       value={String(intervalMs)}
                       onChange={(event: TextInputChangeEvent) =>
                         onIntervalMsChange(Math.max(1, Math.floor(Number(event.target.value) || 1000)))
@@ -573,6 +577,7 @@ export function WebSocketMockPanel({
                     <FormControl size="small" sx={{ width: 104 }}>
                       <Select
                         value={loop ? "yes" : "no"}
+                        inputProps={{ "aria-label": "Loop" }}
                         onChange={(event: SelectInputChangeEvent) => onLoopChange(event.target.value === "yes")}
                       >
                         <MenuItem value="no">No loop</MenuItem>
@@ -582,7 +587,7 @@ export function WebSocketMockPanel({
                     <TextField
                       size="small"
                       type="number"
-                      label="Max"
+                      label={uiCopy.fields.loopCount}
                       value={String(maxLoops)}
                       onChange={(event: TextInputChangeEvent) =>
                         onMaxLoopsChange(Math.max(0, Math.floor(Number(event.target.value) || 0)))
@@ -630,19 +635,27 @@ export function WebSocketMockPanel({
                     </Stack>
                   ) : null}
                   <Typography variant="caption" color="text.secondary">
-                    Send manually, periodically after connect, or when an incoming message matches.
+                    {activeScenario.sendOnMessage
+                      ? "Sends when an incoming message matches."
+                      : streamOnConnect
+                        ? loop
+                          ? `Sends periodically. ${uiCopy.helper.zeroMeansUnlimited}.`
+                          : "Sends periodically after connection."
+                        : "Sends only when triggered."}
                   </Typography>
                 </Stack>
               </Paper>
 
               <Stack spacing={0.6}>
-                <Typography variant="body2" fontWeight={560}>
-                  Scenario code / mock message body
+                <Typography variant="body2" fontWeight={500}>
+                  {uiCopy.sections.response}
                 </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Template variables: <code>{"{{count}}"}</code>, <code>{"{{loopIndex}}"}</code>,{" "}
-                  <code>{"{{incoming}}"}</code>, <code>{"{{incoming.method}}"}</code>, <code>{"{{path}}"}</code>,{" "}
-                  <code>{"{{uuid}}"}</code>, and <code>{"{{now}}"}</code>.
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  title="Available variables: {{count}}, {{loopIndex}}, {{incoming}}, {{incoming.*}}, {{path}}, {{uuid}}, and {{now}}."
+                >
+                  Variables: count, incoming.*, path, uuid, and now
                 </Typography>
                 <FeatureCodeTextField
                   value={mockResponseText}
@@ -657,7 +670,7 @@ export function WebSocketMockPanel({
             </>
           ) : (
             <Alert severity="info" variant="outlined">
-              Select a WebSocket request to edit its mock scenarios.
+              Select a WebSocket request.
             </Alert>
           )}
         </Stack>
@@ -710,7 +723,7 @@ export function WebSocketBenchmarkPanel({
             Export benchmark
           </Button>
           {running ? (
-            <Button size="small" variant="outlined" color="warning" startIcon={<StopCircle />} onClick={onStop}>
+            <Button size="small" variant="outlined" color="error" startIcon={<StopCircle />} onClick={onStop}>
               Stop benchmark
             </Button>
           ) : (
@@ -776,7 +789,7 @@ export function WebSocketBenchmarkPanel({
         </TableBody>
       </ResizableTable>
       <Stack spacing={0.8}>
-        <Typography variant="body2" fontWeight={560}>
+        <Typography variant="body2" fontWeight={500}>
           Latest response snapshot
         </Typography>
         <FeatureJsonBlock value={lastResult ?? { message: "Connect a WebSocket request to capture a response." }} />

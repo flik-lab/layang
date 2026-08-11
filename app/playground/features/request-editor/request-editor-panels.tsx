@@ -4,9 +4,12 @@ import {
   type ChangeEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type SyntheticEvent as ReactSyntheticEvent,
+  useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -42,8 +45,10 @@ type CodeTextFieldProps = {
   onFormat?: () => void;
   formatDisabled?: boolean;
   formatAriaLabel?: string;
+  showFormatAction?: boolean;
   fullscreenTitle?: string;
   fullHeight?: boolean;
+  resetKey?: string;
 };
 
 const editorIndent = "  ";
@@ -64,11 +69,19 @@ export function CodeTextField({
   onFormat,
   formatDisabled = false,
   formatAriaLabel = "Format code",
+  showFormatAction = true,
   fullscreenTitle,
   fullHeight = false,
+  resetKey,
 }: CodeTextFieldProps) {
   const [activeLine, setActiveLine] = useState(0);
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
+  const [editorScrollTop, setEditorScrollTop] = useState(0);
+  const inlineTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const gutterRef = useRef<HTMLPreElement | null>(null);
+  const fullscreenTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fullscreenTransitionRef = useRef(false);
+  const editorViewStateRef = useRef({ selectionStart: 0, selectionEnd: 0, scrollTop: 0, scrollLeft: 0 });
   const helpTextId = useId();
   const formatTooltip = `${formatAriaLabel} (${formatShortcutLabel})`;
   const fullscreenTooltip = fullscreenOpen
@@ -85,10 +98,51 @@ export function CodeTextField({
     [lineCount, visualRows],
   );
 
+  useEffect(() => {
+    if (!fullscreenTransitionRef.current) return;
+    fullscreenTransitionRef.current = false;
+    const frame = window.requestAnimationFrame(() => {
+      const textarea = fullscreenOpen ? fullscreenTextareaRef.current : inlineTextareaRef.current;
+      if (!textarea) return;
+      const viewState = editorViewStateRef.current;
+      textarea.focus({ preventScroll: true });
+      textarea.setSelectionRange(viewState.selectionStart, viewState.selectionEnd);
+      textarea.scrollTop = viewState.scrollTop;
+      textarea.scrollLeft = viewState.scrollLeft;
+      setEditorScrollTop(viewState.scrollTop);
+      if (gutterRef.current) gutterRef.current.scrollTop = viewState.scrollTop;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [fullscreenOpen]);
+
+  useEffect(() => {
+    setActiveLine(0);
+  }, [resetKey]);
+
   function updateActiveLine(textarea: HTMLTextAreaElement, sourceValue = value) {
     const cursor = textarea.selectionStart ?? 0;
     const nextLine = sourceValue.slice(0, cursor).split("\n").length - 1;
     setActiveLine(Math.max(0, nextLine));
+  }
+
+  function captureEditorViewState(textarea: HTMLTextAreaElement | null) {
+    if (!textarea) return;
+    editorViewStateRef.current = {
+      selectionStart: textarea.selectionStart ?? 0,
+      selectionEnd: textarea.selectionEnd ?? textarea.selectionStart ?? 0,
+      scrollTop: textarea.scrollTop,
+      scrollLeft: textarea.scrollLeft,
+    };
+  }
+
+  function changeFullscreen(nextOpen: boolean) {
+    captureEditorViewState(fullscreenOpen ? fullscreenTextareaRef.current : inlineTextareaRef.current);
+    fullscreenTransitionRef.current = true;
+    setFullscreenOpen(nextOpen);
+  }
+
+  function toggleFullscreen() {
+    changeFullscreen(!fullscreenOpen);
   }
 
   function restoreSelection(textarea: HTMLTextAreaElement, start: number, end: number) {
@@ -96,6 +150,14 @@ export function CodeTextField({
       textarea.focus();
       textarea.setSelectionRange(start, end);
     });
+  }
+
+  function syncEditorScroll(textarea: HTMLTextAreaElement) {
+    const nextScrollTop = textarea.scrollTop;
+    setEditorScrollTop((current) => (current === nextScrollTop ? current : nextScrollTop));
+    if (gutterRef.current && gutterRef.current.scrollTop !== nextScrollTop) {
+      gutterRef.current.scrollTop = nextScrollTop;
+    }
   }
 
   function handleFormat() {
@@ -109,7 +171,37 @@ export function CodeTextField({
     if (nextValue !== value) onChange(nextValue);
   }
 
+  function stopEditorBoundaryEvent(event: ReactMouseEvent<HTMLElement> | ReactPointerEvent<HTMLElement>) {
+    event.stopPropagation();
+    event.nativeEvent.stopImmediatePropagation?.();
+  }
+
+  function stopEditorKeyBoundaryEvent(event: ReactKeyboardEvent<HTMLElement>) {
+    if (fullscreenOpen && event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      event.nativeEvent.stopImmediatePropagation?.();
+      changeFullscreen(false);
+      return;
+    }
+
+    if (event.key === fullscreenShortcutLabel) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.nativeEvent.stopImmediatePropagation?.();
+      toggleFullscreen();
+      return;
+    }
+
+    if (event.key === " " || event.key === "Enter") {
+      event.stopPropagation();
+      event.nativeEvent.stopImmediatePropagation?.();
+    }
+  }
+
   function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    event.stopPropagation();
+    event.nativeEvent.stopImmediatePropagation?.();
     const key = event.key.toLowerCase();
     if (event.shiftKey && event.altKey && !event.ctrlKey && !event.metaKey && key === "f") {
       event.preventDefault();
@@ -121,14 +213,14 @@ export function CodeTextField({
     if (event.key === fullscreenShortcutLabel) {
       event.preventDefault();
       event.stopPropagation();
-      setFullscreenOpen((current) => !current);
+      toggleFullscreen();
       return;
     }
 
     if (fullscreenOpen && event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
-      setFullscreenOpen(false);
+      changeFullscreen(false);
       return;
     }
 
@@ -160,10 +252,17 @@ export function CodeTextField({
     const shouldFillHeight = fullscreen || fullHeight;
     const editorMaxHeight = shouldFillHeight ? undefined : maxHeight;
     const editorMinHeight = fullscreen ? Math.max(minHeight, 420) : minHeight;
-    const editorHeight = fullscreen ? "calc(100vh - 160px)" : fullHeight ? "100%" : maxRows ? undefined : contentHeight;
+    const editorHeight = fullscreen ? "100%" : fullHeight ? "100%" : maxRows ? undefined : contentHeight;
     return (
       <Box
         className="code-editor-selectable code-editor"
+        onPointerDown={stopEditorBoundaryEvent}
+        onPointerUp={stopEditorBoundaryEvent}
+        onMouseDown={stopEditorBoundaryEvent}
+        onMouseUp={stopEditorBoundaryEvent}
+        onClick={stopEditorBoundaryEvent}
+        onDoubleClick={stopEditorBoundaryEvent}
+        onKeyDown={stopEditorKeyBoundaryEvent}
         sx={{
           border: "1px solid",
           borderColor: "divider",
@@ -172,8 +271,17 @@ export function CodeTextField({
           bgcolor: "background.default",
           boxShadow: "inset 0 1px 0 rgba(148, 163, 184, 0.08)",
           ...(fullHeight || fullscreen
-            ? { display: "flex", flexDirection: "column", minHeight: 0, height: "100%" }
-            : {}),
+            ? {
+                display: "flex",
+                flexDirection: "column",
+                minHeight: 0,
+                height: "100%",
+                flex: "1 1 auto",
+                width: "100%",
+                minWidth: 0,
+                alignSelf: "stretch",
+              }
+            : { width: "100%", minWidth: 0 }),
         }}
       >
         <Stack
@@ -200,28 +308,30 @@ export function CodeTextField({
             <Typography variant="caption" color="text.secondary" sx={{ fontFamily: "monospace" }}>
               Tab = 2 spaces
             </Typography>
-            <Tooltip title={formatTooltip}>
-              <span>
-                <IconButton
-                  size="small"
-                  aria-label={formatTooltip}
-                  aria-keyshortcuts="Alt+Shift+F"
-                  title={formatTooltip}
-                  onClick={handleFormat}
-                  disabled={formatDisabled}
-                  sx={{ width: 26, height: 26 }}
-                >
-                  <Edit sx={{ fontSize: 14 }} />
-                </IconButton>
-              </span>
-            </Tooltip>
+            {showFormatAction ? (
+              <Tooltip title={formatTooltip}>
+                <span>
+                  <IconButton
+                    size="small"
+                    aria-label={formatTooltip}
+                    aria-keyshortcuts="Alt+Shift+F"
+                    title={formatTooltip}
+                    onClick={handleFormat}
+                    disabled={formatDisabled}
+                    sx={{ width: 26, height: 26 }}
+                  >
+                    <Edit sx={{ fontSize: 14 }} />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            ) : null}
             <Tooltip title={fullscreenTooltip}>
               <IconButton
                 size="small"
                 aria-label={fullscreenTooltip}
                 aria-keyshortcuts="F11"
                 title={fullscreenTooltip}
-                onClick={() => setFullscreenOpen((current) => !current)}
+                onClick={toggleFullscreen}
                 sx={{ width: 26, height: 26 }}
               >
                 <DesktopWindows sx={{ fontSize: 14 }} />
@@ -250,16 +360,19 @@ export function CodeTextField({
           className="response-selectable code-editor__body"
           style={{
             display: "flex",
+            width: "100%",
+            minWidth: 0,
             minHeight: editorMinHeight,
             maxHeight: editorMaxHeight,
             height: editorHeight,
             flex: shouldFillHeight ? "1 1 auto" : undefined,
-            overflow: "auto",
+            overflow: "hidden",
             resize: shouldFillHeight ? "none" : "vertical",
             background: "var(--background)",
           }}
         >
           <pre
+            ref={gutterRef}
             aria-hidden="true"
             className="code-editor__gutter"
             style={{
@@ -274,6 +387,8 @@ export function CodeTextField({
               lineHeight: `${editorLineHeightPx}px`,
               textAlign: "right",
               userSelect: "none",
+              flex: "0 0 auto",
+              overflow: "hidden",
             }}
           >
             {lineNumbers}
@@ -285,17 +400,19 @@ export function CodeTextField({
               minWidth: 0,
               minHeight: shouldFillHeight ? "100%" : contentHeight,
               position: "relative",
+              overflow: "hidden",
             }}
           >
             <div
               aria-hidden="true"
               className="code-editor__active-line"
               style={{
-                top: editorPaddingYPx + Math.min(activeLine, visualRows - 1) * editorLineHeightPx,
+                top: editorPaddingYPx + Math.min(activeLine, visualRows - 1) * editorLineHeightPx - editorScrollTop,
                 height: editorLineHeightPx,
               }}
             />
             <textarea
+              ref={fullscreen ? fullscreenTextareaRef : inlineTextareaRef}
               value={value}
               onChange={(event: ChangeEvent<HTMLTextAreaElement>) => {
                 onChange(event.target.value);
@@ -304,24 +421,28 @@ export function CodeTextField({
               onClick={(event: ReactMouseEvent<HTMLTextAreaElement>) => updateActiveLine(event.currentTarget)}
               onKeyUp={(event: ReactKeyboardEvent<HTMLTextAreaElement>) => updateActiveLine(event.currentTarget)}
               onSelect={(event: ReactSyntheticEvent<HTMLTextAreaElement>) => updateActiveLine(event.currentTarget)}
+              onScroll={(event: ReactSyntheticEvent<HTMLTextAreaElement>) => syncEditorScroll(event.currentTarget)}
               onKeyDown={handleKeyDown}
               aria-label={codeEditorAriaLabel}
               aria-describedby={describedById}
               aria-keyshortcuts="Tab Shift+Tab Alt+Shift+F F11 Escape ' &quot;"
               title={codeEditorAriaLabel}
               spellCheck={false}
-              rows={visualRows}
+              wrap="off"
+              rows={fullscreen ? undefined : visualRows}
               className="code-editor__textarea"
               style={{
                 width: "100%",
+                height: fullscreen ? "100%" : shouldFillHeight ? "100%" : undefined,
                 minWidth: 0,
                 minHeight: shouldFillHeight ? "100%" : contentHeight,
                 margin: 0,
                 padding: `${editorPaddingYPx}px 12px`,
+                boxSizing: "border-box",
                 border: 0,
                 outline: 0,
                 resize: "none",
-                overflow: fullscreen ? "auto" : "hidden",
+                overflow: "auto",
                 background: "transparent",
                 color: "var(--foreground)",
                 fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
@@ -329,6 +450,7 @@ export function CodeTextField({
                 lineHeight: `${editorLineHeightPx}px`,
                 tabSize: 2,
                 whiteSpace: "pre",
+                userSelect: "text",
                 position: "relative",
                 zIndex: 1,
               }}
@@ -341,8 +463,8 @@ export function CodeTextField({
 
   return (
     <>
-      {renderEditor()}
-      <Dialog open={fullscreenOpen} onClose={() => setFullscreenOpen(false)} fullWidth maxWidth="calc(100vw - 32px)">
+      {!fullscreenOpen ? renderEditor() : null}
+      <Dialog open={fullscreenOpen} onClose={() => changeFullscreen(false)} fullScreen>
         <DialogTitle
           sx={{
             display: "flex",
@@ -357,13 +479,25 @@ export function CodeTextField({
               size="small"
               aria-label="Close full screen editor (Esc or F11)"
               title="Close full screen editor (Esc or F11)"
-              onClick={() => setFullscreenOpen(false)}
+              onClick={() => changeFullscreen(false)}
             >
               <Close sx={{ fontSize: 16 }} />
             </IconButton>
           </Tooltip>
         </DialogTitle>
-        <DialogContent sx={{ p: 1.2 }}>{renderEditor({ fullscreen: true })}</DialogContent>
+        <DialogContent
+          sx={{
+            p: 1.2,
+            display: "flex",
+            flex: "1 1 auto",
+            width: "100%",
+            minWidth: 0,
+            minHeight: 0,
+            overflow: "hidden",
+          }}
+        >
+          {renderEditor({ fullscreen: true })}
+        </DialogContent>
       </Dialog>
     </>
   );
@@ -519,41 +653,47 @@ export function SchemaTable({
   fields: ReturnType<typeof listMessageFields>;
 }) {
   return (
-    <Box>
-      <Stack direction="row" spacing={0.8} alignItems="center" sx={{ mb: 0.8 }}>
-        <Typography variant="subtitle1">{title}</Typography>
+    <Box sx={{ minWidth: 0 }}>
+      <Stack direction="row" spacing={0.7} alignItems="center" sx={{ mb: 0.55, minWidth: 0 }}>
+        <Typography variant="subtitle1" sx={{ fontSize: 13, lineHeight: 1.2 }}>
+          {title}
+        </Typography>
         {typeName && <Chip label={typeName} size="small" variant="outlined" />}
       </Stack>
-      <TableContainer component={Paper} variant="outlined">
+      <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: 1, overflow: "hidden" }}>
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell>Field</TableCell>
-              <TableCell>Type</TableCell>
-              <TableCell>No.</TableCell>
-              <TableCell>Rules</TableCell>
+              <TableCell sx={{ py: 0.65, fontSize: 11, color: "text.secondary" }}>Field</TableCell>
+              <TableCell sx={{ py: 0.65, fontSize: 11, color: "text.secondary" }}>Type</TableCell>
+              <TableCell sx={{ width: 58, py: 0.65, fontSize: 11, color: "text.secondary" }}>No.</TableCell>
+              <TableCell sx={{ py: 0.65, fontSize: 11, color: "text.secondary" }}>Rule</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {fields.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={4}>No fields available.</TableCell>
+                <TableCell colSpan={4} sx={{ py: 1, fontSize: 12, color: "text.secondary" }}>
+                  No fields.
+                </TableCell>
               </TableRow>
             ) : (
               fields.map((field: ReturnType<typeof listMessageFields>[number]) => (
                 <TableRow key={`${field.name}-${field.id}`}>
-                  <TableCell sx={{ fontFamily: "monospace" }}>{field.name}</TableCell>
-                  <TableCell sx={{ fontFamily: "monospace" }}>{field.type}</TableCell>
-                  <TableCell>{field.id}</TableCell>
-                  <TableCell>
+                  <TableCell sx={{ py: 0.65, fontFamily: "monospace", fontSize: 11.5 }}>{field.name}</TableCell>
+                  <TableCell sx={{ py: 0.65, fontFamily: "monospace", fontSize: 11.5, wordBreak: "break-word" }}>
+                    {field.type}
+                  </TableCell>
+                  <TableCell sx={{ py: 0.65, fontSize: 11.5 }}>{field.id}</TableCell>
+                  <TableCell sx={{ py: 0.65 }}>
                     <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
                       {field.repeated && <Chip label="repeated" size="small" />}
                       {field.map && <Chip label="map" size="small" />}
                       {field.required && <Chip label="required" size="small" color="warning" />}
-                      {field.oneof && <Chip label={`oneof: ${field.oneof}`} size="small" />}
+                      {field.oneof && <Chip label={field.oneof} size="small" />}
                       {!field.repeated && !field.map && !field.required && !field.oneof && (
                         <Typography variant="caption" color="text.secondary">
-                          optional
+                          -
                         </Typography>
                       )}
                     </Stack>

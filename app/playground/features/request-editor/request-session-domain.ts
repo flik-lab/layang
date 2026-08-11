@@ -1,5 +1,6 @@
 import type { RpcMethodInfo } from "@/lib/types";
 import { methodKey } from "../../shared/rpc-method-utils";
+import { grpcBindingIdentity } from "../proto-library/proto-library-domain";
 import type { ApiCollection, ApiCollectionRequest, RequestSession } from "../../shared/workbench-types";
 
 export type RequestSessionSource =
@@ -21,6 +22,7 @@ export type SessionCleanupResult = {
 export function buildRequestSessionSourceIndex(
   collections: ApiCollection[],
   grpcMethods: RpcMethodInfo[] = [],
+  additionalGrpcMethodKeys: string[] = [],
 ): RequestSessionSourceIndex {
   const collectionRequests = new Map<string, ApiCollectionRequest>();
   for (const collection of collections) {
@@ -28,7 +30,7 @@ export function buildRequestSessionSourceIndex(
   }
   return {
     collectionRequests,
-    validGrpcMethodKeys: new Set(grpcMethods.map((method) => methodKey(method))),
+    validGrpcMethodKeys: new Set([...grpcMethods.map((method) => methodKey(method)), ...additionalGrpcMethodKeys]),
   };
 }
 
@@ -36,8 +38,9 @@ export function getRequestSessionSource(session: RequestSession): RequestSession
   if (session.requestKind === "rest" || session.requestKind === "websocket" || session.requestKind === "grpc") {
     return {
       kind: "collection",
-      requestId: session.methodKey,
+      requestId: session.sourceRequestId ?? session.methodKey,
       requestKind: session.requestKind,
+      ...(session.requestKind === "grpc" ? { grpcMethodKey: session.grpc?.methodFullName } : {}),
     };
   }
   return { kind: "proto-method", methodKey: session.methodKey };
@@ -53,8 +56,10 @@ export function isRequestSessionSourceAvailable(
 
   const request = sourceIndex.collectionRequests.get(source.requestId);
   if (!request || request.kind !== source.requestKind) return false;
-  if (request.kind === "grpc" && request.grpcMethodKey)
-    return sourceIndex.validGrpcMethodKeys.has(request.grpcMethodKey);
+  if (request.kind === "grpc") {
+    const methodFullName = request.grpc?.methodFullName ?? request.grpcMethodKey;
+    return methodFullName ? sourceIndex.validGrpcMethodKeys.has(methodFullName) : false;
+  }
   return true;
 }
 
@@ -80,9 +85,65 @@ export function upsertRequestSessionPreservingOrderList(
   session: RequestSession,
   limit = 16,
 ): RequestSession[] {
-  const existingIndex = sessions.findIndex((item) => item.id === session.id || item.methodKey === session.methodKey);
+  const matchesIdentity = (item: RequestSession) =>
+    item.id === session.id ||
+    item.methodKey === session.methodKey ||
+    Boolean(session.sourceRequestId && item.sourceRequestId === session.sourceRequestId);
+  const existingIndex = sessions.findIndex(matchesIdentity);
   if (existingIndex === -1) return [session, ...sessions].slice(0, limit);
-  const next = [...sessions];
-  next[existingIndex] = session;
+  const next: RequestSession[] = [];
+  sessions.forEach((item, index) => {
+    if (index === existingIndex) next.push(session);
+    else if (!matchesIdentity(item)) next.push(item);
+  });
   return next.slice(0, limit);
+}
+
+/**
+ * Reuses an existing tab for a saved collection request. Legacy proto-only gRPC tabs
+ * are adopted only when they have no collection source id, so two explicit saved
+ * requests for the same RPC method can still remain as separate tabs.
+ */
+export function findReusableCollectionRequestSession(
+  sessions: RequestSession[],
+  request: ApiCollectionRequest,
+): RequestSession | null {
+  const direct = sessions.find((session) => session.sourceRequestId === request.id || session.methodKey === request.id);
+  if (direct) return direct;
+  if (request.kind !== "grpc") return null;
+  const requestIdentity = grpcBindingIdentity(
+    request.grpc,
+    request.grpc?.methodFullName ?? request.grpcMethodKey ?? "",
+  );
+  if (!requestIdentity) return null;
+  return (
+    sessions.find(
+      (session) =>
+        !session.sourceRequestId &&
+        session.requestKind !== "rest" &&
+        session.requestKind !== "websocket" &&
+        grpcBindingIdentity(session.grpc, session.methodKey) === requestIdentity,
+    ) ?? null
+  );
+}
+
+export function findReusableGrpcRequestSession(
+  sessions: RequestSession[],
+  activeSession: RequestSession | null | undefined,
+  grpcMethodKey: string,
+  sourceRequestId?: string,
+): RequestSession | null {
+  const matches = (session: RequestSession | null | undefined): session is RequestSession => {
+    if (!session) return false;
+    if (sourceRequestId) {
+      return (
+        session.sourceRequestId === sourceRequestId ||
+        (session.requestKind === "grpc" && !session.sourceRequestId && session.methodKey === sourceRequestId) ||
+        (!session.sourceRequestId && !session.requestKind && session.methodKey === grpcMethodKey)
+      );
+    }
+    return !session.sourceRequestId && !session.requestKind && session.methodKey === grpcMethodKey;
+  };
+
+  return sessions.find(matches) ?? (matches(activeSession) ? activeSession : null);
 }

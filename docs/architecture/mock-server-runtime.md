@@ -149,7 +149,7 @@ The runtime should not wait for disk autosave to update active behavior.
 
 ## File reload safety
 
-The runtime may also receive updates from workspace file watcher reloads. These updates must be guarded against stale disk writes.
+Workspace files are not watched or pulled automatically. The user must choose **Sync file** to load disk content into the editor draft, then **Save** to apply it to the runtime; stale disk updates remain guarded against newer UI state.
 
 Use these checks:
 

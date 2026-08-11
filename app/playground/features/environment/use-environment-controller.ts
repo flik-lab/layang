@@ -14,6 +14,10 @@ export function useEnvironmentController() {
   const [envEditingKey, setEnvEditingKey] = useState<EnvironmentKey>("");
   const [envDraftName, setEnvDraftName] = useState("");
   const [envDraftUrl, setEnvDraftUrl] = useState("");
+  const [envDraftRestUrl, setEnvDraftRestUrl] = useState("");
+  const [envDraftNativeTarget, setEnvDraftNativeTarget] = useState("");
+  const [envDraftGrpcWebUrl, setEnvDraftGrpcWebUrl] = useState("");
+  const [envDraftWebSocketUrl, setEnvDraftWebSocketUrl] = useState("");
 
   return {
     environmentKey,
@@ -32,5 +36,13 @@ export function useEnvironmentController() {
     setEnvDraftName,
     envDraftUrl,
     setEnvDraftUrl,
+    envDraftRestUrl,
+    setEnvDraftRestUrl,
+    envDraftNativeTarget,
+    setEnvDraftNativeTarget,
+    envDraftGrpcWebUrl,
+    setEnvDraftGrpcWebUrl,
+    envDraftWebSocketUrl,
+    setEnvDraftWebSocketUrl,
   };
 }
