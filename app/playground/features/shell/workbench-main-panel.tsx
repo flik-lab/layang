@@ -16,22 +16,16 @@ import { uiCopy } from "../../shared/ui-copy";
 import { MethodStatusIndicator } from "../../shared/components/method-status-indicator";
 import { mockScenarioDisplayName, rpcMethodKindLabel } from "../mock-server/mock-scenario-ui";
 import {
-  buildDefaultMockScenario,
-  ensureUniqueMockScenarioId,
-  formatMockScenarioBundle,
   getMockMethodScenarioFile,
   parseMockScenarioText,
-  saveMockScenarioForMethod,
-  updateMockMethodScenarioFile,
 } from "../mock-server/mock-scenario-model";
-import { GrpcScenarioSourceDialog, ServicesWorkspace, type GrpcMockScenarioRow } from "../services/services-workspace";
+import { ServicesWorkspace } from "../services/services-workspace";
 import { SettingsWorkspace } from "../settings/settings-workspace";
 import { ProtoSchemaWorkspace } from "../proto-registry/proto-schema-workspace";
 import { GitSourceControlWorkspace } from "../git/git-source-control";
 import { ExampleEditorDialog, type ExampleEditorTab } from "../examples/examples-panel";
 import type {
   EnvironmentConfig,
-  MockFormat,
   MockScenario,
   RequestTab,
   RestAuthConfig,
@@ -139,7 +133,6 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     examples,
     currentMockActiveScenario,
     currentMockScenarios,
-    discardMockScenarioEditorDraft,
     deferredResponseFilter,
     documentation,
     documentationPages,
@@ -151,7 +144,6 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     exampleInputRef,
     exportCurrentBenchmark,
     exportCurrentMethodExamples,
-    fetchMockScenarioFilesFromWorkspace,
     exportResponseStable,
     exportWebSocketBenchmark,
     featureEnvironmentLabel,
@@ -180,15 +172,12 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     methodTypeLabel,
     minResponseHeight,
     minResponseWidth,
-    mockScenarioEditorDirty,
     mockServer,
     mockServerStatus,
     setMockServer,
     setMockSelectedMethodKey,
-    setNativeTarget,
     selectProtoLibraryVersion,
     openEnvironmentManager,
-    openMockScenarioFolder,
     openWorkspaceImporter,
     panelSx,
     prettifyRequestJson,
@@ -231,11 +220,8 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     selectedMethod,
     sendWebSocketMockOnce,
     setEnvMenuAnchor,
-    setEnvironmentKey,
     setExamples,
     setRequestTab,
-    setTargetDraft,
-    setTransportMode,
     setServiceProtocol,
     setServicesSection,
     setProtoPreview,
@@ -247,10 +233,8 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     shellLeft,
     showEmptyWorkbench,
     showMessageTopButton,
-    startMockServer,
     startRestMockServer,
     startWebSocketMockServer,
-    stopMockServer,
     stopRestMockServer,
     stopWebSocketBenchmark,
     stopWebSocketMockServer,
@@ -262,7 +246,6 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     updateActiveRestMockScenario,
     updateActiveWebSocketMockResponse,
     updateActiveWebSocketMockScenario,
-    updateActiveSession,
     updateMetadataRow,
     updateRestMockScenarioPair,
     updateRestPairRow,
@@ -281,10 +264,6 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     wsMockStreamOnConnect,
   } = props.ctx;
 
-  const [requestMockEditorOpen, setRequestMockEditorOpen] = useState(false);
-  const [requestMockEditorDirty, setRequestMockEditorDirty] = useState(false);
-  const [requestMockRuntimeAction, setRequestMockRuntimeAction] = useState<"start" | "stop" | null>(null);
-  const [requestMockScenarioId, setRequestMockScenarioId] = useState("");
   const [exampleEditorState, setExampleEditorState] = useState<{ id: string; tab: ExampleEditorTab } | null>(null);
   const [responseFullscreen, setResponseFullscreen] = useState(false);
 
@@ -449,26 +428,6 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     };
   })();
 
-  const requestMockDialogScenario =
-    activeRequestMockContext.state === "available"
-      ? (activeRequestMockContext.scenarios.find((scenario: MockScenario) => scenario.id === requestMockScenarioId) ??
-        activeRequestMockContext.selectedScenario)
-      : null;
-
-  const requestMockDialogRow: GrpcMockScenarioRow | null =
-    requestMockDialogScenario && activeRequestMockContext.state === "available"
-      ? {
-          source: activeRequestMockContext.source,
-          library: activeRequestMockContext.library,
-          version: activeRequestMockContext.version,
-          root: activeRequestMockContext.root,
-          method: activeRequestMockContext.method,
-          scenario: requestMockDialogScenario,
-          enabled: activeRequestMockContext.enabled,
-          selected: activeRequestMockContext.selectedScenario?.id === requestMockDialogScenario.id,
-        }
-      : null;
-
   async function copyLatestResponseJson() {
     if (latestResponsePayload === undefined) return;
     const text =
@@ -484,90 +443,16 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     setMockSelectedMethodKey(methodKey(activeRequestMockContext.method));
   }
 
-  function attachActiveRequestProto() {
-    if (activeRequestMockContext.state === "not-grpc" || activeRequestMockContext.state === "broken") return;
-    setMockServer((current: any) => ({
-      ...current,
-      protoSources: [
-        ...(current.protoSources ?? []).filter(
-          (source: any) => source.libraryId !== activeRequestMockContext.library.id,
-        ),
-        activeRequestMockContext.source,
-      ],
-      updatedAt: new Date().toISOString(),
-    }));
-    selectActiveRequestMockContext();
-  }
-
-  function prepareActiveRequestMockProject(current: any, scenarioId?: string) {
-    if (activeRequestMockContext.state !== "available") return current;
-    const selectedScenarioId =
-      scenarioId ?? activeRequestMockContext.selectedScenario?.id ?? activeRequestMockContext.scenarios[0]?.id ?? "";
-    if (!selectedScenarioId) return current;
-    return {
-      ...current,
-      protoSources: [
-        ...(current.protoSources ?? []).filter(
-          (source: any) => source.libraryId !== activeRequestMockContext.library.id,
-        ),
-        activeRequestMockContext.source,
-      ],
-      selectedScenarioIds: {
-        ...current.selectedScenarioIds,
-        [activeRequestMockContext.key]: selectedScenarioId,
-      },
-      enabledMethods: {
-        ...current.enabledMethods,
-        [activeRequestMockContext.key]: true,
-      },
-      methodBindings: {
-        ...current.methodBindings,
-        [activeRequestMockContext.key]: activeGrpcBinding,
-      },
-      updatedAt: new Date().toISOString(),
-    };
-  }
-
   function selectActiveRequestScenario(scenarioId: string) {
     if (activeRequestMockContext.state !== "available") return;
-    if (mockScenarioEditorDirty && !window.confirm("Discard unsaved mock scenario changes?")) return;
-    if (mockScenarioEditorDirty) discardMockScenarioEditorDraft();
-    setMockServer((current: any) => prepareActiveRequestMockProject(current, scenarioId));
-    selectActiveRequestMockContext();
-  }
-
-  async function startActiveRequestMock() {
-    if (activeRequestMockContext.state !== "available" || requestMockRuntimeAction) return;
-    if (mockScenarioEditorDirty) return;
-    const nextProject = prepareActiveRequestMockProject(mockServer);
-    setRequestMockRuntimeAction("start");
-    setMockServer(nextProject);
-    selectActiveRequestMockContext();
-    try {
-      const localTarget = await startMockServer(nextProject);
-      if (!localTarget) return;
-      setTransportMode("native-grpc");
-      setEnvironmentKey("manual");
-      setNativeTarget(localTarget);
-      setTargetDraft(localTarget);
-      updateActiveSession({
-        transportMode: "native-grpc",
-        environmentKey: "manual",
-        nativeTarget: localTarget,
-      });
-    } finally {
-      setRequestMockRuntimeAction(null);
-    }
-  }
-
-  async function stopActiveRequestMock() {
-    if (!mockServerStatus.running || requestMockRuntimeAction) return;
-    setRequestMockRuntimeAction("stop");
-    try {
-      await stopMockServer();
-    } finally {
-      setRequestMockRuntimeAction(null);
-    }
+    setMockServer((current: any) => ({
+      ...current,
+      selectedScenarioIds: {
+        ...current.selectedScenarioIds,
+        [activeRequestMockContext.key]: scenarioId,
+      },
+      updatedAt: new Date().toISOString(),
+    }));
   }
 
   function openActiveRequestMockWorkspace() {
@@ -576,58 +461,6 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     setServicesSection("mock-servers");
     setSideSection("services");
     setSidebarOpen(true);
-  }
-
-  function openActiveRequestScenario(scenarioId?: string) {
-    if (activeRequestMockContext.state !== "available") return;
-    selectActiveRequestMockContext();
-    setRequestMockScenarioId(
-      scenarioId ?? activeRequestMockContext.selectedScenario?.id ?? activeRequestMockContext.scenarios[0]?.id ?? "",
-    );
-    setRequestMockEditorDirty(false);
-    setRequestMockEditorOpen(true);
-  }
-
-  function createActiveRequestScenario() {
-    if (activeRequestMockContext.state !== "missing") return;
-    const scenario = ensureUniqueMockScenarioId(
-      buildDefaultMockScenario(
-        activeRequestMockContext.method,
-        activeRequestMockContext.root,
-        0,
-        activeCollectionRequest?.body ?? "{}",
-        mockServer.streamDefaults,
-      ),
-      [],
-    );
-    const withProto = {
-      ...mockServer,
-      protoSources: [
-        ...(mockServer.protoSources ?? []).filter(
-          (source: any) => source.libraryId !== activeRequestMockContext.library.id,
-        ),
-        activeRequestMockContext.source,
-      ],
-      updatedAt: new Date().toISOString(),
-    };
-    const file = getMockMethodScenarioFile(withProto, activeRequestMockContext.method);
-    const parsed = parseMockScenarioText(file.scenarioText, file.format, withProto.port);
-    if (!parsed.ok) return;
-    const next = updateMockMethodScenarioFile(withProto, activeRequestMockContext.method, {
-      scenarioText: formatMockScenarioBundle(
-        { ...parsed.bundle, scenarios: [scenario, ...parsed.bundle.scenarios] },
-        file.format,
-      ),
-    });
-    setMockServer({
-      ...next,
-      selectedScenarioIds: { ...next.selectedScenarioIds, [activeRequestMockContext.key]: scenario.id },
-      enabledMethods: { ...next.enabledMethods, [activeRequestMockContext.key]: true },
-    });
-    selectActiveRequestMockContext();
-    setRequestMockScenarioId(scenario.id);
-    setRequestMockEditorDirty(false);
-    setRequestMockEditorOpen(true);
   }
 
   useEffect(() => {
@@ -644,27 +477,6 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
   useEffect(() => {
     if (sideSection !== "collections" || showEmptyWorkbench || protoPreview) setResponseFullscreen(false);
   }, [sideSection, showEmptyWorkbench, protoPreview]);
-
-  function closeActiveRequestScenarioEditor() {
-    if (requestMockEditorDirty && !window.confirm("Discard unsaved scenario changes?")) return;
-    setRequestMockEditorDirty(false);
-    setRequestMockEditorOpen(false);
-  }
-
-  function saveActiveRequestScenario(nextScenario: MockScenario, format: MockFormat) {
-    if (!requestMockDialogRow) return;
-    const saved = saveMockScenarioForMethod(
-      mockServer,
-      requestMockDialogRow.method,
-      requestMockDialogRow.scenario.id,
-      nextScenario,
-      format,
-    );
-    if (!saved) return;
-    setMockServer(saved.project);
-    setRequestMockScenarioId(saved.scenario.id);
-    setRequestMockEditorDirty(false);
-  }
 
   function handleRequestTabChange(nextTab: RequestTab) {
     // Request tabs must be navigation-only. Opening Mock must not attach Proto,
@@ -1863,16 +1675,8 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                               </Stack>
 
                               {activeRequestMockContext.state === "available" && !activeRequestMockContext.attached ? (
-                                <Alert
-                                  severity="info"
-                                  variant="outlined"
-                                  action={
-                                    <Button size="small" onClick={attachActiveRequestProto}>
-                                      Attach now
-                                    </Button>
-                                  }
-                                >
-                                  Attached Proto is missing. Selecting a scenario or starting the server will attach it.
+                                <Alert severity="info" variant="outlined">
+                                  This method is not attached to gRPC Mock. Configure its Proto in the Mock workspace.
                                 </Alert>
                               ) : null}
 
@@ -1884,7 +1688,8 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                                         {uiCopy.sections.scenario}
                                       </Typography>
                                       <Typography variant="caption" color="text.secondary">
-                                        Saved scenario changes apply to the running mock automatically.
+                                        This request only selects a scenario. Configure and start mocking from the Mock
+                                        workspace.
                                       </Typography>
                                     </Box>
                                     <Stack
@@ -1934,54 +1739,9 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                                   No scenario for this method.
                                 </Alert>
                               )}
-                              {mockScenarioEditorDirty ? (
-                                <Alert severity="warning" variant="outlined">
-                                  Save the scenario before starting.
-                                </Alert>
-                              ) : null}
-
                               <Stack direction="row" spacing={0.7} flexWrap="wrap" useFlexGap>
-                                {activeRequestMockContext.state === "available" ? (
-                                  <>
-                                    <Button
-                                      size="small"
-                                      variant="contained"
-                                      startIcon={<PlayArrow />}
-                                      disabled={
-                                        Boolean(mockServerStatus.running) ||
-                                        requestMockRuntimeAction !== null ||
-                                        mockScenarioEditorDirty
-                                      }
-                                      onClick={() => void startActiveRequestMock()}
-                                    >
-                                      {requestMockRuntimeAction === "start" ? "Starting…" : "Start"}
-                                    </Button>
-                                    <Button
-                                      size="small"
-                                      color="error"
-                                      variant="outlined"
-                                      startIcon={<StopCircle />}
-                                      disabled={!mockServerStatus.running || requestMockRuntimeAction !== null}
-                                      onClick={() => void stopActiveRequestMock()}
-                                    >
-                                      {requestMockRuntimeAction === "stop" ? "Stopping…" : "Stop"}
-                                    </Button>
-                                    <Button
-                                      size="small"
-                                      variant="outlined"
-                                      startIcon={<Edit />}
-                                      onClick={() => openActiveRequestScenario()}
-                                    >
-                                      Edit scenario
-                                    </Button>
-                                  </>
-                                ) : (
-                                  <Button size="small" variant="contained" onClick={createActiveRequestScenario}>
-                                    Add scenario
-                                  </Button>
-                                )}
-                                <Button size="small" variant="text" onClick={openActiveRequestMockWorkspace}>
-                                  Open workspace
+                                <Button size="small" variant="outlined" onClick={openActiveRequestMockWorkspace}>
+                                  Configure in workspace
                                 </Button>
                               </Stack>
                             </>
@@ -2340,16 +2100,6 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
         onDuplicate={duplicateExample}
       />
 
-      <GrpcScenarioSourceDialog
-        open={requestMockEditorOpen && Boolean(requestMockDialogRow)}
-        row={requestMockDialogRow}
-        mockServer={mockServer}
-        onClose={closeActiveRequestScenarioEditor}
-        onSaveScenario={saveActiveRequestScenario}
-        onDirtyChange={setRequestMockEditorDirty}
-        onFetchFile={fetchMockScenarioFilesFromWorkspace}
-        onOpenFolder={openMockScenarioFolder}
-      />
     </Box>
   );
 }

@@ -8,19 +8,16 @@ const test = require("node:test");
 const root = path.resolve(__dirname, "..");
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
 
-test("all gRPC mock start entry points use an explicit snapshot and verify runtime readiness", () => {
+test("gRPC mock starts only from the workspace and verifies runtime readiness", () => {
   const actions = read("app/playground/features/mock-server/use-grpc-mock-editor-actions.ts");
   const requestPanel = read("app/playground/features/shell/workbench-main-panel.tsx");
 
-  assert.match(requestPanel, /const nextProject = prepareActiveRequestMockProject\(mockServer\)/);
-  assert.match(requestPanel, /const localTarget = await startMockServer\(nextProject\)/);
-  assert.match(requestPanel, /setTransportMode\("native-grpc"\)/);
-  assert.match(requestPanel, /setEnvironmentKey\("manual"\)/);
-  assert.match(
-    requestPanel,
-    /updateActiveSession\(\{[\s\S]*transportMode: "native-grpc",[\s\S]*environmentKey: "manual",[\s\S]*nativeTarget: localTarget/,
-  );
-  assert.match(requestPanel, /\[activeRequestMockContext\.key\]: activeGrpcBinding/);
+  assert.doesNotMatch(requestPanel, /function startActiveRequestMock\(/);
+  assert.doesNotMatch(requestPanel, /prepareActiveRequestMockProject/);
+  assert.doesNotMatch(requestPanel, /setNativeTarget\(localTarget\)/);
+  assert.doesNotMatch(requestPanel, /setTargetDraft\(localTarget\)/);
+  assert.match(requestPanel, /This request only selects a scenario/);
+  assert.match(requestPanel, /Configure in workspace/);
   assert.match(actions, /async function startMockRuntime\(projectOverride\?: MockServerProject\)/);
   assert.match(actions, /const effectiveMockServer: MockServerProject = projectOverride \?\?/);
   assert.match(actions, /uiRuntimeRevision/);
@@ -56,7 +53,7 @@ test("running gRPC mock receives live editor revisions and Web Access waits for 
   assert.match(actions, /Web Access did not become ready/);
 });
 
-test("scenario editors share the committed scenario identity and folder opening flushes first", () => {
+test("workspace scenario editor owns scenario content and folder opening flushes first", () => {
   const core = read("app/playground/features/mock-server/mock-scenario-core.ts");
   const services = read("app/playground/features/services/services-workspace.tsx");
   const requestPanel = read("app/playground/features/shell/workbench-main-panel.tsx");
@@ -68,7 +65,9 @@ test("scenario editors share the committed scenario identity and folder opening 
   assert.match(actions, /saveMockScenarioForMethod\(/);
   assert.match(services, /const effectiveScenarioId = methodScenarios\.some/);
   assert.match(services, /setFocusedScenarioKey\(`\$\{methodKey\(row\.method\)\}:\$\{saved\.scenario\.id\}`\)/);
-  assert.match(requestPanel, /setRequestMockScenarioId\(saved\.scenario\.id\)/);
+  assert.doesNotMatch(requestPanel, /GrpcScenarioSourceDialog/);
+  assert.doesNotMatch(requestPanel, /saveMockScenarioForMethod\(/);
+  assert.match(requestPanel, /selectActiveRequestScenario/);
   assert.match(actions, /await persistProjectSnapshotNow\?\.\(project\)/);
   assert.match(actions, /openPath\(nextPath, "mocks\/grpc\/methods"/);
 });

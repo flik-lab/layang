@@ -73,16 +73,15 @@ test("search results use a visible yellow mark instead of bold-only matches", ()
   assert.doesNotMatch(responseViewer, /renderBoldMatches|HighlightedCodeText|HighlightedInlineText/);
 });
 
-test("request mock can select and start a scenario without opening the editor", () => {
+test("request mock only selects a workspace scenario and never changes the request target", () => {
   const mainPanel = read("app/playground/features/shell/workbench-main-panel.tsx");
-  const mockActions = read("app/playground/features/mock-server/use-grpc-mock-editor-actions.ts");
 
   assert.match(mainPanel, /selectActiveRequestScenario/);
-  assert.match(mainPanel, /startActiveRequestMock/);
-  assert.match(mainPanel, /requestMockRuntimeAction === "start" \? "Starting…" : "Start"/);
-  assert.match(mainPanel, /Edit scenario/);
-  assert.match(mockActions, /startMockServer\(projectOverride\?: MockServerProject\)/);
-  assert.match(mockActions, /projectOverride \?\? mockServerRef\?\.current \?\? mockServer/);
+  assert.doesNotMatch(mainPanel, /startActiveRequestMock/);
+  assert.doesNotMatch(mainPanel, /setTargetDraft\(localTarget\)/);
+  assert.doesNotMatch(mainPanel, /setNativeTarget\(localTarget\)/);
+  assert.doesNotMatch(mainPanel, /Edit scenario/);
+  assert.match(mainPanel, /Configure in workspace/);
 });
 
 test("response-to-docs action explains the outcome and opens request docs", () => {

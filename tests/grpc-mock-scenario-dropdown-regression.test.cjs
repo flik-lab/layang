@@ -19,7 +19,7 @@ test("gRPC Mock groups active-scenario controls by Proto service and method", ()
   assert.match(services, /Active scenario for \$\{method\.method\.methodName\}/);
 });
 
-test("choosing an active scenario updates selection and enables its method atomically", () => {
+test("choosing an active scenario only updates the workspace selection", () => {
   const services = read("app/playground/features/services/services-workspace.tsx");
   const selectionStart = services.indexOf(
     "function selectScenarioFromMethod(method: ScenarioMethodGroup, scenarioId: string)",
@@ -29,10 +29,21 @@ test("choosing an active scenario updates selection and enables its method atomi
 
   assert.match(selectionBlock, /setMockServer\(\(current: MockServerProject\) => \(\{/);
   assert.match(selectionBlock, /selectedScenarioIds:[\s\S]*?\[key\]: scenarioId/);
-  assert.match(selectionBlock, /enabledMethods:[\s\S]*?\[key\]: true/);
+  assert.doesNotMatch(selectionBlock, /enabledMethods/);
   assert.doesNotMatch(selectionBlock, /setScenarioActive\(/);
   assert.doesNotMatch(selectionBlock, /handleMockScenarioSelectChange\(/);
   assert.doesNotMatch(services, /if \(attached\) \{[\s\S]{0,160}setNewOpen\(true\)/);
+});
+
+test("each workspace method has an independent active switch", () => {
+  const services = read("app/playground/features/services/services-workspace.tsx");
+
+  assert.match(services, /checked=\{method\.enabled\}/);
+  assert.match(services, /`Enable mock for \$\{method\.method\.methodName\}`/);
+  assert.match(
+    services,
+    /handleMockMethodEnabledChange\(method\.method, event\.target\.checked\)/,
+  );
 });
 
 test("active scenario dropdown uses native text options and isolates row click handling", () => {

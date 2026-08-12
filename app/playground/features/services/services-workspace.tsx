@@ -588,10 +588,6 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
         ...current.selectedScenarioIds,
         [key]: scenarioId,
       },
-      enabledMethods: {
-        ...current.enabledMethods,
-        [key]: true,
-      },
       updatedAt: new Date().toISOString(),
     }));
   }
@@ -1210,6 +1206,23 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
                                           {uiCopy.actions.addScenario}
                                         </Button>
                                       )}
+
+                                      <Stack spacing={0.15} alignItems="center" sx={{ minWidth: 58 }}>
+                                        <Typography variant="caption" color="text.secondary">
+                                          Active
+                                        </Typography>
+                                        <Switch
+                                          size="small"
+                                          checked={method.enabled}
+                                          disabled={method.scenarios.length === 0}
+                                          inputProps={{
+                                            "aria-label": `Enable mock for ${method.method.methodName}`,
+                                          }}
+                                          onChange={(event: any) =>
+                                            handleMockMethodEnabledChange(method.method, event.target.checked)
+                                          }
+                                        />
+                                      </Stack>
 
                                       <Tooltip title="Scenario settings">
                                         <span>
