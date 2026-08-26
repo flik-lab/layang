@@ -43,6 +43,8 @@ contextBridge.exposeInMainWorld("electronWorkspace", {
   getDefaultFolder: () => ipcRenderer.invoke("workspace:get-default-folder"),
   ensureDefaultFolder: (bundle) => ipcRenderer.invoke("workspace:ensure-default-folder", { bundle }),
   ensureFolder: (bundle, directoryPath) => ipcRenderer.invoke("workspace:ensure-folder", { bundle, directoryPath }),
+  migrateLegacyLocalState: (bundle, directoryPath) =>
+    ipcRenderer.invoke("workspace:migrate-legacy-local-state", { bundle, directoryPath }),
   getPreference: () => ipcRenderer.invoke("workspace:get-preference"),
   setPreference: (directoryPath) => ipcRenderer.invoke("workspace:set-preference", { directoryPath }),
   chooseFolder: (title) => ipcRenderer.invoke("workspace:choose-folder", { title }),

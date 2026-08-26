@@ -398,9 +398,17 @@ declare global {
         bundle: unknown,
         directoryPath?: string,
       ) => Promise<{ ok: boolean; cancelled?: boolean; directoryPath?: string; error?: string }>;
-      openFolder?: (
-        directoryPath?: string,
-      ) => Promise<{ ok: boolean; cancelled?: boolean; directoryPath?: string; bundle?: unknown; error?: string }>;
+      openFolder?: (directoryPath?: string) => Promise<{
+        ok: boolean;
+        cancelled?: boolean;
+        directoryPath?: string;
+        bundle?: unknown;
+        status?: "migrated" | "already-current" | "not-a-workspace" | "failed";
+        migrated?: boolean;
+        backupPath?: string;
+        cleanupWarning?: string;
+        error?: string;
+      }>;
       readMockServer?: (directoryPath: string) => Promise<{ ok: boolean; mockServer?: unknown; error?: string }>;
       getDefaultFolder?: () => Promise<{ ok: boolean; directoryPath?: string; error?: string }>;
       ensureDefaultFolder?: (
@@ -410,6 +418,21 @@ declare global {
         bundle: unknown,
         directoryPath: string,
       ) => Promise<{ ok: boolean; created?: boolean; directoryPath?: string; bundle?: unknown; error?: string }>;
+      migrateLegacyLocalState?: (
+        bundle: unknown,
+        directoryPath?: string,
+      ) => Promise<{
+        ok: boolean;
+        status?: "migrated" | "already-current" | "skipped" | "failed";
+        migrated?: boolean;
+        existing?: boolean;
+        directoryPath?: string;
+        bundle?: unknown;
+        backupPath?: string;
+        cleanupWarning?: string;
+        sourceFingerprint?: string;
+        error?: string;
+      }>;
       getPreference?: () => Promise<{
         ok: boolean;
         directoryPath?: string;
@@ -508,28 +531,21 @@ declare global {
         directoryPath: string;
         documentation?: boolean;
       }) => Promise<LayangGitIpcResult<LayangGitPreCommitCheck>>;
-      scanSecrets: (payload: {
-        directoryPath: string;
-        changedOnly?: boolean;
-      }) => Promise<
+      scanSecrets: (payload: { directoryPath: string; changedOnly?: boolean }) => Promise<
         LayangGitIpcResult<{
           findings: Array<{ file: string; line: number; rule: string; severity: string; preview: string }>;
         }>
       >;
       continueMerge: (payload: { directoryPath: string }) => Promise<LayangGitIpcResult<LayangGitStatus>>;
       abortMerge: (payload: { directoryPath: string }) => Promise<LayangGitIpcResult<LayangGitStatus>>;
-      uxState: (payload: {
-        directoryPath: string;
-      }) => Promise<
+      uxState: (payload: { directoryPath: string }) => Promise<
         LayangGitIpcResult<{
           version: 2;
           changeSets: LayangGitChangeSet[];
           reviews: Record<string, { status: LayangGitReviewStatus; updatedAt: string }>;
         }>
       >;
-      changeSets: (payload: {
-        directoryPath: string;
-      }) => Promise<
+      changeSets: (payload: { directoryPath: string }) => Promise<
         LayangGitIpcResult<{
           sets: LayangGitChangeSet[];
           unassigned: LayangGitChange[];
@@ -556,9 +572,7 @@ declare global {
         path: string;
         status: LayangGitReviewStatus;
       }) => Promise<LayangGitIpcResult<Record<string, { status: LayangGitReviewStatus; updatedAt: string }>>>;
-      reviewSummary: (payload: {
-        directoryPath: string;
-      }) => Promise<
+      reviewSummary: (payload: { directoryPath: string }) => Promise<
         LayangGitIpcResult<{
           items: Array<LayangGitChange & { review: LayangGitReviewStatus }>;
           reviewed: number;
@@ -615,11 +629,7 @@ declare global {
           prevention: LayangGitConflictPrediction;
         }>
       >;
-      outgoing: (payload: {
-        directoryPath: string;
-        upstream?: string;
-        limit?: number;
-      }) => Promise<
+      outgoing: (payload: { directoryPath: string; upstream?: string; limit?: number }) => Promise<
         LayangGitIpcResult<{
           available: boolean;
           upstream: string;
@@ -633,10 +643,7 @@ declare global {
         oid: string;
         includeDiff?: boolean;
       }) => Promise<LayangGitIpcResult<LayangGitCommitDetails>>;
-      historyGraph: (payload: {
-        directoryPath: string;
-        maxCount?: number;
-      }) => Promise<
+      historyGraph: (payload: { directoryPath: string; maxCount?: number }) => Promise<
         LayangGitIpcResult<
           Array<{
             graph: string;
@@ -654,10 +661,7 @@ declare global {
         file: string;
         maxCount?: number;
       }) => Promise<LayangGitIpcResult<LayangGitLogEntry[]>>;
-      branchHealth: (payload: {
-        directoryPath: string;
-        base?: string;
-      }) => Promise<
+      branchHealth: (payload: { directoryPath: string; base?: string }) => Promise<
         LayangGitIpcResult<{
           branch: string;
           base: string;
@@ -671,10 +675,7 @@ declare global {
         directoryPath: string;
         target?: string;
       }) => Promise<LayangGitIpcResult<LayangGitConflictPrediction>>;
-      conflictDetails: (payload: {
-        directoryPath: string;
-        file: string;
-      }) => Promise<
+      conflictDetails: (payload: { directoryPath: string; file: string }) => Promise<
         LayangGitIpcResult<{
           file: string;
           entity: LayangGitChange["entity"];
@@ -743,11 +744,7 @@ declare global {
         report?: { pageCount: number; warningCount: number; errorCount: number; staleCount: number };
         error?: string;
       }>;
-      check?: (payload: {
-        directoryPath: string;
-        collection?: string;
-        request?: string;
-      }) => Promise<{
+      check?: (payload: { directoryPath: string; collection?: string; request?: string }) => Promise<{
         ok: boolean;
         report?: { pageCount: number; warningCount: number; errorCount: number; staleCount: number };
         error?: string;
@@ -892,12 +889,7 @@ declare global {
         profiles?: import("../app/playground/shared/workbench-types").GrpcGatewayStatus[];
         error?: string;
       }>;
-      logs?: (payload: {
-        profileId?: string;
-        query?: string;
-        scope?: "latest" | "all";
-        limit?: number;
-      }) => Promise<{
+      logs?: (payload: { profileId?: string; query?: string; scope?: "latest" | "all"; limit?: number }) => Promise<{
         ok: boolean;
         logs?: import("../app/playground/shared/workbench-types").GrpcGatewayLog[];
         error?: string;

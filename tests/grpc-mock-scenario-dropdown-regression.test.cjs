@@ -40,10 +40,7 @@ test("each workspace method has an independent active switch", () => {
 
   assert.match(services, /checked=\{method\.enabled\}/);
   assert.match(services, /`Enable mock for \$\{method\.method\.methodName\}`/);
-  assert.match(
-    services,
-    /handleMockMethodEnabledChange\(method\.method, event\.target\.checked\)/,
-  );
+  assert.match(services, /handleMockMethodEnabledChange\(method\.method, event\.target\.checked\)/);
 });
 
 test("active scenario dropdown uses native text options and isolates row click handling", () => {

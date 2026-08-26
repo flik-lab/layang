@@ -15,10 +15,7 @@ import { methodKey } from "../../shared/rpc-method-utils";
 import { uiCopy } from "../../shared/ui-copy";
 import { MethodStatusIndicator } from "../../shared/components/method-status-indicator";
 import { mockScenarioDisplayName, rpcMethodKindLabel } from "../mock-server/mock-scenario-ui";
-import {
-  getMockMethodScenarioFile,
-  parseMockScenarioText,
-} from "../mock-server/mock-scenario-model";
+import { getMockMethodScenarioFile, parseMockScenarioText } from "../mock-server/mock-scenario-model";
 import { ServicesWorkspace } from "../services/services-workspace";
 import { SettingsWorkspace } from "../settings/settings-workspace";
 import { ProtoSchemaWorkspace } from "../proto-registry/proto-schema-workspace";
@@ -2114,7 +2111,6 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
         onSave={saveEditedExample}
         onDuplicate={duplicateExample}
       />
-
     </Box>
   );
 }

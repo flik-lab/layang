@@ -155,15 +155,8 @@ export async function syncRunningMockServerFromEditor({
 }
 
 export function useMockRuntimeSync(options: UseMockRuntimeSyncOptions) {
-  const {
-    delayMs,
-    mockServerStatus,
-    loaded,
-    protoFiles,
-    mockServer,
-    activeProtoLibraryId,
-    activeProtoVersionId,
-  } = options;
+  const { delayMs, mockServerStatus, loaded, protoFiles, mockServer, activeProtoLibraryId, activeProtoVersionId } =
+    options;
   const latestOptionsRef = useRef(options);
   const syncInFlightRef = useRef(false);
   const syncPendingRef = useRef(false);

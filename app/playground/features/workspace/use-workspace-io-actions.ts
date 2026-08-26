@@ -2,6 +2,7 @@
 
 import type { LoadedProto, ProtoSourceFile, RpcMethodInfo } from "@/lib/types";
 import type { SavedExample, WorkspaceExportBundle, WorkspaceImportRecord } from "../../shared/workbench-types";
+import { WORKSPACE_EXPORT_VERSION } from "../../shared/workspace-versions";
 import { defaultProjectData } from "./workspace-model";
 import {
   appendProtoLibraryVersion,
@@ -114,7 +115,7 @@ export function useWorkspaceIoActions(scope: any) {
       const project = defaultProjectData();
       const bundle: WorkspaceExportBundle = {
         type: "layang-workspace",
-        version: 5,
+        version: WORKSPACE_EXPORT_VERSION,
         exportedAt: new Date().toISOString(),
         app: "Layang",
         project,
@@ -206,8 +207,14 @@ export function useWorkspaceIoActions(scope: any) {
       const nextPath = result.directoryPath ?? "";
       if (nextPath) await rememberWorkspaceFolder(nextPath);
       showToast(
-        imported ? "Workspace folder loaded." : "The selected folder does not contain supported workspace data.",
-        imported ? "success" : "warning",
+        imported
+          ? result.migrated
+            ? result.cleanupWarning
+              ? "Workspace converted to Git/YAML, but some legacy files could not be cleaned up. The backup was kept."
+              : "Legacy workspace converted to Git/YAML and loaded."
+            : "Workspace folder loaded."
+          : "The selected folder does not contain supported workspace data.",
+        imported ? (result.cleanupWarning ? "warning" : "success") : "warning",
       );
     } catch (err) {
       showToast(`Open workspace folder failed: ${toErrorMessage(err)}`, "error");

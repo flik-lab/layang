@@ -2,12 +2,62 @@ import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 
 import { hasNativeGrpcBridge } from "@/lib/native-grpc-client";
 import type { ColorMode } from "../../design-system";
 import { toErrorMessage } from "../../shared/error-utils";
-import { workspaceFolderStorageKey } from "../../shared/workbench-constants";
+import {
+  legacyLocalWorkspaceMigrationKey,
+  legacyProjectStorageKey,
+  legacyWorkspaceKey,
+  projectStorageKey,
+  workspaceFolderStorageKey,
+} from "../../shared/workbench-constants";
 import type { ProjectData, WorkspaceExportBundle } from "../../shared/workbench-types";
+import {
+  GIT_WORKSPACE_VERSION,
+  LEGACY_LOCAL_MIGRATION_MARKER_VERSION,
+  WORKSPACE_EXPORT_VERSION,
+} from "../../shared/workspace-versions";
 import { readStoredProject } from "./workspace-model";
 import { createWorkspaceAutosaveState } from "./workspace-autosave";
 
 type ToastSeverity = "info" | "success" | "warning" | "error";
+
+function hasLegacyLocalWorkspaceState() {
+  if (typeof window === "undefined") return false;
+  return [projectStorageKey, legacyProjectStorageKey, legacyWorkspaceKey].some((key) => {
+    const value = window.localStorage.getItem(key);
+    return typeof value === "string" && value.trim().length > 0;
+  });
+}
+
+function hasCompletedLegacyLocalMigration() {
+  if (typeof window === "undefined") return false;
+  const raw = window.localStorage.getItem(legacyLocalWorkspaceMigrationKey);
+  if (!raw) return false;
+  try {
+    const marker = JSON.parse(raw) as { version?: number; status?: string };
+    return (
+      Number(marker.version || 0) >= LEGACY_LOCAL_MIGRATION_MARKER_VERSION &&
+      (marker.status === "migrated" || marker.status === "already-current")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function markLegacyLocalMigration(directoryPath: string, migration: { status?: string; sourceFingerprint?: string }) {
+  window.localStorage.setItem(
+    legacyLocalWorkspaceMigrationKey,
+    JSON.stringify({
+      version: LEGACY_LOCAL_MIGRATION_MARKER_VERSION,
+      status: migration.status === "already-current" ? "already-current" : "migrated",
+      source: "electron-local-storage",
+      sourceVersion: WORKSPACE_EXPORT_VERSION,
+      sourceFingerprint: migration.sourceFingerprint ?? "",
+      targetGitWorkspaceVersion: GIT_WORKSPACE_VERSION,
+      directoryPath,
+      completedAt: new Date().toISOString(),
+    }),
+  );
+}
 
 type UseWorkspaceControllerOptions = {
   prefersDark: boolean;
@@ -96,6 +146,57 @@ export function useWorkspaceController({
         }
       }
 
+      // Releases before the Git/YAML workspace format persisted the active project in
+      // Electron localStorage. Convert that state before showing the new-workspace setup
+      // or starting normal workspace activity. The main process keeps a local backup and
+      // verifies the resulting layang.yml workspace before this marker is written.
+      if (
+        !storedWorkspacePath &&
+        hasLegacyLocalWorkspaceState() &&
+        !hasCompletedLegacyLocalMigration() &&
+        window.electronWorkspace?.migrateLegacyLocalState
+      ) {
+        const legacyBundle: WorkspaceExportBundle = {
+          type: "layang-workspace",
+          version: WORKSPACE_EXPORT_VERSION,
+          exportedAt: new Date().toISOString(),
+          app: "Layang",
+          project: cachedProject,
+          layout: cachedLayout,
+          settings: { themeMode: initialThemeMode },
+        };
+
+        try {
+          const migration = await window.electronWorkspace.migrateLegacyLocalState(
+            legacyBundle,
+            workspacePreference?.directoryPath,
+          );
+          if (!cancelled && migration.ok && migration.directoryPath && migration.bundle) {
+            const imported = applyWorkspaceBundle(migration.bundle);
+            if (imported) {
+              rememberWorkspaceFolder(migration.directoryPath);
+              await window.electronWorkspace.setPreference?.(migration.directoryPath).catch(() => undefined);
+              markLegacyLocalMigration(migration.directoryPath, migration);
+              setHydrated(true);
+              showToast(
+                migration.cleanupWarning
+                  ? "Workspace converted, but some legacy files could not be cleaned up. The backup was kept."
+                  : migration.migrated
+                    ? "Previous local workspace converted to the Git/YAML format."
+                    : "Existing Git/YAML workspace activated; previous local state was kept as fallback.",
+                migration.cleanupWarning ? "warning" : "success",
+              );
+              return;
+            }
+          }
+          if (migration && !migration.ok) {
+            console.warn("Legacy local workspace migration was skipped.", migration.error);
+          }
+        } catch (err) {
+          console.warn("Legacy local workspace migration failed; keeping the local draft available.", err);
+        }
+      }
+
       if (cancelled) return;
 
       if (!storedWorkspacePath && workspacePreference?.ok && !workspacePreference.hasCustomPreference) {
@@ -112,7 +213,7 @@ export function useWorkspaceController({
         try {
           const defaultWorkspaceBundle: WorkspaceExportBundle = {
             type: "layang-workspace",
-            version: 5,
+            version: WORKSPACE_EXPORT_VERSION,
             exportedAt: new Date().toISOString(),
             app: "Layang",
             project: cachedProject,

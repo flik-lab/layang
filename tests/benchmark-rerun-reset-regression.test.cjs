@@ -5,10 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 
-const source = fs.readFileSync(
-  path.join(process.cwd(), "app/playground/hooks/use-benchmark-runner.ts"),
-  "utf8",
-);
+const source = fs.readFileSync(path.join(process.cwd(), "app/playground/hooks/use-benchmark-runner.ts"), "utf8");
 
 test("each benchmark run clears previous results before choosing unary or streaming execution", () => {
   const runStart = source.indexOf("const runBenchmark = useCallback");

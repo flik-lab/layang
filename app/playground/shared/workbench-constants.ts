@@ -17,6 +17,7 @@ export const layoutStorageKey = "layang-layout-v1";
 export const legacyProjectStorageKey = "grpc-lab-project-v2";
 export const legacyLayoutStorageKey = "grpc-lab-layout-v1";
 export const workspaceFolderStorageKey = "layang-workspace-folder-v1";
+export const legacyLocalWorkspaceMigrationKey = "layang-legacy-local-workspace-migration-v1";
 export const appLogoSrc = "./layang-logo.png";
 export const configuredLogLevel = (
   process?.env?.NEXT_PUBLIC_LAYANG_LOG_LEVEL ??

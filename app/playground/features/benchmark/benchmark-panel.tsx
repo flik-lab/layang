@@ -198,11 +198,7 @@ export function BenchmarkPanel({
           <>
             <Chip size="small" label={`Msgs ${totalMessages}`} variant="outlined" />
             <Chip size="small" label={`Avg ${avgThroughput.toFixed(1)} msg/s`} variant="outlined" />
-            <Chip
-              size="small"
-              label={`First ${stats.timeToFirstMessageMs?.toFixed(1) ?? "—"} ms`}
-              variant="outlined"
-            />
+            <Chip size="small" label={`First ${stats.timeToFirstMessageMs?.toFixed(1) ?? "—"} ms`} variant="outlined" />
             <Chip size="small" label={`Interval ${stats.average.toFixed(1)} ms`} variant="outlined" />
             <Chip size="small" label={`Interval P95 ${stats.p95.toFixed(1)} ms`} variant="outlined" />
           </>

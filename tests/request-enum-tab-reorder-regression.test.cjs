@@ -59,7 +59,9 @@ test("gRPC-Web requests accept enum names across scalar and composite fields", (
 });
 
 test("unknown enum names still fail protobuf validation", () => {
-  const { root } = protobuf.parse('syntax = "proto3"; enum Status { UNKNOWN = 0; } message Request { Status status = 1; }');
+  const { root } = protobuf.parse(
+    'syntax = "proto3"; enum Status { UNKNOWN = 0; } message Request { Status status = 1; }',
+  );
   const requestType = root.lookupType("Request");
   const { normalizeProtobufRequestObject } = loadGrpcWebClient();
   const normalized = normalizeProtobufRequestObject(requestType, { status: "MISSING" });

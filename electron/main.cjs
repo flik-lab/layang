@@ -36,6 +36,11 @@ const { readJsonIfExists, walkDirectory, writeTextInside } = require("./utils/fi
 const { windowFromEvent } = require("./utils/ipc-utils.cjs");
 const { safePathSegment } = require("./utils/path-utils.cjs");
 const { ROOT_FILE: gitWorkspaceRootFile, readGitWorkspace, writeGitWorkspace } = require("../lib/git-workspace.cjs");
+const { exportBundleVersion: WORKSPACE_EXPORT_VERSION } = require("../lib/workspace-versions.json");
+const {
+  hasRecognizedLegacyWorkspaceFiles,
+  migrateLegacyWorkspaceTransaction,
+} = require("./services/workspace-migration.cjs");
 const { buildDocumentation, checkDocumentation } = require("../lib/docs-workspace.cjs");
 const WINDOWS_APP_USER_MODEL_ID = "com.squirrel.Layang.layang";
 const UPDATE_FEED_BASE_URL = "https://update.electronjs.org/flik-lab/layang";
@@ -335,6 +340,83 @@ ipcMain.handle("workspace:ensure-folder", async (_event, payload) => {
   return ensureWorkspaceFolder(directoryPath, payload?.bundle ? payload.bundle : {});
 });
 
+ipcMain.handle("workspace:migrate-legacy-local-state", async (_event, payload) => {
+  const directoryPath =
+    payload && typeof payload.directoryPath === "string" && payload.directoryPath.trim()
+      ? payload.directoryPath.trim()
+      : getConfiguredWorkspaceDirectory();
+  const bundle = payload?.bundle ? payload.bundle : {};
+  const sourceFingerprint = crypto.createHash("sha256").update(JSON.stringify(bundle)).digest("hex");
+
+  try {
+    await fs.mkdir(directoryPath, { recursive: true });
+
+    if (fsSync.existsSync(path.join(directoryPath, gitWorkspaceRootFile))) {
+      return {
+        ok: true,
+        status: "already-current",
+        migrated: false,
+        existing: true,
+        directoryPath,
+        bundle: await readWorkspaceFolder(directoryPath),
+        sourceFingerprint,
+      };
+    }
+
+    if (await hasRecognizedLegacyWorkspaceFiles(directoryPath)) {
+      const legacyBundle = await readWorkspaceFolder(directoryPath);
+      const migration = await migrateLegacyWorkspaceTransaction(directoryPath, legacyBundle);
+      return {
+        ok: true,
+        status: "migrated",
+        migrated: true,
+        existing: true,
+        directoryPath,
+        bundle: workspaceBundleFromGit(migration.workspace),
+        backupPath: migration.backupPath,
+        cleanupWarning: migration.cleanupWarning,
+        sourceFingerprint,
+      };
+    }
+
+    const entries = (await fs.readdir(directoryPath)).filter((name) => name !== ".layang");
+    if (entries.length > 0) {
+      return {
+        ok: false,
+        status: "skipped",
+        directoryPath,
+        sourceFingerprint,
+        error:
+          "Legacy workspace migration target is not empty and does not contain a recognized Layang workspace. " +
+          "Choose another workspace folder to avoid overwriting unrelated files.",
+      };
+    }
+
+    const normalized = normalizeWorkspaceBundle(bundle);
+    const backupPath = await backupLegacyLocalStateBundle(directoryPath, normalized);
+    const migration = await migrateLegacyWorkspaceTransaction(directoryPath, normalized);
+    return {
+      ok: true,
+      status: "migrated",
+      migrated: true,
+      existing: false,
+      directoryPath,
+      bundle: workspaceBundleFromGit(migration.workspace),
+      backupPath: backupPath || migration.backupPath,
+      cleanupWarning: migration.cleanupWarning,
+      sourceFingerprint,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: "failed",
+      directoryPath,
+      sourceFingerprint,
+      error: error?.message ? String(error.message) : String(error),
+    };
+  }
+});
+
 ipcMain.handle("workspace:get-preference", async () => {
   const preference = await readWorkspacePreference();
   const defaultDirectoryPath = getDefaultWorkspaceDirectory();
@@ -488,8 +570,17 @@ ipcMain.handle("workspace:open-folder", async (event, payload) => {
   const directoryPath = providedPath || (await chooseWorkspaceDirectory(win, "Open Layang workspace folder"));
   if (!directoryPath) return { ok: false, cancelled: true };
 
-  const bundle = await readWorkspaceFolder(directoryPath);
-  return { ok: true, directoryPath, bundle };
+  try {
+    const opened = await openWorkspaceFolder(directoryPath);
+    return { ok: true, directoryPath, ...opened };
+  } catch (error) {
+    return {
+      ok: false,
+      status: "failed",
+      directoryPath,
+      error: error?.message ? String(error.message) : String(error),
+    };
+  }
 });
 
 ipcMain.handle("docs:build", async (_event, payload) => {
@@ -570,16 +661,46 @@ function getConfiguredWorkspaceDirectory() {
 }
 
 async function ensureWorkspaceFolder(directoryPath, bundle) {
-  const hasGitWorkspace = fsSync.existsSync(path.join(directoryPath, gitWorkspaceRootFile));
-  const snapshotPath = path.join(directoryPath, "layang.workspace.json");
-  const existingSnapshot = await readJsonIfExists(snapshotPath).catch(() => null);
-  if (hasGitWorkspace || (existingSnapshot && typeof existingSnapshot === "object")) {
-    const storedBundle = await readWorkspaceFolder(directoryPath);
-    return { ok: true, directoryPath, created: false, bundle: storedBundle };
+  await fs.mkdir(directoryPath, { recursive: true });
+  if (fsSync.existsSync(path.join(directoryPath, gitWorkspaceRootFile))) {
+    return {
+      ok: true,
+      status: "already-current",
+      directoryPath,
+      created: false,
+      bundle: await readWorkspaceFolder(directoryPath),
+    };
+  }
+  if (await hasRecognizedLegacyWorkspaceFiles(directoryPath)) {
+    const legacyBundle = await readWorkspaceFolder(directoryPath);
+    const migration = await migrateLegacyWorkspaceTransaction(directoryPath, legacyBundle);
+    return {
+      ok: true,
+      status: "migrated",
+      directoryPath,
+      created: false,
+      migrated: true,
+      bundle: workspaceBundleFromGit(migration.workspace),
+      backupPath: migration.backupPath,
+      cleanupWarning: migration.cleanupWarning,
+    };
   }
 
   await writeWorkspaceFolder(directoryPath, bundle);
-  return { ok: true, directoryPath, created: true };
+  return { ok: true, status: "created", directoryPath, created: true };
+}
+
+async function backupLegacyLocalStateBundle(directoryPath, bundle) {
+  const backupDir = path.join(directoryPath, ".layang", "backups", "legacy-local-storage-v2");
+  const backupPath = path.join(backupDir, "layang.workspace.json");
+  await fs.mkdir(backupDir, { recursive: true });
+  await writeJson(backupPath, {
+    version: 1,
+    source: "electron-local-storage",
+    capturedAt: new Date().toISOString(),
+    bundle,
+  });
+  return backupPath;
 }
 
 /**
@@ -604,10 +725,7 @@ async function writeWorkspaceFolder(directoryPath, bundle) {
   try {
     await fs.mkdir(resolvedDirectory, { recursive: true });
     const normalized = normalizeWorkspaceBundle(bundle);
-    const isMigration = !fsSync.existsSync(path.join(resolvedDirectory, gitWorkspaceRootFile));
-    if (isMigration) await backupLegacyWorkspaceFiles(resolvedDirectory);
     await writeGitWorkspace(resolvedDirectory, normalized);
-    if (isMigration) await removeLegacyAggregateWorkspaceFiles(resolvedDirectory);
     workspaceInternalFingerprint.set(resolvedDirectory, await computeWorkspaceRevision(resolvedDirectory));
   } finally {
     workspaceInternalWriteAt.set(resolvedDirectory, Date.now());
@@ -645,54 +763,12 @@ async function computeWorkspaceRevision(directoryPath) {
   return crypto.createHash("sha1").update(records.join("\n")).digest("hex");
 }
 
-async function backupLegacyWorkspaceFiles(directoryPath) {
-  const candidates = ["layang.workspace.json", "project.json", "layout.json", "settings.json"];
-  const existing = candidates.filter((name) => fsSync.existsSync(path.join(directoryPath, name)));
-  if (!existing.length) return;
-  const backupDir = path.join(directoryPath, ".layang", "backups", "legacy-v4");
-  await fs.mkdir(backupDir, { recursive: true });
-  for (const name of existing) {
-    await fs.copyFile(path.join(directoryPath, name), path.join(backupDir, name));
-  }
-}
-
-async function removeLegacyAggregateWorkspaceFiles(directoryPath) {
-  const files = [
-    "layang.workspace.json",
-    "project.json",
-    "layout.json",
-    "settings.json",
-    path.join("collections", "collections.json"),
-    path.join("environments", "environments.json"),
-    path.join("examples", "examples.json"),
-    path.join("docs", "published-docs.json"),
-    path.join("docs", "saved-results.json"),
-    path.join("requests", "tabs.json"),
-    path.join("history", "history.json"),
-    path.join("mocks", "mock-server.json"),
-    path.join("mocks", "rest-mock-server.json"),
-  ];
-  for (const relative of files) await fs.rm(path.join(directoryPath, relative), { force: true });
-  await fs.rm(path.join(directoryPath, "requests", "items"), { recursive: true, force: true });
-  await fs.rm(path.join(directoryPath, "mocks", "scenarios"), { recursive: true, force: true });
-}
-
 /**
  * Reads a Layang workspace folder and returns a renderer-compatible workspace bundle.
  */
 async function readWorkspaceFolder(directoryPath) {
   const gitWorkspace = await readGitWorkspace(directoryPath);
-  if (gitWorkspace) {
-    return normalizeWorkspaceBundle({
-      type: "layang-workspace",
-      version: 5,
-      exportedAt: gitWorkspace.project?.updatedAt || new Date().toISOString(),
-      app: "Layang",
-      project: gitWorkspace.project,
-      layout: gitWorkspace.layout,
-      settings: gitWorkspace.settings,
-    });
-  }
+  if (gitWorkspace) return workspaceBundleFromGit(gitWorkspace);
   const snapshotPath = path.join(directoryPath, "layang.workspace.json");
   const snapshot = await readJsonIfExists(snapshotPath);
   if (snapshot && typeof snapshot === "object") {
@@ -759,14 +835,46 @@ async function readWorkspaceFolder(directoryPath) {
       }
     : mockSettings;
 
-  return normalizeWorkspaceBundle({
+  const legacyBundle = normalizeWorkspaceBundle({
     type: "layang-workspace",
-    version: 5,
+    version: WORKSPACE_EXPORT_VERSION,
     exportedAt: new Date().toISOString(),
     app: "Layang",
     project,
     layout: (await readJsonIfExists(path.join(directoryPath, "layout.json"))) || {},
     settings: (await readJsonIfExists(path.join(directoryPath, "settings.json"))) || {},
+  });
+  return legacyBundle;
+}
+
+async function openWorkspaceFolder(directoryPath) {
+  if (fsSync.existsSync(path.join(directoryPath, gitWorkspaceRootFile))) {
+    return { bundle: await readWorkspaceFolder(directoryPath), migrated: false, status: "already-current" };
+  }
+  if (await hasRecognizedLegacyWorkspaceFiles(directoryPath)) {
+    const legacyBundle = await readWorkspaceFolder(directoryPath);
+    const migration = await migrateLegacyWorkspaceTransaction(directoryPath, legacyBundle);
+    return {
+      bundle: workspaceBundleFromGit(migration.workspace),
+      migrated: true,
+      status: "migrated",
+      backupPath: migration.backupPath,
+      cleanupWarning: migration.cleanupWarning,
+    };
+  }
+  return { bundle: await readWorkspaceFolder(directoryPath), migrated: false, status: "not-a-workspace" };
+}
+
+function workspaceBundleFromGit(gitWorkspace) {
+  if (!gitWorkspace) throw new Error("A readable Git/YAML workspace is required.");
+  return normalizeWorkspaceBundle({
+    type: "layang-workspace",
+    version: WORKSPACE_EXPORT_VERSION,
+    exportedAt: gitWorkspace.project?.updatedAt || new Date().toISOString(),
+    app: "Layang",
+    project: gitWorkspace.project,
+    layout: gitWorkspace.layout,
+    settings: gitWorkspace.settings,
   });
 }
 
@@ -777,7 +885,7 @@ function normalizeWorkspaceBundle(bundle) {
   const input = bundle && typeof bundle === "object" ? bundle : {};
   return {
     type: "layang-workspace",
-    version: 5,
+    version: WORKSPACE_EXPORT_VERSION,
     exportedAt: input.exportedAt || new Date().toISOString(),
     app: "Layang",
     project: input.project || input.workspace || {},
