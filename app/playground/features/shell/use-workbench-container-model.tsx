@@ -3618,6 +3618,7 @@ export function useWorkbenchContainerModel() {
     requestNameDialogOpen,
     requestNameDraft,
     requestResponseLayout,
+    setRequestResponseLayout,
     requestRunner,
     requestSessions,
     requestTab,

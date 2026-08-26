@@ -546,7 +546,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     >
       <Stack
         direction={mainPanelDirection}
-        spacing="var(--workbench-panel-gap)"
+        spacing={requestSplitLayoutActive ? 0 : "var(--workbench-panel-gap)"}
         sx={{ height: "100%", width: "100%", minHeight: 0, minWidth: 0, overflow: "hidden" }}
       >
         {sideSection === "source-control" ? (
@@ -1877,8 +1877,8 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
               onMouseDown={beginResponseResize}
               onKeyDown={resizeResponseByKeyboard}
               sx={{
-                width: requestResponseLayout === "horizontal" ? 24 : "auto",
-                height: requestResponseLayout === "horizontal" ? "auto" : 24,
+                width: requestResponseLayout === "horizontal" ? 2 : "auto",
+                height: requestResponseLayout === "horizontal" ? "auto" : 2,
                 flexShrink: 0,
                 cursor: requestResponseLayout === "horizontal" ? "col-resize" : "row-resize",
                 display: responseFullscreen ? "none" : "flex",
@@ -1888,8 +1888,8 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                 opacity: 1,
                 "&::after": {
                   content: '""',
-                  width: requestResponseLayout === "horizontal" ? 2 : 34,
-                  height: requestResponseLayout === "horizontal" ? 34 : 2,
+                  width: requestResponseLayout === "horizontal" ? 1 : 34,
+                  height: requestResponseLayout === "horizontal" ? 34 : 1,
                   borderRadius: 999,
                   bgcolor: "divider",
                 },
@@ -1982,9 +1982,11 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                       p: designSystem.space.panelPadding,
                       flex: 1,
                       minHeight: 0,
-                      overflow: "auto",
+                      minWidth: 0,
+                      overflow: responseTab === "latest" ? "hidden" : "auto",
                       position: "relative",
-                      display: "block",
+                      display: responseTab === "latest" ? "flex" : "block",
+                      flexDirection: responseTab === "latest" ? "column" : undefined,
                     }}
                   >
                     {responseTab === "messages" && (
@@ -2022,7 +2024,17 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                       </Tooltip>
                     )}
                     {responseTab === "latest" && (
-                      <Stack spacing={0.8} sx={{ minHeight: 0, height: responseFullscreen ? "100%" : "auto" }}>
+                      <Stack
+                        spacing={0.8}
+                        sx={{
+                          width: "100%",
+                          minWidth: 0,
+                          minHeight: 0,
+                          flex: 1,
+                          overflow: "hidden",
+                          "& > .code-viewer--fill": { height: "auto" },
+                        }}
+                      >
                         <Stack direction="row" spacing={0.7} alignItems="center">
                           <TextField
                             size="small"
@@ -2052,7 +2064,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                         <FeatureLatestResponseJsonViewer
                           value={latestResponsePayload}
                           filterQuery={deferredResponseFilter}
-                          fullHeight={responseFullscreen}
+                          fullHeight
                         />
                       </Stack>
                     )}
