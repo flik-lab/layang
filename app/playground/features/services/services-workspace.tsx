@@ -91,7 +91,6 @@ type GrpcMockTab = "scenarios" | "proto" | "web-access" | "activity";
 type GrpcMockActivityView = "requests" | "logs";
 type GrpcMockSettingsPage = "server" | "security" | "defaults" | "advanced";
 const grpcMockTabs = ["scenarios", "proto", "web-access", "activity"] as const;
-const grpcMockActivityTabs = ["requests", "logs"] as const;
 type AttachedMethod = {
   source: MockProtoSource;
   library: any;
@@ -292,7 +291,7 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
     webAccessStatus,
   } = ctx;
   const [tab, setTab] = useState<GrpcMockTab>(initialTab);
-  const [activityView, setActivityView] = useState<GrpcMockActivityView>("requests");
+  const [activityView, setActivityView] = useState<GrpcMockActivityView>("logs");
   const [query, setQuery] = useState("");
   const [newOpen, setNewOpen] = useState(false);
   const [newMethodKey, setNewMethodKey] = useState("");
@@ -1304,11 +1303,7 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
               idPrefix="grpc-mock-activity"
               bordered={false}
               className="p-0"
-              items={grpcMockActivityTabs.map((value) => ({
-                value,
-                label: value === "requests" ? "Requests" : "Logs",
-                count: value === "requests" ? requestLogs.length : undefined,
-              }))}
+              items={[{ value: "logs", label: "Logs" }]}
               onValueChange={(value) => setActivityView(value as GrpcMockActivityView)}
             />
             {activityView === "requests" ? (
@@ -2359,18 +2354,6 @@ function GrpcMockSettingsDialog({
                     })
                   }
                 />
-                <Stack direction="row" alignItems="center" spacing={1}>
-                  <Typography variant="body2" sx={{ flex: 1 }}>
-                    Request logging
-                  </Typography>
-                  <Switch
-                    checked={draft.limits.requestLogs}
-                    inputProps={{ "aria-label": "Request logging" }}
-                    onChange={(_event: any, checked: boolean) =>
-                      patch({ limits: { ...draft.limits, requestLogs: checked } })
-                    }
-                  />
-                </Stack>
               </Stack>
             )}
           </Box>
@@ -3278,20 +3261,10 @@ function WebAccessSettingsSection({
 }
 
 function RuntimeLogs({ status }: { status: any }) {
-  const gatewayLogs = status.gateway?.logs ?? [];
   const directLogs = status.logs ?? [];
-  const requestLogs = status.requestLog ?? [];
-  const logs = gatewayLogs.length
-    ? gatewayLogs
-    : directLogs.length
-      ? directLogs.map((item: any, index: number) =>
-          typeof item === "string" ? { id: `${index}-${item}`, timestamp: Date.now(), message: item } : item,
-        )
-      : requestLogs.map((item: any) => ({
-          id: item.id,
-          timestamp: item.timestamp,
-          message: `${item.serviceName}.${item.methodName} · ${item.scenarioId ?? uiCopy.status.unmatched} · ${item.status}`,
-        }));
+  const logs = directLogs.map((item: any, index: number) =>
+    typeof item === "string" ? { id: `${index}-${item}`, timestamp: Date.now(), message: item } : item,
+  );
   return logs.length ? (
     <Stack spacing={0.5}>
       {logs

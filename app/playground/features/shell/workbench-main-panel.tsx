@@ -1946,6 +1946,9 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                 >
                   <ResponseToolbar
                     filter={responseFilter}
+                    highlightQuery={deferredResponseFilter}
+                    searchScopeKey={responseTab}
+                    searchRootId={`response-viewer-panel-${responseTab}`}
                     summary={responseSummary}
                     hasEvents={events.length > 0}
                     hasLastResult={Boolean(lastResult)}

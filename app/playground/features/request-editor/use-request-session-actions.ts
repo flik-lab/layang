@@ -3,7 +3,7 @@
 import type * as protobuf from "protobufjs";
 import type { MetadataPair, RpcMethodInfo } from "@/lib/types";
 import { createRequestSession } from "../request-runner/request-session-model";
-import { upsertRequestSessionPreservingOrderList } from "./request-session-domain";
+import { reorderRequestSessionList, upsertRequestSessionPreservingOrderList } from "./request-session-domain";
 import { compactRequestSessionForStorage, normalizeVisibleResponseTab } from "../workspace/workspace-model";
 import { enqueueWorkspaceAutosave } from "../workspace/workspace-autosave";
 import { extractRequestBodyFromMockScenario, generateRandomExampleFromType } from "../mock-server/mock-scenario-model";
@@ -268,6 +268,13 @@ export function useRequestSessionActions(scope: any) {
     if (!keptSession) queueMicrotask(clearActiveView);
   }
 
+  function reorderRequestSessions(sourceId: string, targetId: string, position: "before" | "after") {
+    const next = reorderRequestSessionList(requestSessions, sourceId, targetId, position);
+    if (next === requestSessions) return;
+    setRequestSessions(next);
+    persistRequestTabsNow(next, activeRequestId);
+  }
+
   function clearActiveResponse() {
     setEvents([]);
     setLastResult(null);
@@ -481,6 +488,7 @@ export function useRequestSessionActions(scope: any) {
     persistRequestTabsNow,
     prettifyRequestJson,
     removeMetadataRow,
+    reorderRequestSessions,
     setAuthorizationMetadata,
     removeRestPairRow,
     selectMethod,

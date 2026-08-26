@@ -26,7 +26,7 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
 
   const requestType = params.root.lookupType(params.method.requestType);
   const responseType = params.root.lookupType(params.method.responseType);
-  const requestObject = ensureObject(params.requestJson);
+  const requestObject = normalizeProtobufRequestObject(requestType, ensureObject(params.requestJson));
   const verifyError = requestType.verify(requestObject);
 
   if (verifyError) {
@@ -73,6 +73,51 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
     headers,
     responseType,
   });
+}
+
+/**
+ * Converts protobuf JSON enum names to their numeric wire values before
+ * validation. protobufjs Type.verify expects enum numbers even though
+ * Type.fromObject supports the conventional symbolic JSON representation.
+ */
+export function normalizeProtobufRequestObject(
+  messageType: protobuf.Type,
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  messageType.resolveAll();
+  const normalized: Record<string, unknown> = { ...value };
+
+  for (const field of messageType.fieldsArray) {
+    if (!(field.name in normalized)) continue;
+    const fieldValue = normalized[field.name];
+    const normalizeValue = (item: unknown): unknown => {
+      if (field.resolvedType && "values" in field.resolvedType) {
+        if (typeof item !== "string") return item;
+        const enumNumber = field.resolvedType.values[item];
+        return enumNumber === undefined ? item : enumNumber;
+      }
+      if (field.resolvedType && "fieldsArray" in field.resolvedType && isPlainObject(item)) {
+        return normalizeProtobufRequestObject(field.resolvedType, item);
+      }
+      return item;
+    };
+
+    if (field.map && isPlainObject(fieldValue)) {
+      normalized[field.name] = Object.fromEntries(
+        Object.entries(fieldValue).map(([key, item]) => [key, normalizeValue(item)]),
+      );
+    } else if (field.repeated && Array.isArray(fieldValue)) {
+      normalized[field.name] = fieldValue.map(normalizeValue);
+    } else {
+      normalized[field.name] = normalizeValue(fieldValue);
+    }
+  }
+
+  return normalized;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 type InvokeGrpcWebTextAttemptParams = InvokeGrpcWebTextParams & {

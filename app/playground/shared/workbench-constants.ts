@@ -24,7 +24,9 @@ export const configuredLogLevel = (
   "info"
 ).toLowerCase();
 export const defaultUnaryDeadlineMs = 120000;
-export const maxMessagesPerRequest = 500;
+// Large streaming responses can be hundreds of KB each. Keep a bounded recent
+// window while totalMessages continues tracking the complete stream count.
+export const maxMessagesPerRequest = 50;
 export const maxUiEventsPerSession = 650;
 export const maxStoredEventsPerSession = 160;
 export const maxStoredMessagesPerResult = 120;

@@ -164,6 +164,7 @@ export function RequestTabs({
   onCancel,
   onCloseAll,
   onCloseOther,
+  onReorder,
   placement = "panel",
 }: {
   sessions: RequestSession[];
@@ -173,12 +174,15 @@ export function RequestTabs({
   onCancel: (sessionId: string) => void;
   onCloseAll?: () => void;
   onCloseOther?: (sessionId?: string) => void;
+  onReorder?: (sourceId: string, targetId: string, position: "before" | "after") => void;
   placement?: "top" | "panel";
 }) {
   const isTop = placement === "top";
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const tabRefs = useRef(new Map<string, HTMLDivElement>());
   const [hasOverflow, setHasOverflow] = useState(false);
+  const [draggedSessionId, setDraggedSessionId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ sessionId: string; position: "before" | "after" } | null>(null);
   const [tabMenu, setTabMenu] = useState<{ anchorEl: ContextMenuAnchor; session: RequestSession } | null>(null);
   const menuSession = tabMenu?.session ?? null;
 
@@ -254,6 +258,11 @@ export function RequestTabs({
     const nextIndex = (index + direction + sessions.length) % sessions.length;
     const nextSession = sessions[nextIndex];
     if (nextSession) activateTabFromKeyboard(nextSession);
+  }
+
+  function endTabDrag() {
+    setDraggedSessionId(null);
+    setDropTarget(null);
   }
 
   function handleTabKeyDown(event: TabKeyboardEvent, session: RequestSession) {
@@ -365,13 +374,43 @@ export function RequestTabs({
                   else tabRefs.current.delete(session.id);
                 }}
                 role="tab"
+                draggable={Boolean(onReorder)}
                 tabIndex={active ? 0 : -1}
                 className="request-tab"
                 data-active={active}
+                data-dragging={draggedSessionId === session.id}
+                data-drop-position={dropTarget?.sessionId === session.id ? dropTarget.position : undefined}
                 aria-selected={active}
                 aria-label={`${session.title}, ${session.running ? "running" : session.status}`}
                 title={requestTabContextLabel(session)}
                 onClick={() => onActivate(session)}
+                onDragStart={(event) => {
+                  if (!onReorder) return;
+                  if ((event.target as HTMLElement).closest(".request-tab__action")) {
+                    event.preventDefault();
+                    return;
+                  }
+                  setDraggedSessionId(session.id);
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("text/plain", session.id);
+                }}
+                onDragOver={(event) => {
+                  const sourceId = draggedSessionId || event.dataTransfer.getData("text/plain");
+                  if (!onReorder || !sourceId || sourceId === session.id) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                  const bounds = event.currentTarget.getBoundingClientRect();
+                  const position = event.clientX < bounds.left + bounds.width / 2 ? "before" : "after";
+                  setDropTarget({ sessionId: session.id, position });
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  const sourceId = draggedSessionId || event.dataTransfer.getData("text/plain");
+                  const position = dropTarget?.sessionId === session.id ? dropTarget.position : "before";
+                  if (sourceId && sourceId !== session.id) onReorder?.(sourceId, session.id, position);
+                  endTabDrag();
+                }}
+                onDragEnd={endTabDrag}
                 onAuxClick={(event: ReactMouseEvent<HTMLElement>) => {
                   if (event.button !== 1) return;
                   event.preventDefault();

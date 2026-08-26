@@ -1334,6 +1334,9 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
 
   /** Stops only the native gRPC mock runtime. */
   async function stopMockServer() {
+    // Reflect the user's stop command immediately. The main process force-closes
+    // active streams and confirms cleanup asynchronously.
+    setMockServerStatus({ running: false, runtimeKind: "mock", message: "Stopping gRPC Mock..." });
     try {
       const activeWebProfile = mockServer.gatewayProfiles.find((item) => item.id === mockServer.activeGatewayProfileId);
       if (webAccessStatus?.running && activeWebProfile?.webUpstreamMode !== "custom") {

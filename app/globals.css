@@ -356,8 +356,16 @@ button:disabled {
   font-weight: var(--font-weight-medium);
   line-height: 1;
   overflow: hidden;
-  cursor: default;
-  -webkit-app-region: drag;
+  cursor: grab;
+  -webkit-app-region: no-drag;
+}
+
+.request-tab:active {
+  cursor: grabbing;
+}
+
+.request-tab[data-dragging="true"] {
+  opacity: 0.45;
 }
 
 .request-tab:focus-visible {
@@ -377,6 +385,14 @@ button:disabled {
   border-bottom-color: var(--tab-active-bg);
   color: var(--tab-active-text);
   box-shadow: 0 2px 0 var(--primary) inset;
+}
+
+.request-tab[data-drop-position="before"] {
+  box-shadow: -3px 0 0 var(--primary);
+}
+
+.request-tab[data-drop-position="after"] {
+  box-shadow: 3px 0 0 var(--primary);
 }
 
 .request-tab__dot {
@@ -772,7 +788,7 @@ button:disabled {
   line-height: 16px;
 }
 
-/* Keep the titlebar draggable across the tab strip while preserving clicks on tab labels/actions. */
+/* Tab content remains interactive inside the draggable titlebar strip. */
 .request-tab__dot,
 .request-tab__title {
   -webkit-app-region: no-drag;
@@ -968,4 +984,9 @@ button:disabled {
   padding: 0 0.12em;
   font: inherit;
   font-weight: inherit;
+}
+
+.search-highlight.search-highlight--active {
+  background: #fb923c;
+  box-shadow: 0 0 0 2px rgba(234, 88, 12, 0.72);
 }

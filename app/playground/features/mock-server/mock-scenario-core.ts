@@ -198,7 +198,7 @@ export function createDefaultMockServerProject(): MockServerProject {
       maxReceiveBytes: 50 * 1024 * 1024,
       maxSendBytes: 50 * 1024 * 1024,
       keepaliveMs: 30000,
-      requestLogs: true,
+      requestLogs: false,
     },
     bindHost: "127.0.0.1",
     format: "yaml",
@@ -275,7 +275,9 @@ export function normalizeMockServerProject(input: Partial<MockServerProject> | u
     ),
     maxSendBytes: Math.max(1024, Math.floor(Number(input?.limits?.maxSendBytes) || defaults.limits.maxSendBytes)),
     keepaliveMs: Math.max(1000, Math.floor(Number(input?.limits?.keepaliveMs) || defaults.limits.keepaliveMs)),
-    requestLogs: input?.limits?.requestLogs !== false,
+    // Client traffic is inspected by the request runner, not retained by the
+    // mock workspace. This matters for large, continuously looping streams.
+    requestLogs: false,
   };
   const bindHost = normalizeMockBindHost(input?.bindHost, defaults.bindHost);
   const legacyScenarioText =

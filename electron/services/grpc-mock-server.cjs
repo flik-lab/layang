@@ -174,7 +174,9 @@ async function startMockServerNow(payload) {
   registerGrpcHealthService(server);
   const timers = new Set();
   const activeCalls = new Set();
-  const requestLog = [];
+  // Client traffic is intentionally not retained by the mock process. The
+  // request runner owns response inspection for both unary and stream calls.
+  const requestLog = null;
   const runtime = createMockRuntimeState(scenarios, streamDefaults, activeScenarioIds, enabledMethods, "start");
   const byService = new Map();
 
@@ -233,7 +235,9 @@ async function startMockServerNow(payload) {
     timers,
     activeCalls,
     requestLog,
-    requestLogsEnabled: limits.requestLogs !== false,
+    // The mock runtime only serves traffic. Request/response inspection belongs
+    // to the client runner, so large streaming payloads are never retained here.
+    requestLogsEnabled: false,
     workspaceDir,
     watchedWorkspaceDir: workspaceDirectory,
     port: boundPort,
@@ -272,41 +276,28 @@ function stopMockServer() {
 async function stopMockServerNow() {
   const active = activeMockServer;
   if (!active) return;
+  // Publish the stopped state before tearing down sockets so status checks and
+  // UI actions cannot observe or reuse a runtime that is already stopping.
   activeMockServer = null;
   for (const timer of active.timers || []) clearTimeout(timer);
-  for (const call of active.activeCalls || []) {
+  active.timers?.clear?.();
+  active.runtime?.streamReschedulers?.clear?.();
+  const stopError = grpcStatusError(grpc.status.UNAVAILABLE, "Mock server stopped. Stream disconnected.");
+  for (const call of Array.from(active.activeCalls || [])) {
     try {
-      call.destroy(grpcStatusError(grpc.status.UNAVAILABLE, "Mock server stopped. Stream disconnected."));
+      if (typeof call.destroy === "function") call.destroy(stopError);
+      else if (typeof call.emit === "function") call.emit("error", stopError);
+      else if (typeof call.end === "function") call.end();
     } catch {
       /* ignore */
     }
   }
-  await new Promise((resolve) => {
-    let finished = false;
-    const done = () => {
-      if (finished) return;
-      finished = true;
-      resolve();
-    };
-    try {
-      active.server.tryShutdown(done);
-      setTimeout(() => {
-        try {
-          active.server.forceShutdown();
-        } catch {
-          /* ignore */
-        }
-        done();
-      }, 600);
-    } catch {
-      try {
-        active.server.forceShutdown();
-      } catch {
-        /* ignore */
-      }
-      done();
-    }
-  });
+  active.activeCalls?.clear?.();
+  try {
+    active.server.forceShutdown();
+  } catch {
+    /* ignore */
+  }
   if (active.workspaceDir) await fs.rm(active.workspaceDir, { recursive: true, force: true }).catch(() => undefined);
 }
 
@@ -1115,8 +1106,12 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
     return;
   }
 
+  const initialResponses = getRuntimeStreamResponses(initialScenario);
+  const initialTiming = getRuntimeStreamTiming(initialScenario, runtime);
   let currentScenarioId = initialScenario.id;
-  let currentResponseSignature = createRuntimeStreamResponsesSignature(getRuntimeStreamResponses(initialScenario));
+  let currentResponseSignature = createRuntimeStreamResponsesSignature(initialResponses);
+  let cachedSnapshotVersion = runtime.configVersion;
+  let cachedSnapshot = { scenario: initialScenario, responses: initialResponses, timing: initialTiming };
   let sentResponseCounts = new Map();
   let index = 0;
   let completedCycles = 0;
@@ -1153,8 +1148,16 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
   };
 
   const getLiveSnapshot = () => {
+    // Stream payloads are immutable between runtime config revisions. Reusing
+    // this snapshot avoids serializing every response on every loop tick.
+    if (cachedSnapshotVersion === runtime.configVersion) return cachedSnapshot;
+
     const scenario = getLiveStreamScenario(method, requestContext, currentScenarioId, runtime);
-    if (!scenario) return undefined;
+    cachedSnapshotVersion = runtime.configVersion;
+    if (!scenario) {
+      cachedSnapshot = undefined;
+      return undefined;
+    }
     const responses = getRuntimeStreamResponses(scenario);
     const timing = getRuntimeStreamTiming(scenario, runtime);
     const responseSignature = createRuntimeStreamResponsesSignature(responses);
@@ -1198,7 +1201,8 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
       currentResponseSignature = responseSignature;
     }
 
-    return { scenario, responses, timing };
+    cachedSnapshot = { scenario, responses, timing };
+    return cachedSnapshot;
   };
 
   const getLiveTiming = () => getLiveSnapshot()?.timing;

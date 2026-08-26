@@ -36,6 +36,7 @@ export function WorkbenchAppBar({ ctx }: { ctx: WorkbenchViewContext }) {
     paletteMode,
     requestRunner,
     requestSessions,
+    reorderRequestSessions,
     saveWorkspaceFolder,
     saveWorkspaceFolderAs,
     setProtoPreview,
@@ -160,6 +161,7 @@ export function WorkbenchAppBar({ ctx }: { ctx: WorkbenchViewContext }) {
             onCancel={requestRunner.cancelRequest}
             onCloseAll={closeAllRequestSessions}
             onCloseOther={closeOtherRequestSessions}
+            onReorder={reorderRequestSessions}
             placement="top"
           />
         </Box>

@@ -99,6 +99,25 @@ export function upsertRequestSessionPreservingOrderList(
   return next.slice(0, limit);
 }
 
+export function reorderRequestSessionList(
+  sessions: RequestSession[],
+  sourceId: string,
+  targetId: string,
+  position: "before" | "after",
+): RequestSession[] {
+  if (sourceId === targetId) return sessions;
+  const source = sessions.find((session) => session.id === sourceId);
+  const targetIndex = sessions.findIndex((session) => session.id === targetId);
+  if (!source || targetIndex < 0) return sessions;
+
+  const withoutSource = sessions.filter((session) => session.id !== sourceId);
+  const adjustedTargetIndex = withoutSource.findIndex((session) => session.id === targetId);
+  const insertionIndex = adjustedTargetIndex + (position === "after" ? 1 : 0);
+  const next = [...withoutSource];
+  next.splice(insertionIndex, 0, source);
+  return next;
+}
+
 /**
  * Reuses an existing tab for a saved collection request. Legacy proto-only gRPC tabs
  * are adopted only when they have no collection source id, so two explicit saved
