@@ -10,21 +10,26 @@ type WorkbenchUiActionsScope = {
   responseBodyRef: MutableRefObject<HTMLDivElement | null>;
   responseTab: ResponseTab;
   setShowMessageTopButton: StateSetter<boolean>;
+  setPendingMessageCount?: StateSetter<number>;
   setThemeMode: StateSetter<ColorMode>;
   themeMode: ColorMode;
 };
 
 export function useWorkbenchUiActions(scope: WorkbenchUiActionsScope) {
-  const { responseBodyRef, responseTab, setShowMessageTopButton, setThemeMode, themeMode } = scope;
+  const { responseBodyRef, responseTab, setShowMessageTopButton, setPendingMessageCount, setThemeMode, themeMode } =
+    scope;
 
   function handleResponseBodyScroll(event: UIEvent<HTMLDivElement>) {
     if (responseTab !== "messages") return;
-    setShowMessageTopButton(event.currentTarget.scrollTop > 96);
+    const awayFromTop = event.currentTarget.scrollTop > 96;
+    setShowMessageTopButton(awayFromTop);
+    if (!awayFromTop) setPendingMessageCount?.(0);
   }
 
   function scrollMessagesToTop() {
     responseBodyRef.current?.scrollTo({ top: 0, behavior: "smooth" });
     setShowMessageTopButton(false);
+    setPendingMessageCount?.(0);
   }
 
   useEffect(() => {

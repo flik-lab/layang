@@ -1,9 +1,11 @@
 const { app, autoUpdater, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const { spawn } = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const fsSync = require("node:fs");
 const path = require("node:path");
 const { registerGrpcMockIpc } = require("./ipc/grpc-mock-ipc.cjs");
+const { registerGrpcGatewayIpc } = require("./ipc/grpc-gateway-ipc.cjs");
 const { registerNativeGrpcIpc } = require("./ipc/native-grpc-ipc.cjs");
 const { registerWebSocketMockIpc } = require("./ipc/ws-mock-ipc.cjs");
 const { registerRestMockIpc } = require("./ipc/rest-mock-ipc.cjs");
@@ -11,6 +13,7 @@ const { registerWindowIpc } = require("./ipc/window-ipc.cjs");
 const { registerLoggerIpc } = require("./ipc/logger-ipc.cjs");
 const { registerCertificateSettingsIpc } = require("./ipc/certificate-settings-ipc.cjs");
 const { registerAppZoomIpc } = require("./ipc/app-zoom-ipc.cjs");
+const { registerGitIpc } = require("./ipc/git-ipc.cjs");
 const {
   normalizeActiveScenarioIds,
   normalizeEnabledMethods,
@@ -21,23 +24,34 @@ const {
   stopMockServer,
 } = require("./services/grpc-mock-server.cjs");
 const { stopWebSocketMockServer } = require("./services/ws-mock-server.cjs");
+const { stopAllGatewayProfiles } = require("./services/grpc-gateway-server.cjs");
 const { stopRestMockServer } = require("./services/rest-mock-server.cjs");
 const { configureLogger, getLogger, registerProcessErrorHandlers } = require("./utils/logger.cjs");
-const {
-  configureCertificateSettings,
-  shouldAllowCertificateError,
-} = require("./utils/certificate-settings.cjs");
+const { configureCertificateSettings, shouldAllowCertificateError } = require("./utils/certificate-settings.cjs");
 const { configureAppZoomSettings } = require("./utils/app-zoom-settings.cjs");
+const { configureSecureSecrets } = require("./utils/secure-secrets.cjs");
+const { configureWebHttpsCertificates } = require("./utils/web-https-certificates.cjs");
 const { createWindow } = require("./window/create-window.cjs");
 const { readJsonIfExists, walkDirectory, writeTextInside } = require("./utils/file-utils.cjs");
 const { windowFromEvent } = require("./utils/ipc-utils.cjs");
-const { safePathSegment, safeRelativePath } = require("./utils/path-utils.cjs");
+const { safePathSegment } = require("./utils/path-utils.cjs");
+const { ROOT_FILE: gitWorkspaceRootFile, readGitWorkspace, writeGitWorkspace } = require("../lib/git-workspace.cjs");
+const { exportBundleVersion: WORKSPACE_EXPORT_VERSION } = require("../lib/workspace-versions.json");
+const {
+  hasRecognizedLegacyWorkspaceFiles,
+  migrateLegacyWorkspaceTransaction,
+} = require("./services/workspace-migration.cjs");
+const { buildDocumentation, checkDocumentation } = require("../lib/docs-workspace.cjs");
 const WINDOWS_APP_USER_MODEL_ID = "com.squirrel.Layang.layang";
 const UPDATE_FEED_BASE_URL = "https://update.electronjs.org/flik-lab/layang";
 const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1000;
 const workspaceSettingsFileName = "layang-settings.json";
 const mockWorkspaceWriteLockFileName = ".layang-mock-write-lock.json";
 const mainLogger = getLogger("main");
+let pendingDeepLink = findDeepLink(process.argv);
+const workspaceInternalWriteAt = new Map();
+const workspaceInternalFingerprint = new Map();
+const workspaceWriteInProgress = new Set();
 
 startApplication();
 
@@ -56,23 +70,33 @@ function startApplication() {
   registerWindowIpc();
   registerNativeGrpcIpc();
   registerGrpcMockIpc();
+  registerGrpcGatewayIpc();
   registerWebSocketMockIpc();
   registerRestMockIpc();
   registerLoggerIpc();
   registerCertificateSettingsIpc();
   registerAppZoomIpc();
+  registerGitIpc();
 
   if (process.platform === "win32") {
     app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
   }
+  registerLayangProtocol();
 
-  app.on("second-instance", () => {
+  app.on("second-instance", (_event, commandLine) => {
+    const deepLink = findDeepLink(commandLine);
+    if (deepLink) dispatchDeepLink(deepLink);
     const existingWindow = BrowserWindow.getAllWindows()[0];
     if (!existingWindow) return;
 
     if (existingWindow.isMinimized()) existingWindow.restore();
     existingWindow.show();
     existingWindow.focus();
+  });
+
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    dispatchDeepLink(url);
   });
 
   app.on("certificate-error", (event, _webContents, url, error, certificate, callback) => {
@@ -91,11 +115,18 @@ function startApplication() {
   app.whenReady().then(() => {
     configureLogger({ app, appName: "Layang" });
     configureCertificateSettings({ app });
+    configureSecureSecrets({ app });
+    configureWebHttpsCertificates({ app });
     configureAppZoomSettings({ app });
     registerProcessErrorHandlers(getLogger("process"));
     mainLogger.info("app ready", { version: app.getVersion(), isPackaged: app.isPackaged });
     configureAutoUpdates();
-    createWindow();
+    const win = createWindow();
+    win.webContents.once("did-finish-load", () => {
+      if (!pendingDeepLink) return;
+      win.webContents.send("layang:deep-link", pendingDeepLink);
+      pendingDeepLink = "";
+    });
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -109,6 +140,41 @@ function startApplication() {
   app.on("before-quit", () => {
     stopRuntimeServices("app before quit");
   });
+}
+
+function registerLayangProtocol() {
+  try {
+    if (process.defaultApp && process.argv[1]) {
+      app.setAsDefaultProtocolClient("layang", process.execPath, [path.resolve(process.argv[1])]);
+    } else {
+      app.setAsDefaultProtocolClient("layang");
+    }
+  } catch (error) {
+    mainLogger.warn("failed to register layang protocol", {
+      error: error?.message ? String(error.message) : String(error),
+    });
+  }
+}
+
+function findDeepLink(argumentsList) {
+  return (
+    (Array.isArray(argumentsList) ? argumentsList : []).find(
+      (item) => typeof item === "string" && item.startsWith("layang://"),
+    ) || ""
+  );
+}
+
+function dispatchDeepLink(url) {
+  if (!url?.startsWith("layang://")) return;
+  const win = BrowserWindow.getAllWindows()[0];
+  if (!win || win.webContents.isLoading()) {
+    pendingDeepLink = url;
+    return;
+  }
+  win.webContents.send("layang:deep-link", url);
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
 }
 
 function handleWindowsSquirrelStartupEvent() {
@@ -153,6 +219,7 @@ function handleWindowsSquirrelStartupEvent() {
 function stopRuntimeServices(reason) {
   mainLogger.info(`${reason}: stopping mock servers`);
   void stopMockServer();
+  void stopAllGatewayProfiles();
   void stopWebSocketMockServer();
   void stopRestMockServer();
 }
@@ -249,7 +316,8 @@ function configureAutoUpdates() {
     }
   };
 
-  const firstCheckDelayMs = process.platform === "win32" && process.argv.includes("--squirrel-firstrun") ? 10_000 : 5_000;
+  const firstCheckDelayMs =
+    process.platform === "win32" && process.argv.includes("--squirrel-firstrun") ? 10_000 : 5_000;
   setTimeout(checkForUpdates, firstCheckDelayMs);
   setInterval(checkForUpdates, UPDATE_CHECK_INTERVAL_MS);
 }
@@ -270,6 +338,83 @@ ipcMain.handle("workspace:ensure-folder", async (_event, payload) => {
   if (!directoryPath) return { ok: false, error: "Missing workspace folder path." };
 
   return ensureWorkspaceFolder(directoryPath, payload?.bundle ? payload.bundle : {});
+});
+
+ipcMain.handle("workspace:migrate-legacy-local-state", async (_event, payload) => {
+  const directoryPath =
+    payload && typeof payload.directoryPath === "string" && payload.directoryPath.trim()
+      ? payload.directoryPath.trim()
+      : getConfiguredWorkspaceDirectory();
+  const bundle = payload?.bundle ? payload.bundle : {};
+  const sourceFingerprint = crypto.createHash("sha256").update(JSON.stringify(bundle)).digest("hex");
+
+  try {
+    await fs.mkdir(directoryPath, { recursive: true });
+
+    if (fsSync.existsSync(path.join(directoryPath, gitWorkspaceRootFile))) {
+      return {
+        ok: true,
+        status: "already-current",
+        migrated: false,
+        existing: true,
+        directoryPath,
+        bundle: await readWorkspaceFolder(directoryPath),
+        sourceFingerprint,
+      };
+    }
+
+    if (await hasRecognizedLegacyWorkspaceFiles(directoryPath)) {
+      const legacyBundle = await readWorkspaceFolder(directoryPath);
+      const migration = await migrateLegacyWorkspaceTransaction(directoryPath, legacyBundle);
+      return {
+        ok: true,
+        status: "migrated",
+        migrated: true,
+        existing: true,
+        directoryPath,
+        bundle: workspaceBundleFromGit(migration.workspace),
+        backupPath: migration.backupPath,
+        cleanupWarning: migration.cleanupWarning,
+        sourceFingerprint,
+      };
+    }
+
+    const entries = (await fs.readdir(directoryPath)).filter((name) => name !== ".layang");
+    if (entries.length > 0) {
+      return {
+        ok: false,
+        status: "skipped",
+        directoryPath,
+        sourceFingerprint,
+        error:
+          "Legacy workspace migration target is not empty and does not contain a recognized Layang workspace. " +
+          "Choose another workspace folder to avoid overwriting unrelated files.",
+      };
+    }
+
+    const normalized = normalizeWorkspaceBundle(bundle);
+    const backupPath = await backupLegacyLocalStateBundle(directoryPath, normalized);
+    const migration = await migrateLegacyWorkspaceTransaction(directoryPath, normalized);
+    return {
+      ok: true,
+      status: "migrated",
+      migrated: true,
+      existing: false,
+      directoryPath,
+      bundle: workspaceBundleFromGit(migration.workspace),
+      backupPath: backupPath || migration.backupPath,
+      cleanupWarning: migration.cleanupWarning,
+      sourceFingerprint,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: "failed",
+      directoryPath,
+      sourceFingerprint,
+      error: error?.message ? String(error.message) : String(error),
+    };
+  }
 });
 
 ipcMain.handle("workspace:get-preference", async () => {
@@ -306,6 +451,38 @@ ipcMain.handle("workspace:choose-folder", async (event, payload) => {
   return directoryPath ? { ok: true, directoryPath } : { ok: false, cancelled: true };
 });
 
+ipcMain.handle("workspace:create-folder", async (event, payload) => {
+  const win = windowFromEvent(event);
+  const providedPath =
+    payload && typeof payload.directoryPath === "string" && payload.directoryPath.trim()
+      ? payload.directoryPath.trim()
+      : "";
+  const targetPath =
+    providedPath || (await chooseWorkspaceDirectory(win, "Create or choose a new Layang workspace folder"));
+  if (!targetPath) return { ok: false, cancelled: true };
+
+  try {
+    await fs.mkdir(targetPath, { recursive: true });
+    const entries = await fs.readdir(targetPath);
+    if (entries.includes(gitWorkspaceRootFile) || entries.includes("layang.workspace.json")) {
+      return {
+        ok: false,
+        error: "The selected folder already contains a Layang workspace. Use Open workspace folder instead.",
+      };
+    }
+    if (entries.length > 0) {
+      return {
+        ok: false,
+        error: "Choose an empty folder for a new workspace to avoid mixing unrelated files.",
+      };
+    }
+    await writeWorkspaceFolder(targetPath, payload?.bundle ? payload.bundle : {});
+    return { ok: true, created: true, directoryPath: targetPath };
+  } catch (error) {
+    return { ok: false, error: error?.message ? String(error.message) : String(error) };
+  }
+});
+
 ipcMain.handle("workspace:save-folder", async (event, payload) => {
   const win = windowFromEvent(event);
   const targetPath =
@@ -323,6 +500,11 @@ ipcMain.handle("workspace:read-mock-server", async (_event, payload) => {
   const directoryPath = payload && typeof payload.directoryPath === "string" ? payload.directoryPath.trim() : "";
   if (!directoryPath) return { ok: false, error: "Missing workspace folder path." };
   try {
+    // Git-friendly workspaces store gRPC mock state under mocks/grpc/*.yml.
+    // Reading the legacy mocks/mock-server.json tree here can return a stale
+    // snapshot and overwrite the live editor when Start is clicked.
+    const gitWorkspace = await readGitWorkspace(directoryPath);
+    if (gitWorkspace?.mockServer) return { ok: true, mockServer: gitWorkspace.mockServer };
     const mockServer = await readMockServerFromFolder(path.join(directoryPath, "mocks"));
     return { ok: true, mockServer };
   } catch (error) {
@@ -361,6 +543,24 @@ ipcMain.handle("workspace:open-path", async (_event, payload) => {
     return { ok: false, error: error?.message ? String(error.message) : String(error) };
   }
 });
+ipcMain.handle("workspace:get-revision", async (_event, payload) => {
+  const directoryPath = payload && typeof payload.directoryPath === "string" ? payload.directoryPath.trim() : "";
+  if (!directoryPath) return { ok: false, error: "Missing workspace folder path." };
+  try {
+    const fingerprint = await computeWorkspaceRevision(directoryPath);
+    return {
+      ok: true,
+      directoryPath: path.resolve(directoryPath),
+      fingerprint,
+      internalWriteAt: workspaceInternalWriteAt.get(path.resolve(directoryPath)) || 0,
+      internalFingerprint: workspaceInternalFingerprint.get(path.resolve(directoryPath)) || "",
+      writeInProgress: workspaceWriteInProgress.has(path.resolve(directoryPath)),
+    };
+  } catch (error) {
+    return { ok: false, error: error?.message ? String(error.message) : String(error) };
+  }
+});
+
 ipcMain.handle("workspace:open-folder", async (event, payload) => {
   const win = windowFromEvent(event);
   const providedPath =
@@ -370,8 +570,47 @@ ipcMain.handle("workspace:open-folder", async (event, payload) => {
   const directoryPath = providedPath || (await chooseWorkspaceDirectory(win, "Open Layang workspace folder"));
   if (!directoryPath) return { ok: false, cancelled: true };
 
-  const bundle = await readWorkspaceFolder(directoryPath);
-  return { ok: true, directoryPath, bundle };
+  try {
+    const opened = await openWorkspaceFolder(directoryPath);
+    return { ok: true, directoryPath, ...opened };
+  } catch (error) {
+    return {
+      ok: false,
+      status: "failed",
+      directoryPath,
+      error: error?.message ? String(error.message) : String(error),
+    };
+  }
+});
+
+ipcMain.handle("docs:build", async (_event, payload) => {
+  const directoryPath = payload && typeof payload.directoryPath === "string" ? payload.directoryPath.trim() : "";
+  if (!directoryPath) return { ok: false, error: "Save or open a workspace folder before publishing documentation." };
+  try {
+    const report = await buildDocumentation(directoryPath, {
+      pageId: typeof payload?.pageId === "string" ? payload.pageId : "",
+      collection: typeof payload?.collection === "string" ? payload.collection : "",
+      request: typeof payload?.request === "string" ? payload.request : "",
+      workspaceName: typeof payload?.workspaceName === "string" ? payload.workspaceName : path.basename(directoryPath),
+    });
+    return { ok: report.ok, report };
+  } catch (error) {
+    return { ok: false, error: error?.message ? String(error.message) : String(error) };
+  }
+});
+
+ipcMain.handle("docs:check", async (_event, payload) => {
+  const directoryPath = payload && typeof payload.directoryPath === "string" ? payload.directoryPath.trim() : "";
+  if (!directoryPath) return { ok: false, error: "Missing workspace folder path." };
+  try {
+    const report = await checkDocumentation(directoryPath, {
+      collection: typeof payload?.collection === "string" ? payload.collection : "",
+      request: typeof payload?.request === "string" ? payload.request : "",
+    });
+    return { ok: report.ok, report };
+  } catch (error) {
+    return { ok: false, error: error?.message ? String(error.message) : String(error) };
+  }
 });
 
 /**
@@ -422,15 +661,46 @@ function getConfiguredWorkspaceDirectory() {
 }
 
 async function ensureWorkspaceFolder(directoryPath, bundle) {
-  const snapshotPath = path.join(directoryPath, "layang.workspace.json");
-  const existingSnapshot = await readJsonIfExists(snapshotPath).catch(() => null);
-  if (existingSnapshot && typeof existingSnapshot === "object") {
-    const storedBundle = await readWorkspaceFolder(directoryPath);
-    return { ok: true, directoryPath, created: false, bundle: storedBundle };
+  await fs.mkdir(directoryPath, { recursive: true });
+  if (fsSync.existsSync(path.join(directoryPath, gitWorkspaceRootFile))) {
+    return {
+      ok: true,
+      status: "already-current",
+      directoryPath,
+      created: false,
+      bundle: await readWorkspaceFolder(directoryPath),
+    };
+  }
+  if (await hasRecognizedLegacyWorkspaceFiles(directoryPath)) {
+    const legacyBundle = await readWorkspaceFolder(directoryPath);
+    const migration = await migrateLegacyWorkspaceTransaction(directoryPath, legacyBundle);
+    return {
+      ok: true,
+      status: "migrated",
+      directoryPath,
+      created: false,
+      migrated: true,
+      bundle: workspaceBundleFromGit(migration.workspace),
+      backupPath: migration.backupPath,
+      cleanupWarning: migration.cleanupWarning,
+    };
   }
 
   await writeWorkspaceFolder(directoryPath, bundle);
-  return { ok: true, directoryPath, created: true };
+  return { ok: true, status: "created", directoryPath, created: true };
+}
+
+async function backupLegacyLocalStateBundle(directoryPath, bundle) {
+  const backupDir = path.join(directoryPath, ".layang", "backups", "legacy-local-storage-v2");
+  const backupPath = path.join(backupDir, "layang.workspace.json");
+  await fs.mkdir(backupDir, { recursive: true });
+  await writeJson(backupPath, {
+    version: 1,
+    source: "electron-local-storage",
+    capturedAt: new Date().toISOString(),
+    bundle,
+  });
+  return backupPath;
 }
 
 /**
@@ -449,68 +719,56 @@ async function chooseWorkspaceDirectory(win, title) {
  * Writes a portable workspace folder using both a full snapshot and Git-friendly split files.
  */
 async function writeWorkspaceFolder(directoryPath, bundle) {
-  await fs.mkdir(directoryPath, { recursive: true });
-  const normalized = normalizeWorkspaceBundle(bundle);
-  const project = normalized.project || {};
-  const layout = normalized.layout || {};
-  const settings = normalized.settings || {};
-
-  await writeJson(path.join(directoryPath, "layang.workspace.json"), normalized);
-  await writeJson(path.join(directoryPath, "project.json"), project);
-  await writeJson(path.join(directoryPath, "layout.json"), layout);
-  await writeJson(path.join(directoryPath, "settings.json"), settings);
-  await writeJson(path.join(directoryPath, "environments", "environments.json"), project.environments || []);
-  await writeJson(path.join(directoryPath, "examples", "examples.json"), project.examples || []);
-  await writeJson(path.join(directoryPath, "docs", "published-docs.json"), project.methodDocs || []);
-  await writeJson(path.join(directoryPath, "docs", "saved-results.json"), project.docResults || []);
-  await writeJson(path.join(directoryPath, "collections", "collections.json"), project.collections || []);
-  await writeJson(path.join(directoryPath, "requests", "tabs.json"), project.requestTabs || []);
-  await writeRequestSessionFiles(directoryPath, project.requestTabs || []);
-  await writeJson(path.join(directoryPath, "history", "history.json"), project.history || []);
-  const mockServerProject = project.mockServer && typeof project.mockServer === "object" ? project.mockServer : {};
-  await writeMockWorkspaceFilesAtomically(directoryPath, project, mockServerProject);
-
-  const protoFiles = Array.isArray(project.protoFiles) ? project.protoFiles : [];
-  await fs.rm(path.join(directoryPath, "protos"), { recursive: true, force: true });
-  for (const file of protoFiles) {
-    const relativePath = safeRelativePath(file?.name ? file.name : "schema.proto");
-    await writeTextInside(directoryPath, path.join("protos", relativePath), String(file?.text ? file.text : ""));
+  const resolvedDirectory = path.resolve(directoryPath);
+  workspaceWriteInProgress.add(resolvedDirectory);
+  workspaceInternalWriteAt.set(resolvedDirectory, Date.now());
+  try {
+    await fs.mkdir(resolvedDirectory, { recursive: true });
+    const normalized = normalizeWorkspaceBundle(bundle);
+    await writeGitWorkspace(resolvedDirectory, normalized);
+    workspaceInternalFingerprint.set(resolvedDirectory, await computeWorkspaceRevision(resolvedDirectory));
+  } finally {
+    workspaceInternalWriteAt.set(resolvedDirectory, Date.now());
+    workspaceWriteInProgress.delete(resolvedDirectory);
   }
+}
 
-  const examples = Array.isArray(project.examples) ? project.examples : [];
-  for (const example of examples) {
-    const service = safePathSegment(example.serviceName || "service");
-    const method = safePathSegment(example.methodName || "method");
-    const name = safePathSegment(example.name || example.id || "example");
-    await writeJson(path.join(directoryPath, "examples", service, method, `${name}.json`), example);
+async function computeWorkspaceRevision(directoryPath) {
+  const root = path.resolve(directoryPath);
+  const records = [];
+  async function visit(directory) {
+    let entries;
+    try {
+      entries = await fs.readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      if (entry.isDirectory() && [".git", ".layang", "node_modules", ".next", "out", "dist"].includes(entry.name))
+        continue;
+      const absolute = path.join(directory, entry.name);
+      const relative = path.relative(root, absolute).replaceAll("\\", "/");
+      if (entry.isDirectory()) {
+        if (relative === "docs/site" || relative === "docs/published" || relative === "docs/wiki-export") continue;
+        await visit(absolute);
+      } else if (entry.isFile()) {
+        const stat = await fs.stat(absolute);
+        records.push(`${relative}:${stat.size}:${Math.trunc(stat.mtimeMs)}`);
+      }
+    }
   }
-
-  const docs = Array.isArray(project.methodDocs) ? project.methodDocs : [];
-  for (const doc of docs) {
-    if (!doc?.published) continue;
-    const name = safePathSegment(`${doc.serviceName || "service"}.${doc.methodName || "method"}`);
-    await writeTextInside(directoryPath, path.join("docs", `${name}.md`), String(doc.generatedMarkdown || ""));
-  }
-
-  await writeTextInside(
-    directoryPath,
-    ".gitignore",
-    [
-      "# Layang local runtime files",
-      ".DS_Store",
-      "node_modules/",
-      "history/*.tmp",
-      "secrets*.json",
-      "*.local.json",
-      "",
-    ].join("\n"),
-  );
+  await visit(root);
+  return crypto.createHash("sha1").update(records.join("\n")).digest("hex");
 }
 
 /**
  * Reads a Layang workspace folder and returns a renderer-compatible workspace bundle.
  */
 async function readWorkspaceFolder(directoryPath) {
+  const gitWorkspace = await readGitWorkspace(directoryPath);
+  if (gitWorkspace) return workspaceBundleFromGit(gitWorkspace);
   const snapshotPath = path.join(directoryPath, "layang.workspace.json");
   const snapshot = await readJsonIfExists(snapshotPath);
   if (snapshot && typeof snapshot === "object") {
@@ -577,14 +835,46 @@ async function readWorkspaceFolder(directoryPath) {
       }
     : mockSettings;
 
-  return normalizeWorkspaceBundle({
+  const legacyBundle = normalizeWorkspaceBundle({
     type: "layang-workspace",
-    version: 4,
+    version: WORKSPACE_EXPORT_VERSION,
     exportedAt: new Date().toISOString(),
     app: "Layang",
     project,
     layout: (await readJsonIfExists(path.join(directoryPath, "layout.json"))) || {},
     settings: (await readJsonIfExists(path.join(directoryPath, "settings.json"))) || {},
+  });
+  return legacyBundle;
+}
+
+async function openWorkspaceFolder(directoryPath) {
+  if (fsSync.existsSync(path.join(directoryPath, gitWorkspaceRootFile))) {
+    return { bundle: await readWorkspaceFolder(directoryPath), migrated: false, status: "already-current" };
+  }
+  if (await hasRecognizedLegacyWorkspaceFiles(directoryPath)) {
+    const legacyBundle = await readWorkspaceFolder(directoryPath);
+    const migration = await migrateLegacyWorkspaceTransaction(directoryPath, legacyBundle);
+    return {
+      bundle: workspaceBundleFromGit(migration.workspace),
+      migrated: true,
+      status: "migrated",
+      backupPath: migration.backupPath,
+      cleanupWarning: migration.cleanupWarning,
+    };
+  }
+  return { bundle: await readWorkspaceFolder(directoryPath), migrated: false, status: "not-a-workspace" };
+}
+
+function workspaceBundleFromGit(gitWorkspace) {
+  if (!gitWorkspace) throw new Error("A readable Git/YAML workspace is required.");
+  return normalizeWorkspaceBundle({
+    type: "layang-workspace",
+    version: WORKSPACE_EXPORT_VERSION,
+    exportedAt: gitWorkspace.project?.updatedAt || new Date().toISOString(),
+    app: "Layang",
+    project: gitWorkspace.project,
+    layout: gitWorkspace.layout,
+    settings: gitWorkspace.settings,
   });
 }
 
@@ -595,7 +885,7 @@ function normalizeWorkspaceBundle(bundle) {
   const input = bundle && typeof bundle === "object" ? bundle : {};
   return {
     type: "layang-workspace",
-    version: 4,
+    version: WORKSPACE_EXPORT_VERSION,
     exportedAt: input.exportedAt || new Date().toISOString(),
     app: "Layang",
     project: input.project || input.workspace || {},
@@ -614,12 +904,10 @@ function mockWorkspaceWriteLockPath(directoryPath) {
 /**
  * Writes gRPC/REST mock config plus split scenario files under a short-lived lock.
  *
- * The running gRPC mock server watches these files for hot reload. Without a lock and
- * atomic directory replacement, a watcher can reload exactly after mocks/scenarios is
- * removed but before the new files are written, which makes the runtime fall back to
- * an empty/default scenario set for one iteration.
+ * The lock keeps overlapping workspace saves from exposing a partial scenario tree to
+ * explicit reads. Runtime/editor state is only refreshed when the user requests Sync file.
  */
-async function writeMockWorkspaceFilesAtomically(directoryPath, project, mockServerProject) {
+async function _writeMockWorkspaceFilesAtomically(directoryPath, project, mockServerProject) {
   const mocksDir = path.join(directoryPath, "mocks");
   const lockPath = mockWorkspaceWriteLockPath(directoryPath);
   await fs.mkdir(mocksDir, { recursive: true });
@@ -633,7 +921,7 @@ async function writeMockWorkspaceFilesAtomically(directoryPath, project, mockSer
     await writeJson(path.join(mocksDir, "mock-server.json"), {
       port: normalizeMockServerPort(mockServerProject.port || 50055),
       bindHost: normalizeMockBindHost(mockServerProject.bindHost || "127.0.0.1"),
-      format: mockServerProject.format === "yaml" ? "yaml" : "json",
+      format: mockServerProject.format === "json" ? "json" : "yaml",
       updatedAt:
         typeof mockServerProject.updatedAt === "string" && mockServerProject.updatedAt.trim()
           ? mockServerProject.updatedAt
@@ -647,6 +935,22 @@ async function writeMockWorkspaceFilesAtomically(directoryPath, project, mockSer
         mockServerProject.selectedScenarioIds || mockServerProject.activeScenarioIds || {},
       ),
       enabledMethods: normalizeEnabledMethods(mockServerProject.enabledMethods || {}),
+      security: mockServerProject.security || {},
+      limits: mockServerProject.limits || {},
+      protoSources: Array.isArray(mockServerProject.protoSources)
+        ? mockServerProject.protoSources
+            .map((item) => ({
+              libraryId: String(item?.libraryId || "").trim(),
+              versionId: String(item?.versionId || "").trim(),
+            }))
+            .filter((item) => item.libraryId && item.versionId)
+        : [],
+      methodBindings:
+        mockServerProject.methodBindings && typeof mockServerProject.methodBindings === "object"
+          ? mockServerProject.methodBindings
+          : {},
+      gatewayProfiles: Array.isArray(mockServerProject.gatewayProfiles) ? mockServerProject.gatewayProfiles : [],
+      activeGatewayProfileId: String(mockServerProject.activeGatewayProfileId || ""),
     });
     await writeJson(
       path.join(mocksDir, "rest-mock-server.json"),
@@ -670,27 +974,75 @@ async function writeMockWorkspaceFilesAtomically(directoryPath, project, mockSer
         mockMethodFiles,
         normalizeMockServerPort(mockServerProject.port || 50055),
       );
+      await fs.rm(path.join(mocksDir, "scenarios.json"), { force: true }).catch(() => undefined);
+      await fs.rm(path.join(mocksDir, "scenarios.yaml"), { force: true }).catch(() => undefined);
     } else {
       await writeEmptyScenarioManifest(scenariosDir);
       if (project.mockServer?.scenarioText) {
-        const ext = project.mockServer.format === "yaml" ? "yaml" : "json";
+        const sourceFormat = project.mockServer.format === "yaml" ? "yaml" : "json";
+        const parsed = parseRuntimeScenarioText(
+          String(project.mockServer.scenarioText),
+          sourceFormat,
+          normalizeMockServerPort(mockServerProject.port || 50055),
+        );
         await writeTextInside(
           directoryPath,
-          path.join("mocks", `scenarios.${ext}`),
-          String(project.mockServer.scenarioText),
+          path.join("mocks", "scenarios.yaml"),
+          stringifyWorkspaceYaml({ version: 1, scenarios: parsed.scenarios || [] }),
         );
       }
+      await fs.rm(path.join(mocksDir, "scenarios.json"), { force: true }).catch(() => undefined);
     }
   } finally {
     await fs.rm(lockPath, { force: true }).catch(() => undefined);
   }
 }
 
+function stringifyWorkspaceYaml(value, indent = 0) {
+  const pad = " ".repeat(indent);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return `${pad}[]\n`;
+    return value
+      .map((item) => {
+        if (isWorkspaceYamlScalar(item)) return `${pad}- ${formatWorkspaceYamlScalar(item)}\n`;
+        return `${pad}-\n${stringifyWorkspaceYaml(item, indent + 2)}`;
+      })
+      .join("");
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const entries = Object.entries(value).filter(([, item]) => item !== undefined);
+    if (entries.length === 0) return `${pad}{}\n`;
+    return entries
+      .map(([key, item]) => {
+        if (isWorkspaceYamlScalar(item)) return `${pad}${key}: ${formatWorkspaceYamlScalar(item)}\n`;
+        return `${pad}${key}:\n${stringifyWorkspaceYaml(item, indent + 2)}`;
+      })
+      .join("");
+  }
+  return `${pad}${formatWorkspaceYamlScalar(value)}\n`;
+}
+
+function isWorkspaceYamlScalar(value) {
+  if (Array.isArray(value)) return value.length === 0;
+  if (value && typeof value === "object") return Object.keys(value).length === 0;
+  return value === null || ["string", "number", "boolean"].includes(typeof value);
+}
+
+function formatWorkspaceYamlScalar(value) {
+  if (Array.isArray(value) && value.length === 0) return "[]";
+  if (value && typeof value === "object" && Object.keys(value).length === 0) return "{}";
+  if (value === null) return "null";
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  const raw = String(value ?? "");
+  if (!raw || /[:#\n\r\t{}[\],&*?|-]|^\s|\s$/.test(raw)) return JSON.stringify(raw);
+  return raw;
+}
+
 /**
  * Writes split mock scenario files incrementally.
  *
- * Windows frequently locks directories that are being watched by Electron, editors,
- * antivirus, or the Next dev server. For that reason mocks/scenarios is treated like
+ * Windows frequently locks directories that are open in editors, antivirus, or the
+ * Next dev server. For that reason mocks/scenarios is treated like
  * a normal workspace tree: individual scenario files are updated in place, then
  * manifest.json is written last as the source of truth. We never rename or replace
  * the whole scenarios directory during normal autosave.
@@ -704,27 +1056,26 @@ async function writeScenarioFilesIncrementally(scenariosDir, mockMethodFiles, fa
 
   for (const key of Object.keys(mockMethodFiles || {})) {
     const file = mockMethodFiles[key] || {};
-    const parsed = parseRuntimeScenarioText(
-      String(file.scenarioText || ""),
-      file.format === "yaml" ? "yaml" : "json",
-      fallbackPort,
-    );
+    const sourceFormat = file.format === "json" ? "json" : "yaml";
+    const parsed = parseRuntimeScenarioText(String(file.scenarioText || ""), sourceFormat, fallbackPort);
     const methodDir = safePathSegment(key.replace("/", ".")) || "method";
-    manifest.methods[key] = { format: "json", scenarios: {} };
+    const extension = sourceFormat === "json" ? "json" : "yaml";
+    manifest.methods[key] = { format: sourceFormat, scenarios: {} };
 
     for (const scenario of parsed.scenarios || []) {
       const scenarioId = String(scenario.id || "scenario").trim() || "scenario";
       const baseName = safePathSegment(scenarioId) || "scenario";
-      let relativeFile = `${methodDir}/${baseName}.json`;
+      let relativeFile = `${methodDir}/${baseName}.${extension}`;
       let counter = 2;
       while (usedRelativeFiles.has(relativeFile)) {
-        relativeFile = `${methodDir}/${baseName}-${counter}.json`;
+        relativeFile = `${methodDir}/${baseName}-${counter}.${extension}`;
         counter += 1;
       }
       usedRelativeFiles.add(relativeFile);
       activeRelativeFiles.add(relativeFile);
-      manifest.methods[key].scenarios[scenarioId] = { file: relativeFile, format: "json" };
-      await writeJson(path.join(scenariosDir, relativeFile), scenario);
+      manifest.methods[key].scenarios[scenarioId] = { file: relativeFile, format: sourceFormat };
+      if (sourceFormat === "json") await writeJson(path.join(scenariosDir, relativeFile), scenario);
+      else await writeTextInside(scenariosDir, relativeFile, stringifyWorkspaceYaml(scenario));
     }
   }
 
@@ -861,7 +1212,7 @@ async function writeJson(filePath, value) {
 /**
  * Writes each request tab as its own Git-friendly JSON file.
  */
-async function writeRequestSessionFiles(directoryPath, requestTabs) {
+async function _writeRequestSessionFiles(directoryPath, requestTabs) {
   const requestsDir = path.join(directoryPath, "requests", "items");
   await fs.rm(requestsDir, { recursive: true, force: true });
   const sessions = Array.isArray(requestTabs) ? requestTabs : [];
@@ -875,6 +1226,8 @@ async function writeRequestSessionFiles(directoryPath, requestTabs) {
       type: "layang-request",
       version: 1,
       id: session.id || base,
+      sourceRequestId: session.sourceRequestId || undefined,
+      grpc: session.grpc || undefined,
       title: session.title || session.methodKey,
       methodKey: session.methodKey,
       serviceName: session.serviceName || String(session.methodKey).split("/")[0] || "",
@@ -896,6 +1249,8 @@ async function writeRequestSessionFiles(directoryPath, requestTabs) {
     await writeJson(path.join(requestsDir, fileName), envelope);
     manifest.push({
       id: envelope.id,
+      sourceRequestId: envelope.sourceRequestId,
+      grpc: envelope.grpc,
       methodKey: envelope.methodKey,
       title: envelope.title,
       file: `items/${fileName}`,
@@ -993,8 +1348,8 @@ async function readScenarioGroupsFromSplitDirectory(splitDir, port) {
     const parsed = parseRuntimeScenarioText(text, format, port);
     for (const scenario of parsed.scenarios || []) {
       const key = `${scenario.service}/${scenario.method}`;
-      if (!methodScenarioGroups[key]) methodScenarioGroups[key] = [];
-      methodScenarioGroups[key].push(scenario);
+      if (!methodScenarioGroups[key]) methodScenarioGroups[key] = { format, scenarios: [] };
+      methodScenarioGroups[key].scenarios.push(scenario);
     }
   });
   return methodScenarioGroups;
@@ -1008,16 +1363,17 @@ async function readScenarioGroupsFromManifest(splitDir, manifest, port) {
       entry && typeof entry === "object" && entry.scenarios && typeof entry.scenarios === "object"
         ? entry.scenarios
         : {};
-    methodScenarioGroups[key] = [];
+    const methodFormat = entry && typeof entry === "object" && entry.format === "json" ? "json" : "yaml";
+    methodScenarioGroups[key] = { format: methodFormat, scenarios: [] };
     for (const descriptor of Object.values(scenarios)) {
       if (!descriptor || typeof descriptor !== "object" || !descriptor.file) continue;
       const relativeFile = String(descriptor.file);
       if (relativeFile.includes("..") || path.isAbsolute(relativeFile)) continue;
-      const format = descriptor.format === "yaml" || descriptor.format === "yml" ? "yaml" : "json";
+      const format = descriptor.format === "json" ? "json" : "yaml";
       const filePath = path.join(splitDir, relativeFile);
       const text = await fs.readFile(filePath, "utf8");
       const parsed = parseRuntimeScenarioText(text, format, port);
-      methodScenarioGroups[key].push(...(parsed.scenarios || []));
+      methodScenarioGroups[key].scenarios.push(...(parsed.scenarios || []));
     }
   }
   return methodScenarioGroups;
@@ -1027,7 +1383,7 @@ async function readMockServerFromFolder(mocksDir) {
   const serverConfig = (await readJsonIfExists(path.join(mocksDir, "mock-server.json")).catch(() => ({}))) || {};
   const port = normalizeMockServerPort(serverConfig.port || 50055);
   const bindHost = normalizeMockBindHost(serverConfig.bindHost || serverConfig.bind_host || "127.0.0.1");
-  const formatDefault = serverConfig.format === "yaml" ? "yaml" : "json";
+  const formatDefault = serverConfig.format === "json" ? "json" : "yaml";
   const streamDefaults = normalizeRuntimeStreamSettings(
     serverConfig.streamDefaults || serverConfig.stream_defaults || {},
     { intervalMs: 1000, loop: false, maxLoops: 0 },
@@ -1040,13 +1396,31 @@ async function readMockServerFromFolder(mocksDir) {
       {},
   );
   const enabledMethods = normalizeEnabledMethods(serverConfig.enabledMethods || serverConfig.enabled_methods || {});
+  const commonConfig = {
+    security: serverConfig.security && typeof serverConfig.security === "object" ? serverConfig.security : {},
+    limits: serverConfig.limits && typeof serverConfig.limits === "object" ? serverConfig.limits : {},
+    protoSources: Array.isArray(serverConfig.protoSources) ? serverConfig.protoSources : [],
+    methodBindings:
+      serverConfig.methodBindings && typeof serverConfig.methodBindings === "object" ? serverConfig.methodBindings : {},
+    gatewayProfiles: Array.isArray(serverConfig.gatewayProfiles) ? serverConfig.gatewayProfiles : [],
+    activeGatewayProfileId: String(serverConfig.activeGatewayProfileId || ""),
+  };
+  const persistedUpdatedAt =
+    typeof serverConfig.updatedAt === "string" && serverConfig.updatedAt.trim()
+      ? serverConfig.updatedAt
+      : new Date().toISOString();
   const splitDir = path.join(mocksDir, "scenarios");
   const methodScenarioGroups = await readScenarioGroupsFromSplitDirectory(splitDir, port);
   const methodFiles = {};
-  for (const [key, scenarios] of Object.entries(methodScenarioGroups)) {
+  for (const [key, group] of Object.entries(methodScenarioGroups)) {
+    const format = group?.format === "json" ? "json" : "yaml";
+    const scenarios = Array.isArray(group?.scenarios) ? group.scenarios : [];
     methodFiles[key] = {
-      format: "json",
-      scenarioText: JSON.stringify({ version: 1, scenarios }, null, 2),
+      format,
+      scenarioText:
+        format === "json"
+          ? `${JSON.stringify({ version: 1, scenarios }, null, 2)}\n`
+          : stringifyWorkspaceYaml({ version: 1, scenarios }),
       updatedAt: new Date().toISOString(),
     };
   }
@@ -1058,30 +1432,21 @@ async function readMockServerFromFolder(mocksDir) {
       streamDefaults,
       selectedScenarioIds,
       enabledMethods,
-      scenarioText: JSON.stringify({ version: 1, scenarios: [] }, null, 2),
+      ...commonConfig,
+      scenarioText:
+        formatDefault === "json"
+          ? `${JSON.stringify({ version: 1, scenarios: [] }, null, 2)}\n`
+          : stringifyWorkspaceYaml({ version: 1, scenarios: [] }),
       methodFiles,
-      updatedAt: new Date().toISOString(),
+      updatedAt: persistedUpdatedAt,
     };
   }
 
   const jsonPath = path.join(mocksDir, "scenarios.json");
   const yamlPath = path.join(mocksDir, "scenarios.yaml");
   try {
-    return {
-      port,
-      bindHost,
-      format: "json",
-      streamDefaults,
-      selectedScenarioIds,
-      enabledMethods,
-      scenarioText: await fs.readFile(jsonPath, "utf8"),
-      methodFiles: {},
-      updatedAt: new Date().toISOString(),
-    };
-  } catch (error) {
-    if (!error || error.code !== "ENOENT") throw error;
-  }
-  try {
+    const legacyYamlText = await fs.readFile(yamlPath, "utf8");
+    const parsed = parseRuntimeScenarioText(legacyYamlText, "yaml", port);
     return {
       port,
       bindHost,
@@ -1089,9 +1454,28 @@ async function readMockServerFromFolder(mocksDir) {
       streamDefaults,
       selectedScenarioIds,
       enabledMethods,
-      scenarioText: await fs.readFile(yamlPath, "utf8"),
+      ...commonConfig,
+      scenarioText: stringifyWorkspaceYaml({ version: 1, scenarios: parsed.scenarios || [] }),
       methodFiles: {},
-      updatedAt: new Date().toISOString(),
+      updatedAt: persistedUpdatedAt,
+    };
+  } catch (error) {
+    if (!error || error.code !== "ENOENT") throw error;
+  }
+  try {
+    const legacyJsonText = await fs.readFile(jsonPath, "utf8");
+    const parsed = parseRuntimeScenarioText(legacyJsonText, "json", port);
+    return {
+      port,
+      bindHost,
+      format: "json",
+      streamDefaults,
+      selectedScenarioIds,
+      enabledMethods,
+      ...commonConfig,
+      scenarioText: `${JSON.stringify({ version: 1, scenarios: parsed.scenarios || [] }, null, 2)}\n`,
+      methodFiles: {},
+      updatedAt: persistedUpdatedAt,
     };
   } catch (error) {
     if (!error || error.code !== "ENOENT") throw error;

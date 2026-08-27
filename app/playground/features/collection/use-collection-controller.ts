@@ -10,8 +10,13 @@ export function useCollectionController() {
   const [collectionNameDraft, setCollectionNameDraft] = useState("");
   const [requestNameDialogOpen, setRequestNameDialogOpen] = useState(false);
   const [requestNameDraft, setRequestNameDraft] = useState("");
-  const [requestKindDraft, setRequestKindDraft] = useState<ApiRequestKind>("websocket");
+  const [requestKindDraft, setRequestKindDraft] = useState<ApiRequestKind | "">("");
+  const [requestGrpcLibraryIdDraft, setRequestGrpcLibraryIdDraft] = useState("");
+  const [requestGrpcVersionIdDraft, setRequestGrpcVersionIdDraft] = useState("");
+  const [requestGrpcMethodKeyDraft, setRequestGrpcMethodKeyDraft] = useState("");
   const [requestTargetCollectionId, setRequestTargetCollectionId] = useState("");
+  const [requestTargetFolderId, setRequestTargetFolderId] = useState<string | null>(null);
+  const [requestLocationEditable, setRequestLocationEditable] = useState(false);
   const pendingCollectionImportRef = useRef<string>("");
 
   return {
@@ -27,8 +32,18 @@ export function useCollectionController() {
     setRequestNameDraft,
     requestKindDraft,
     setRequestKindDraft,
+    requestGrpcLibraryIdDraft,
+    setRequestGrpcLibraryIdDraft,
+    requestGrpcVersionIdDraft,
+    setRequestGrpcVersionIdDraft,
+    requestGrpcMethodKeyDraft,
+    setRequestGrpcMethodKeyDraft,
     requestTargetCollectionId,
     setRequestTargetCollectionId,
+    requestTargetFolderId,
+    setRequestTargetFolderId,
+    requestLocationEditable,
+    setRequestLocationEditable,
     pendingCollectionImportRef,
   };
 }

@@ -57,7 +57,8 @@ function getCurrentZoomPercent() {
 function setAppZoomPercent(zoomPercent, options = {}) {
   ensureConfigured();
   const nextZoomPercent = normalizeZoomPercent(zoomPercent);
-  const updatedAt = nextZoomPercent === state.settings.zoomPercent ? state.settings.updatedAt : new Date().toISOString();
+  const updatedAt =
+    nextZoomPercent === state.settings.zoomPercent ? state.settings.updatedAt : new Date().toISOString();
   state.settings = normalizeAppZoomSettings({ ...state.settings, zoomPercent: nextZoomPercent, updatedAt });
   if (options.persist !== false) writeSettingsFile(state.settingsFilePath, state.settings);
   return getAppZoomInfo();

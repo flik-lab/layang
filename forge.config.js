@@ -29,6 +29,7 @@ export default {
     appCategoryType: "public.app-category.developer-tools",
     icon: path.join(rootDir, "electron", "assets", "icon"),
     asar: true,
+    extraResource: [path.join(rootDir, "resources", "helpers")],
     win32metadata: {
       CompanyName: "Flik Lab",
       FileDescription: "Layang API workbench",

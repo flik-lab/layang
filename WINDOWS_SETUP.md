@@ -30,6 +30,31 @@ The portable ZIP is still useful for quick testing, but it is not the recommende
 - Downloads updates in the background, then asks the user to restart and apply the update.
 - Stops mock/runtime services before quitting for a normal exit or update restart.
 
+
+## Electron binary download during development
+
+The project explicitly allows the `electron` postinstall script in `pnpm-workspace.yaml`. This makes pnpm download the Electron binary during dependency installation instead of delaying it until `pnpm run desktop`.
+Electron 42 requires Node.js 22.12 or newer; verify it with `node --version` before repairing the installation.
+
+After pulling a revision that adds this setting, repair an existing installation with:
+
+```powershell
+Remove-Item -Recurse -Force node_modules\electron\dist -ErrorAction SilentlyContinue
+pnpm rebuild electron
+pnpm exec electron --version
+pnpm run desktop
+```
+
+If the binary download cannot reach GitHub, configure a reachable Electron mirror for the current terminal, then rebuild:
+
+```powershell
+$env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
+$env:ELECTRON_CUSTOM_DIR="{{ version }}"
+pnpm rebuild electron
+```
+
+Clear those environment variables after the binary is installed when the official GitHub source should be used again.
+
 ## Build commands
 
 Default user installer with auto-update support:
@@ -58,9 +83,9 @@ pnpm run desktop:win:setup:msi
 
 ## GitHub Release checklist
 
-1. Bump `package.json` version, for example `1.0.4`.
+1. Bump `package.json` version, for example `1.1.0`.
 2. Open **Actions → Release → Run workflow**. The workflow reads `package.json` and creates/publishes tag `v${package.version}` automatically.
-3. Alternatively, push a SemVer tag manually, for example `v1.0.4`; the workflow validates that the tag matches `package.json`.
+3. Alternatively, push a SemVer tag manually, for example `v1.1.0`; the workflow validates that the tag matches `package.json`.
 4. Let the release workflow publish Windows artifacts.
 5. Confirm the GitHub Release contains:
 

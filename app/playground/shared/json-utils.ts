@@ -42,6 +42,23 @@ export function safeJsonStringify(value: unknown, space?: number): string {
   }
 }
 
+/** Normalizes persisted or imported request payloads to editable text. */
+export function normalizeEditableText(value: unknown, fallback = ""): string {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return fallback;
+
+  if (typeof value === "object") {
+    try {
+      const serialized = JSON.stringify(value, null, 2);
+      return typeof serialized === "string" ? serialized : fallback;
+    } catch {
+      return String(value);
+    }
+  }
+
+  return String(value);
+}
+
 /** Formats JSON-like values for code blocks with optional string parsing and truncation. */
 export function safePrettyJson(value: unknown, options: PrettyJsonOptions = {}): string {
   const normalized = options.parseString && typeof value === "string" ? safeJsonParse(value) : value;

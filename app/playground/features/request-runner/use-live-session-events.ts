@@ -33,7 +33,7 @@ export function useLiveSessionEvents(scope: LiveSessionEventsScope) {
           if (session.id !== sessionId) return session;
           return {
             ...session,
-            events: appendLimitedUiEvent(session.events ?? [], uiEvent),
+            events: appendStreamingUiEvent(session.events ?? [], uiEvent),
             updatedAt: new Date().toISOString(),
           };
         }),
@@ -41,9 +41,22 @@ export function useLiveSessionEvents(scope: LiveSessionEventsScope) {
     }
 
     if (isActiveSession) {
-      setEvents((current) => appendLimitedUiEvent(current, uiEvent));
+      setEvents((current) => appendStreamingUiEvent(current, uiEvent));
     }
   }
 
   return { appendLiveEventToSession };
+}
+
+/** Keeps the full value only for the newest stream message; older rows retain previews. */
+function appendStreamingUiEvent(events: UiEvent[], event: UiEvent): UiEvent[] {
+  const compactedEvents =
+    event.kind === "message"
+      ? events.map((item) => {
+          if (item.kind !== "message" || item.fullPayload === undefined) return item;
+          const { fullPayload: _fullPayload, ...previewOnly } = item;
+          return previewOnly;
+        })
+      : events;
+  return appendLimitedUiEvent(compactedEvents, event);
 }

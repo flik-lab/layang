@@ -6,7 +6,8 @@ declare const process: { env?: Record<string, string | undefined> } | undefined;
 export const projectStorageKey = "layang-project-v2";
 export const legacyWorkspaceKey = "grpc-lab-workspaces-v1";
 export const legacyActiveWorkspaceKey = "grpc-lab-active-workspace-v1";
-export const railWidth = 46;
+export const railWidth = 52;
+export const collapsedSidebarWidth = 0;
 export const sidebarWidth = 278;
 export const minSidebarWidth = 224;
 export const maxSidebarWidth = 440;
@@ -16,6 +17,7 @@ export const layoutStorageKey = "layang-layout-v1";
 export const legacyProjectStorageKey = "grpc-lab-project-v2";
 export const legacyLayoutStorageKey = "grpc-lab-layout-v1";
 export const workspaceFolderStorageKey = "layang-workspace-folder-v1";
+export const legacyLocalWorkspaceMigrationKey = "layang-legacy-local-workspace-migration-v1";
 export const appLogoSrc = "./layang-logo.png";
 export const configuredLogLevel = (
   process?.env?.NEXT_PUBLIC_LAYANG_LOG_LEVEL ??
@@ -23,7 +25,9 @@ export const configuredLogLevel = (
   "info"
 ).toLowerCase();
 export const defaultUnaryDeadlineMs = 120000;
-export const maxMessagesPerRequest = 500;
+// Large streaming responses can be hundreds of KB each. Keep a bounded recent
+// window while totalMessages continues tracking the complete stream count.
+export const maxMessagesPerRequest = 50;
 export const maxUiEventsPerSession = 650;
 export const maxStoredEventsPerSession = 160;
 export const maxStoredMessagesPerResult = 120;
@@ -66,14 +70,9 @@ export const defaultAssertion = "";
 export const defaultMockPort = 50055;
 export const defaultMockStreamIntervalMs = 1000;
 export const defaultMockStreamLoop = false;
-export const defaultMockScenarioText = JSON.stringify(
-  {
-    version: 1,
-    scenarios: [],
-  },
-  null,
-  2,
-);
+export const defaultMockScenarioText = `version: 1
+scenarios: []
+`;
 
 export const sampleProto = `syntax = "proto3";
 

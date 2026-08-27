@@ -1,6 +1,7 @@
 "use client";
 
-import { Fragment, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import { copyTextWithAnnouncement } from "@/lib/accessibility";
+import { Fragment, useMemo, useState, type MouseEvent } from "react";
 import {
   Box,
   Button,
@@ -20,6 +21,7 @@ import { ResizableTable, type ResizableTableColumn } from "../../shared/componen
 import { formatTimestampReadable, formatTimestampShort } from "../../shared/formatters";
 import { deepTextIncludes, isPayloadPreview, payloadPreviewBodyText, safePrettyJson } from "../../shared/json-utils";
 import type { HistoryItem, UiEvent } from "../../shared/workbench-types";
+import { SearchHighlightedText } from "../../shared/components/search-highlight";
 
 const maxMessageTableRows = 200;
 const maxJsonBlockChars = 60000;
@@ -118,7 +120,7 @@ export function MessageTable({
                         'var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace)',
                     }}
                   >
-                    <HighlightedInlineText text={summary} query={filterQuery} />
+                    <SearchHighlightedText text={summary} query={filterQuery} />
                   </Box>
                 </TableCell>
               </TableRow>
@@ -152,7 +154,10 @@ export function MessageTable({
                             void copyMessagePayload(event.fullPayload ?? event.payload).then((copied) => {
                               if (!copied) return;
                               setCopiedId(event.id);
-                              window.setTimeout(() => setCopiedId((current) => (current === event.id ? null : current)), 1200);
+                              window.setTimeout(
+                                () => setCopiedId((current) => (current === event.id ? null : current)),
+                                1200,
+                              );
                             });
                           }}
                           sx={{
@@ -172,7 +177,12 @@ export function MessageTable({
                           <ContentCopy sx={{ fontSize: 16 }} />
                         </IconButton>
                       </Tooltip>
-                      <JsonBlock value={event.fullPayload ?? event.payload} compact highlightQuery={filterQuery} maxChars={null} />
+                      <JsonBlock
+                        value={event.fullPayload ?? event.payload}
+                        compact
+                        highlightQuery={filterQuery}
+                        maxChars={null}
+                      />
                     </Box>
                   </TableCell>
                 </TableRow>
@@ -205,13 +215,7 @@ function oneLinePayload(value: unknown): string {
 
 /** Copies the selected message payload in a user-friendly raw/pretty format. */
 async function copyMessagePayload(value: unknown): Promise<boolean> {
-  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) return false;
-  try {
-    await navigator.clipboard.writeText(messagePayloadCopyText(value));
-    return true;
-  } catch {
-    return false;
-  }
+  return copyTextWithAnnouncement(messagePayloadCopyText(value), "Message payload");
 }
 
 /** Preserves raw text messages while pretty-printing JSON-like payloads. */
@@ -264,8 +268,8 @@ export function EventList({
             <Typography variant="caption" color="text.secondary">
               {formatTimestampReadable(event.timestamp)}
             </Typography>
-            <Typography variant="body2" sx={{ fontWeight: 520 }}>
-              <HighlightedInlineText text={event.title} query={filterQuery} />
+            <Typography variant="body2" sx={{ fontWeight: 500 }}>
+              <SearchHighlightedText text={event.title} query={filterQuery} />
             </Typography>
           </Stack>
           <JsonBlock value={event.payload} highlightQuery={filterQuery} />
@@ -362,7 +366,7 @@ export function JsonBlock({
         .join(" ")}
     >
       <code>
-        <HighlightedCodeText text={displayText} query={highlightQuery} />
+        <SearchHighlightedText text={displayText} query={highlightQuery} />
       </code>
     </pre>
   );
@@ -380,49 +384,4 @@ function jsonBlockText(value: unknown, maxChars: number | null): string {
   if (maxChars === null || text.length <= maxChars) return text;
   return `${text.slice(0, maxChars)}
 ...`;
-}
-
-/** Highlights a query in preformatted code text. */
-function HighlightedCodeText({ text, query }: { text: string; query: string }) {
-  return renderBoldMatches(text, query);
-}
-
-/** Highlights a query in a compact single-line label without changing the source value. */
-function HighlightedInlineText({ text, query }: { text: string; query: string }) {
-  return renderBoldMatches(text, query);
-}
-
-/** Renders query matches in bold without mutating or filtering the source value. */
-function renderBoldMatches(text: string, query: string) {
-  const needle = query.trim();
-  if (!needle) return text;
-
-  const regex = new RegExp(escapeRegExp(needle), "ig");
-  const nodes: ReactNode[] = [];
-  let cursor = 0;
-
-  for (const match of text.matchAll(regex)) {
-    const matchText = match[0];
-    const start = match.index ?? cursor;
-    const end = start + matchText.length;
-
-    if (start > cursor) {
-      nodes.push(text.slice(cursor, start));
-    }
-
-    nodes.push(<strong key={`match-${start}-${end}-${matchText}`}>{matchText}</strong>);
-    cursor = end;
-  }
-
-  if (cursor === 0) return text;
-  if (cursor < text.length) {
-    nodes.push(text.slice(cursor));
-  }
-
-  return nodes;
-}
-
-/** Escapes a string for safe regex use. */
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

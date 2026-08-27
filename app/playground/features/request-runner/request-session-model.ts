@@ -30,7 +30,7 @@ export function createRequestSession(
     requestJson: options.requestJson ?? JSON.stringify(generateExampleFromType(root, method.requestType), null, 2),
     metadata: (options.metadata ?? defaultMetadata).map((item) => ({ ...item })),
     transportMode: options.transportMode ?? "grpc-web",
-    baseUrl: options.baseUrl ?? "http://localhost:9080/grpc/web",
+    baseUrl: options.baseUrl ?? "http://127.0.0.1:8080",
     nativeTarget: options.nativeTarget ?? "localhost:50051",
     environmentKey: options.environmentKey ?? "default",
     assertionJson: options.assertionJson ?? defaultAssertion,

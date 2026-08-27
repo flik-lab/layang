@@ -4,10 +4,12 @@ import type {
   RestAuthConfig,
   RestMockProject,
   RestMockScenario,
+  SavedExample,
 } from "../../shared/workbench-types";
 import type { GrpcResult } from "@/lib/types";
 import { createId } from "../../shared/entity-utils";
 import { normalizeRestMockBindHost, normalizeRestMockPort } from "../workspace/workspace-model";
+import { renderExampleDocBlock } from "../docs-publisher/docs-renderer";
 
 export const restMethods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 
@@ -128,15 +130,18 @@ export function renderRestDocsMarkdown({
   collectionRequest,
   url,
   latestResult,
+  examples = [],
 }: {
   collectionRequest: ApiCollectionRequest & { collectionName?: string };
   url: string;
   latestResult: GrpcResult | null;
+  examples?: SavedExample[];
 }) {
   const method = collectionRequest.method ?? "GET";
   const headers = (collectionRequest.headers ?? []).filter((item) => item.key.trim());
   const query = (collectionRequest.restParams ?? []).filter((item) => item.key.trim());
   const path = (collectionRequest.restPathParams ?? []).filter((item) => item.key.trim());
+  const visibleExamples = examples.filter((example) => example.enabled !== false);
   return [
     `# ${method} ${collectionRequest.name}`,
     "",
@@ -166,6 +171,12 @@ export function renderRestDocsMarkdown({
     latestResult ? "## Latest response" : "",
     latestResult ? `- HTTP status: \`${latestResult.httpStatus ?? "unknown"}\`` : "",
     latestResult ? `- Duration: \`${latestResult.durationMs}ms\`` : "",
+    "",
+    "## Examples",
+    "",
+    visibleExamples.length
+      ? visibleExamples.flatMap((example, index) => renderExampleDocBlock(example, index)).join("\n")
+      : "No saved examples yet.",
   ]
     .filter((line, index, lines) => line || lines[index - 1])
     .join("\n");

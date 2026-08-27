@@ -4,6 +4,8 @@ import { toErrorMessage } from "../../shared/error-utils";
 import { isPlainRecord } from "../../shared/json-utils";
 import { clamp } from "../../shared/number-utils";
 import { methodKey } from "../../shared/rpc-method-utils";
+import { normalizeGrpcRequestBinding } from "../proto-library/proto-library-domain";
+import type { GrpcRequestBinding } from "../proto-library/proto-library-types";
 import {
   defaultMockPort,
   defaultMockScenarioText,
@@ -20,6 +22,7 @@ import type {
   MockScenarioResponse,
   MockScenarioSelection,
   MockServerProject,
+  GrpcGatewayProfile,
   MockStreamSettings,
   ProjectData,
 } from "../../shared/workbench-types";
@@ -35,16 +38,179 @@ import {
 
 const legacyGeneratedMockStreamIntervalMs = 500;
 
+export function createDefaultGatewayProfile(): GrpcGatewayProfile {
+  return {
+    id: "default-gateway",
+    name: "Embedded gRPC Gateway",
+    mode: "mock",
+    listenHost: "127.0.0.1",
+    listenPort: defaultMockPort,
+    listenSecurity: { type: "insecure" },
+    upstreams: [{ target: "localhost:50051", weight: 1, security: { type: "insecure" } }],
+    methodBehaviors: {},
+    noMatchBehavior: "proxy",
+    webUpstreamMode: "local-mock",
+    forwardMetadata: true,
+    forwardDeadlines: true,
+    forwardCancellation: true,
+    capture: {
+      enabled: false,
+      maxStreamMessages: 20,
+      maxStreamDurationMs: 30000,
+      maxMessageBytes: 5 * 1024 * 1024,
+      redactMetadataKeys: ["authorization", "cookie", "x-api-key"],
+    },
+    retry: { enabled: false, maxRetries: 1, backoffMs: 150 },
+    circuitBreaker: { enabled: true, failureThreshold: 5, openMs: 10000 },
+    limits: { maxReceiveBytes: 50 * 1024 * 1024, maxSendBytes: 50 * 1024 * 1024 },
+    web: {
+      enabled: true,
+      host: "127.0.0.1",
+      port: 8080,
+      security: { type: "insecure" },
+      allowHttp1Fallback: true,
+      maxConcurrentStreams: 100,
+      maxRequestBytes: 10 * 1024 * 1024,
+      cors: {
+        // Web Access binds to loopback by default, so accepting any browser origin is
+        // the least surprising local-development behavior. Users can still restrict it.
+        allowedOrigins: ["*"],
+        allowedHeaders: ["authorization", "content-type", "grpc-timeout", "x-grpc-web", "x-user-agent", "x-request-id"],
+        exposedHeaders: ["grpc-status", "grpc-message", "grpc-status-details-bin"],
+        allowCredentials: false,
+        maxAgeSeconds: 600,
+      },
+    },
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export function normalizeGatewayProfile(input: Partial<GrpcGatewayProfile> | undefined | null): GrpcGatewayProfile {
+  const defaults = createDefaultGatewayProfile();
+  const upstreams =
+    Array.isArray(input?.upstreams) && input.upstreams.length
+      ? input.upstreams
+          .map((item) => ({
+            target: String(item?.target ?? "").replace(/^grpcs?:\/\//i, ""),
+            weight: Math.max(1, Math.floor(Number(item?.weight) || 1)),
+            security:
+              item?.security?.type === "tls"
+                ? { ...item.security, type: "tls" as const }
+                : { type: "insecure" as const },
+          }))
+          .filter((item) => item.target)
+      : defaults.upstreams;
+  return {
+    ...defaults,
+    ...input,
+    id: typeof input?.id === "string" && input.id ? input.id : defaults.id,
+    name: typeof input?.name === "string" && input.name ? input.name : defaults.name,
+    mode: input?.mode === "gateway" || input?.mode === "hybrid" ? input.mode : "mock",
+    listenHost: normalizeGatewayListenHost(input?.listenHost, defaults.listenHost),
+    listenPort: normalizeMockPort(input?.listenPort, defaults.listenPort),
+    listenSecurity:
+      input?.listenSecurity?.type === "tls"
+        ? {
+            type: "tls",
+            certificatePath: input.listenSecurity.certificatePath ?? "",
+            privateKeyPath: input.listenSecurity.privateKeyPath ?? "",
+            clientCaPath: input.listenSecurity.clientCaPath ?? "",
+            requireClientCertificate: Boolean(input.listenSecurity.requireClientCertificate),
+          }
+        : { type: "insecure" },
+    upstreams,
+    methodBehaviors:
+      input?.methodBehaviors && typeof input.methodBehaviors === "object" ? { ...input.methodBehaviors } : {},
+    webUpstreamMode:
+      input?.webUpstreamMode === "custom"
+        ? "custom"
+        : input?.webUpstreamMode === "local-mock"
+          ? "local-mock"
+          : upstreams[0]?.target && upstreams[0].target !== defaults.upstreams[0]?.target
+            ? "custom"
+            : "local-mock",
+    capture: { ...defaults.capture, ...(input?.capture ?? {}) },
+    retry: { ...defaults.retry, ...(input?.retry ?? {}) },
+    circuitBreaker: { ...defaults.circuitBreaker, ...(input?.circuitBreaker ?? {}) },
+    limits: { ...defaults.limits, ...(input?.limits ?? {}) },
+    web: {
+      ...defaults.web,
+      ...(input?.web ?? {}),
+      host: normalizeGatewayListenHost(input?.web?.host, defaults.web.host),
+      port: normalizeMockPort(input?.web?.port, input?.web?.security?.type === "tls" ? 8443 : defaults.web.port),
+      enabled: input?.web?.enabled !== false,
+      security:
+        input?.web?.security?.type === "tls"
+          ? {
+              type: "tls",
+              certificateMode:
+                input.web.security.certificateMode === "pfx"
+                  ? "pfx"
+                  : input.web.security.certificateMode === "local"
+                    ? "local"
+                    : "pem",
+              certificateId: input.web.security.certificateId ?? "",
+              certificatePath: input.web.security.certificatePath ?? "",
+              privateKeyPath: input.web.security.privateKeyPath ?? "",
+              certificateChainPath: input.web.security.certificateChainPath ?? "",
+              clientCaPath: input.web.security.clientCaPath ?? "",
+              pfxPath: input.web.security.pfxPath ?? "",
+              passphraseSecretId: input.web.security.passphraseSecretId ?? "",
+              requireClientCertificate: Boolean(input.web.security.requireClientCertificate),
+            }
+          : { type: "insecure" },
+      allowHttp1Fallback: input?.web?.allowHttp1Fallback !== false,
+      maxConcurrentStreams: Math.max(
+        6,
+        Math.min(1000, Math.floor(Number(input?.web?.maxConcurrentStreams) || defaults.web.maxConcurrentStreams)),
+      ),
+      maxRequestBytes: Math.max(1024, Math.floor(Number(input?.web?.maxRequestBytes) || defaults.web.maxRequestBytes)),
+      cors: {
+        ...defaults.web.cors,
+        ...(input?.web?.cors ?? {}),
+        allowedOrigins: Array.isArray(input?.web?.cors?.allowedOrigins)
+          ? input.web.cors.allowedOrigins.map(String).filter(Boolean)
+          : defaults.web.cors.allowedOrigins,
+        allowedHeaders: Array.isArray(input?.web?.cors?.allowedHeaders)
+          ? input.web.cors.allowedHeaders.map(String).filter(Boolean)
+          : defaults.web.cors.allowedHeaders,
+        exposedHeaders: Array.isArray(input?.web?.cors?.exposedHeaders)
+          ? input.web.cors.exposedHeaders.map(String).filter(Boolean)
+          : defaults.web.cors.exposedHeaders,
+      },
+    },
+    updatedAt: typeof input?.updatedAt === "string" ? input.updatedAt : new Date().toISOString(),
+  };
+}
+
 export function createDefaultMockServerProject(): MockServerProject {
   return {
     port: defaultMockPort,
+    protoSources: [],
+    security: {
+      tls: false,
+      certificatePath: "",
+      privateKeyPath: "",
+      clientCaPath: "",
+      requireClientCertificate: false,
+    },
+    limits: {
+      maxReceiveBytes: 50 * 1024 * 1024,
+      maxSendBytes: 50 * 1024 * 1024,
+      keepaliveMs: 30000,
+      requestLogs: false,
+    },
     bindHost: "127.0.0.1",
-    format: "json",
+    format: "yaml",
     scenarioText: defaultMockScenarioText,
     streamDefaults: createDefaultMockStreamDefaults(),
     selectedScenarioIds: {},
     enabledMethods: {},
     methodFiles: {},
+    methodBindings: {},
+    gatewayProfiles: [createDefaultGatewayProfile()],
+    activeGatewayProfileId: "default-gateway",
+    runMode: "native",
     updatedAt: new Date().toISOString(),
   };
 }
@@ -52,6 +218,15 @@ export function createDefaultMockServerProject(): MockServerProject {
 /**
  * Normalizes persisted mock server config so older projects can be opened safely.
  */
+
+function normalizeGatewayListenHost(value: unknown, fallback = "127.0.0.1"): string {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return fallback;
+  const withoutScheme = raw.replace(/^https?:\/\//i, "").replace(/^grpcs?:\/\//i, "");
+  if (withoutScheme.startsWith("[")) return withoutScheme.slice(1, withoutScheme.indexOf("]"));
+  if (withoutScheme === "::") return "::";
+  return withoutScheme.split(":")[0]?.trim() || fallback;
+}
 
 export function normalizeMockBindHost(value: unknown, fallback = "127.0.0.1"): string {
   const raw = typeof value === "string" ? value.trim() : "";
@@ -68,8 +243,42 @@ export function normalizeMockBindHost(value: unknown, fallback = "127.0.0.1"): s
 export function normalizeMockServerProject(input: Partial<MockServerProject> | undefined | null): MockServerProject {
   const defaults = createDefaultMockServerProject();
   const rawFormat = input?.format;
-  const format: MockFormat = rawFormat === "yaml" ? "yaml" : "json";
+  const format: MockFormat = rawFormat === "json" ? "json" : "yaml";
   const port = normalizeMockPort(input?.port, defaults.port);
+  const explicitProtoSources = Array.isArray(input?.protoSources)
+    ? input.protoSources
+        .map((item) => ({
+          libraryId: typeof item?.libraryId === "string" ? item.libraryId.trim() : "",
+          versionId: typeof item?.versionId === "string" ? item.versionId.trim() : "",
+        }))
+        .filter((item) => item.libraryId && item.versionId)
+        .filter(
+          (item, index, items) =>
+            items.findIndex(
+              (candidate) => candidate.libraryId === item.libraryId && candidate.versionId === item.versionId,
+            ) === index,
+        )
+    : defaults.protoSources;
+  const security = {
+    ...defaults.security,
+    ...(input?.security ?? {}),
+    tls: Boolean(input?.security?.tls),
+    certificatePath: typeof input?.security?.certificatePath === "string" ? input.security.certificatePath : "",
+    privateKeyPath: typeof input?.security?.privateKeyPath === "string" ? input.security.privateKeyPath : "",
+    clientCaPath: typeof input?.security?.clientCaPath === "string" ? input.security.clientCaPath : "",
+    requireClientCertificate: Boolean(input?.security?.requireClientCertificate),
+  };
+  const limits = {
+    maxReceiveBytes: Math.max(
+      1024,
+      Math.floor(Number(input?.limits?.maxReceiveBytes) || defaults.limits.maxReceiveBytes),
+    ),
+    maxSendBytes: Math.max(1024, Math.floor(Number(input?.limits?.maxSendBytes) || defaults.limits.maxSendBytes)),
+    keepaliveMs: Math.max(1000, Math.floor(Number(input?.limits?.keepaliveMs) || defaults.limits.keepaliveMs)),
+    // Client traffic is inspected by the request runner, not retained by the
+    // mock workspace. This matters for large, continuously looping streams.
+    requestLogs: false,
+  };
   const bindHost = normalizeMockBindHost(input?.bindHost, defaults.bindHost);
   const legacyScenarioText =
     typeof input?.scenarioText === "string" && input.scenarioText.trim() ? input.scenarioText : "";
@@ -78,7 +287,9 @@ export function normalizeMockServerProject(input: Partial<MockServerProject> | u
     input?.streamDefaults ?? (legacyParsed?.ok ? legacyParsed.bundle.server?.streamDefaults : undefined),
     defaults.streamDefaults,
   ) as Required<Pick<MockStreamSettings, "intervalMs" | "loop" | "maxLoops">>;
-  const scenarioText = legacyScenarioText || formatMockScenarioBundle({ version: 1, scenarios: [] }, format);
+  const scenarioText = legacyParsed?.ok
+    ? formatMockScenarioBundle(legacyParsed.bundle, format)
+    : formatMockScenarioBundle({ version: 1, scenarios: [] }, format);
   const methodFiles = normalizeMockMethodFiles((input as Partial<MockServerProject> | undefined)?.methodFiles, format);
   const selectedScenarioIds = normalizeMockScenarioSelection(
     (input as Partial<MockServerProject> | undefined)?.selectedScenarioIds ??
@@ -88,8 +299,30 @@ export function normalizeMockServerProject(input: Partial<MockServerProject> | u
     (input as Partial<MockServerProject> | undefined)?.enabledMethods ??
       (legacyParsed?.ok ? legacyParsed.bundle.server?.enabledMethods : undefined),
   );
+  const methodBindings = normalizeMockMethodBindings((input as Partial<MockServerProject> | undefined)?.methodBindings);
+  const hasExplicitProtoSources = Boolean(input && Object.hasOwn(input, "protoSources"));
+  const legacyProtoSources = Object.values(methodBindings)
+    .map((binding) => ({ libraryId: binding.libraryId, versionId: binding.versionId }))
+    .filter(
+      (item, index, items) =>
+        Boolean(item.libraryId && item.versionId) &&
+        items.findIndex(
+          (candidate) => candidate.libraryId === item.libraryId && candidate.versionId === item.versionId,
+        ) === index,
+    );
+  const protoSources = hasExplicitProtoSources ? explicitProtoSources : legacyProtoSources;
+  const gatewayProfiles =
+    Array.isArray(input?.gatewayProfiles) && input.gatewayProfiles.length
+      ? input.gatewayProfiles.map((profile) => normalizeGatewayProfile(profile))
+      : defaults.gatewayProfiles;
+  const activeGatewayProfileId = gatewayProfiles.some((profile) => profile.id === input?.activeGatewayProfileId)
+    ? String(input?.activeGatewayProfileId)
+    : gatewayProfiles[0].id;
   return {
     port,
+    protoSources,
+    security,
+    limits,
     bindHost,
     format,
     scenarioText,
@@ -97,8 +330,22 @@ export function normalizeMockServerProject(input: Partial<MockServerProject> | u
     selectedScenarioIds,
     enabledMethods,
     methodFiles,
+    methodBindings,
+    gatewayProfiles,
+    activeGatewayProfileId,
+    runMode: input?.runMode === "web-access" ? "web-access" : "native",
     updatedAt: typeof input?.updatedAt === "string" ? input.updatedAt : new Date().toISOString(),
   };
+}
+
+export function normalizeMockMethodBindings(value: unknown): Record<string, GrpcRequestBinding> {
+  if (!isPlainRecord(value)) return {};
+  const output: Record<string, GrpcRequestBinding> = {};
+  for (const [key, binding] of Object.entries(value)) {
+    const normalized = normalizeGrpcRequestBinding(binding);
+    if (key.trim() && normalized) output[key] = normalized;
+  }
+  return output;
 }
 
 /**
@@ -112,18 +359,28 @@ export function normalizeMockMethodFiles(
   const output: Record<string, MockMethodScenarioFile> = {};
   for (const [key, item] of Object.entries(value)) {
     if (!key.trim() || !isPlainRecord(item)) continue;
-    const format: MockFormat = item.format === "yaml" ? "yaml" : fallbackFormat;
+    const declaredFormat: MockFormat =
+      item.format === "json" ? "json" : item.format === "yaml" ? "yaml" : fallbackFormat;
     const rawScenarioText =
       typeof item.scenarioText === "string" && item.scenarioText.trim()
         ? item.scenarioText
         : typeof item.text === "string" && item.text.trim()
           ? item.text
-          : formatMockScenarioBundle({ version: 1, scenarios: [] }, format);
-    const parsed = parseMockScenarioText(rawScenarioText, format, defaultMockPort);
-    const scenarioText = parsed.ok ? formatMockScenarioBundle(parsed.bundle, format) : rawScenarioText;
+          : formatMockScenarioBundle({ version: 1, scenarios: [] }, declaredFormat);
+    const declaredParsed = parseMockScenarioText(rawScenarioText, declaredFormat, defaultMockPort);
+    const alternateFormat: MockFormat = declaredFormat === "json" ? "yaml" : "json";
+    const alternateParsed = declaredParsed.ok
+      ? null
+      : parseMockScenarioText(rawScenarioText, alternateFormat, defaultMockPort);
+    const resolvedFormat = declaredParsed.ok ? declaredFormat : alternateParsed?.ok ? alternateFormat : declaredFormat;
+    const resolvedBundle = declaredParsed.ok
+      ? declaredParsed.bundle
+      : alternateParsed?.ok
+        ? alternateParsed.bundle
+        : null;
     output[key] = {
-      format,
-      scenarioText,
+      format: resolvedFormat,
+      scenarioText: resolvedBundle ? formatMockScenarioBundle(resolvedBundle, resolvedFormat) : rawScenarioText,
       updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : undefined,
     };
   }
@@ -137,7 +394,7 @@ export function getMockMethodScenarioFile(
   project: MockServerProject,
   method: RpcMethodInfo | null,
 ): MockMethodScenarioFile {
-  const format = project.format === "yaml" ? "yaml" : "json";
+  const format: MockFormat = project.format === "json" ? "json" : "yaml";
   if (!method)
     return {
       format,
@@ -174,16 +431,17 @@ export function updateMockMethodScenarioFile(
 ): MockServerProject {
   const key = methodKey(method);
   const existing = getMockMethodScenarioFile(project, method);
+  const nextFormat: MockFormat = patch.format ?? existing.format;
   const nextFile: MockMethodScenarioFile = {
     ...existing,
     ...patch,
-    format: patch.format ?? existing.format,
+    format: nextFormat,
     scenarioText: patch.scenarioText ?? existing.scenarioText,
     updatedAt: new Date().toISOString(),
   };
   return {
     ...project,
-    format: nextFile.format,
+    format: nextFormat,
     methodFiles: { ...(project.methodFiles ?? {}), [key]: nextFile },
     updatedAt: new Date().toISOString(),
   };
@@ -217,6 +475,91 @@ export function replaceActiveMockScenarioInMethodFile(
   return {
     ...nextProject,
     selectedScenarioIds: { ...nextProject.selectedScenarioIds, [key]: nextScenario.id },
+  };
+}
+
+export type SaveMockScenarioResult = {
+  project: MockServerProject;
+  scenario: MockScenario;
+};
+
+/**
+ * Saves one scenario and returns the exact normalized identity committed to the
+ * project. Callers must use the returned scenario id for editor focus and any
+ * other UI state so a rename cannot leave the UI pointing at the previous id.
+ */
+export function saveMockScenarioForMethod(
+  project: MockServerProject,
+  method: RpcMethodInfo,
+  currentScenarioId: string,
+  candidate: MockScenario,
+  format?: MockFormat,
+): SaveMockScenarioResult | null {
+  const file = getMockMethodScenarioFile(project, method);
+  const parsed = parseMockScenarioText(file.scenarioText, file.format, project.port);
+  if (!parsed.ok) return null;
+
+  const requestedId = String(candidate.id || "").trim() || currentScenarioId || "scenario";
+  const usedIds = new Set(
+    parsed.bundle.scenarios
+      .filter(
+        (scenario) =>
+          scenario.service === method.serviceName &&
+          scenario.method === method.methodName &&
+          scenario.id !== currentScenarioId,
+      )
+      .map((scenario) => scenario.id),
+  );
+  let uniqueId = requestedId;
+  let suffix = 2;
+  while (usedIds.has(uniqueId)) uniqueId = `${requestedId}-${suffix++}`;
+
+  const scenario: MockScenario = {
+    ...candidate,
+    id: uniqueId,
+    service: method.serviceName,
+    method: method.methodName,
+  };
+  let replaced = false;
+  const scenarios = parsed.bundle.scenarios.map((existing) => {
+    if (
+      existing.service !== method.serviceName ||
+      existing.method !== method.methodName ||
+      existing.id !== currentScenarioId
+    )
+      return existing;
+    replaced = true;
+    return scenario;
+  });
+  if (!replaced) scenarios.unshift(scenario);
+
+  const nextFormat = format ?? file.format;
+  const nextProject = updateMockMethodScenarioFile(project, method, {
+    format: nextFormat,
+    scenarioText: formatMockScenarioBundle({ ...parsed.bundle, scenarios }, nextFormat),
+  });
+  const key = methodKey(method);
+  const selectedScenarioIds = { ...nextProject.selectedScenarioIds };
+  const methodScenarioIds = new Set(
+    scenarios
+      .filter((existing) => existing.service === method.serviceName && existing.method === method.methodName)
+      .map((existing) => existing.id),
+  );
+  if (
+    selectedScenarioIds[key] === currentScenarioId ||
+    !selectedScenarioIds[key] ||
+    !methodScenarioIds.has(selectedScenarioIds[key])
+  ) {
+    selectedScenarioIds[key] = uniqueId;
+  }
+
+  return {
+    scenario,
+    project: {
+      ...nextProject,
+      selectedScenarioIds,
+      updatedAt: new Date().toISOString(),
+    },
   };
 }
 
@@ -358,13 +701,13 @@ export function parseAllMockScenarioFiles(project: MockServerProject, methods: R
       if (selectedScenarioId && !methodScenarios.some((scenario) => scenario.id === selectedScenarioId)) {
         return {
           ok: false,
-          error: `${key}: mocks/mock-server.json selects scenario "${selectedScenarioId}", but that id is not present in this method file.`,
+          error: `${key}: mocks/grpc/server.yml selects scenario "${selectedScenarioId}", but that id is not present in this method file.`,
         };
       }
       if (project.enabledMethods?.[key] === true && methodScenarios.length === 0) {
         return {
           ok: false,
-          error: `${key}: mocking is enabled in mocks/mock-server.json, but the method file has no matching scenario.`,
+          error: `${key}: mocking is enabled in mocks/grpc/server.yml, but the method file has no matching scenario.`,
         };
       }
       scenarios.push(...methodScenarios);

@@ -8,6 +8,7 @@ import type {
   WorkspaceImportRecord,
   WorkspaceLayoutSnapshot,
 } from "../../shared/workbench-types";
+import { WORKSPACE_EXPORT_VERSION } from "../../shared/workspace-versions";
 
 type StateSetter<T> = (value: T | ((current: T) => T)) => void;
 
@@ -39,7 +40,7 @@ export function useWorkspaceBundleActions(scope: WorkspaceBundleActionsScope) {
   function buildWorkspaceExportBundle(project = getProjectSnapshot()): WorkspaceExportBundle {
     return {
       type: "layang-workspace" as const,
-      version: 4,
+      version: WORKSPACE_EXPORT_VERSION,
       exportedAt: new Date().toISOString(),
       app: "Layang",
       project,

@@ -3,12 +3,14 @@
 import type * as protobuf from "protobufjs";
 import type { MetadataPair, RpcMethodInfo } from "@/lib/types";
 import { createRequestSession } from "../request-runner/request-session-model";
-import { upsertRequestSessionPreservingOrderList } from "./request-session-domain";
+import { reorderRequestSessionList, upsertRequestSessionPreservingOrderList } from "./request-session-domain";
 import { compactRequestSessionForStorage, normalizeVisibleResponseTab } from "../workspace/workspace-model";
+import { enqueueWorkspaceAutosave } from "../workspace/workspace-autosave";
 import { extractRequestBodyFromMockScenario, generateRandomExampleFromType } from "../mock-server/mock-scenario-model";
 import { defaultMetadata, projectStorageKey } from "../../shared/workbench-constants";
 import { toErrorMessage } from "../../shared/error-utils";
 import { methodKey } from "../../shared/rpc-method-utils";
+import { createPinnedGrpcBinding, findProtoVersion, grpcBindingIdentity } from "../proto-library/proto-library-domain";
 import type {
   ApiCollection,
   ApiCollectionRequest,
@@ -47,12 +49,18 @@ export function useRequestSessionActions(scope: any) {
     loaded,
     metadata,
     nativeTarget,
+    protoRuntimeRegistry,
+    protoLibraries,
+    activeProtoLibraryId,
+    activeProtoVersionId,
     requestJson,
     requestRunner,
     requestSessions,
     selectedMethod,
     selectedMethodKey,
     setActiveCollectionRequestId,
+    setActiveProtoLibraryId,
+    setActiveProtoVersionId,
     setActiveRequestId,
     setAssertionJson,
     setAssertionResults,
@@ -61,6 +69,7 @@ export function useRequestSessionActions(scope: any) {
     setEnvironmentKey,
     setEvents,
     setLastResult,
+    setLoaded,
     setMetadata,
     setNativeTarget,
     setRequestJson,
@@ -80,23 +89,31 @@ export function useRequestSessionActions(scope: any) {
   function selectMethod(root: protobuf.Root, method: RpcMethodInfo) {
     setActiveCollectionRequestId("");
     const key = methodKey(method);
-    const existing = requestSessions.find((session: RequestSession) => session.methodKey === key);
+    const activeProto = findProtoVersion(protoLibraries, activeProtoLibraryId, activeProtoVersionId);
+    const grpc = activeProto ? createPinnedGrpcBinding(activeProto.library, activeProto.version, method) : undefined;
+    const identity = grpcBindingIdentity(grpc, key);
+    const existing = requestSessions.find(
+      (session: RequestSession) => grpcBindingIdentity(session.grpc, session.methodKey) === identity,
+    );
     if (existing) {
       activateRequestSession(existing);
       return;
     }
 
     const grpcTransportMode: TransportMode = activeTransportMode === "native-grpc" ? "native-grpc" : "grpc-web";
-    const session = createRequestSession(root, method, {
-      metadata,
-      transportMode: grpcTransportMode,
-      baseUrl: grpcBaseUrlFallback(activeBaseUrl, baseUrl),
-      nativeTarget: activeNativeTarget,
-      environmentKey: activeEnvironmentKey,
-      assertionJson,
-    });
+    const session: RequestSession = {
+      ...createRequestSession(root, method, {
+        metadata,
+        transportMode: grpcTransportMode,
+        baseUrl: grpcBaseUrlFallback(activeBaseUrl, baseUrl),
+        nativeTarget: activeNativeTarget,
+        environmentKey: activeEnvironmentKey,
+        assertionJson,
+      }),
+      grpc,
+    };
     setRequestSessions((current: RequestSession[]) =>
-      [session, ...current.filter((item) => item.methodKey !== key)].slice(0, 16),
+      [session, ...current.filter((item) => grpcBindingIdentity(item.grpc, item.methodKey) !== identity)].slice(0, 16),
     );
     activateRequestSession(session);
   }
@@ -104,6 +121,13 @@ export function useRequestSessionActions(scope: any) {
   function activateRequestSession(session: RequestSession) {
     if (activeRequestIdRef.current && activeRequestIdRef.current !== session.id) {
       updateRequestSession(activeRequestIdRef.current, {
+        requestJson,
+        metadata,
+        transportMode: activeTransportMode,
+        baseUrl: activeBaseUrl,
+        nativeTarget: activeNativeTarget,
+        environmentKey: activeEnvironmentKey,
+        assertionJson,
         events,
         lastResult: scope.lastResult,
         assertionResults,
@@ -113,17 +137,29 @@ export function useRequestSessionActions(scope: any) {
 
     activeRequestIdRef.current = session.id;
     setActiveRequestId(session.id);
-    if (session.requestKind === "grpc" && loaded) {
-      const collectionGrpcRequest = findCollectionRequestById(collections, session.methodKey);
-      const grpcMethodKey = collectionGrpcRequest?.grpcMethodKey ?? "";
+    const pinnedCompiled = session.grpc
+      ? protoRuntimeRegistry?.resolveVersion(session.grpc.libraryId, session.grpc.versionId)
+      : null;
+    if (pinnedCompiled) {
+      setActiveProtoLibraryId(pinnedCompiled.library.id);
+      setActiveProtoVersionId(pinnedCompiled.version.id);
+      if (typeof setLoaded === "function") setLoaded(pinnedCompiled.loaded);
+    }
+    if (session.requestKind === "grpc") {
+      const sourceRequestId = session.sourceRequestId ?? session.methodKey;
+      const collectionGrpcRequest = findCollectionRequestById(collections, sourceRequestId);
+      const binding = session.grpc ?? collectionGrpcRequest?.grpc;
+      const compiled = binding ? protoRuntimeRegistry?.resolveVersion(binding.libraryId, binding.versionId) : null;
+      const grpcLoaded = compiled?.loaded ?? loaded;
+      const grpcMethodKey = binding?.methodFullName ?? collectionGrpcRequest?.grpcMethodKey ?? "";
       const grpcMethod = grpcMethodKey
-        ? loaded.methods.find((method: RpcMethodInfo) => methodKey(method) === grpcMethodKey)
+        ? grpcLoaded?.methods.find((method: RpcMethodInfo) => methodKey(method) === grpcMethodKey)
         : null;
       if (grpcMethod) {
-        setActiveCollectionRequestId("");
+        setActiveCollectionRequestId(sourceRequestId);
         setSelectedMethodKey(grpcMethodKey);
       } else {
-        setActiveCollectionRequestId(session.methodKey);
+        setActiveCollectionRequestId(sourceRequestId);
         setSelectedMethodKey("");
       }
     } else if (session.requestKind) {
@@ -131,7 +167,7 @@ export function useRequestSessionActions(scope: any) {
       setSelectedMethodKey("");
     } else {
       setActiveCollectionRequestId("");
-      setSelectedMethodKey(session.methodKey);
+      setSelectedMethodKey(session.grpc?.methodFullName ?? session.methodKey);
     }
     setRequestJson(session.requestJson);
     setMetadata(session.metadata.length ? session.metadata : defaultMetadata);
@@ -167,19 +203,14 @@ export function useRequestSessionActions(scope: any) {
     setResponseTab("messages");
   }
 
-  function persistProjectSnapshotNow(project: ProjectData) {
+  async function persistProjectSnapshotNow(project: ProjectData): Promise<void> {
     window.localStorage.setItem(projectStorageKey, JSON.stringify(project));
-
     if (!workspaceFolderPath || !window.electronWorkspace?.saveFolder) return;
-    const bundle = getWorkspaceExportBundle(project);
-    const payload = JSON.stringify({ project: bundle.project, layout: bundle.layout, settings: bundle.settings });
-    const saveState = workspaceAutosaveRef.current;
-    saveState.pendingPayload = payload;
-    saveState.pendingBundle = bundle;
-    saveState.pendingPath = workspaceFolderPath;
-    void window.electronWorkspace.saveFolder(bundle, workspaceFolderPath).then((result) => {
-      if (result?.ok) saveState.lastPayload = payload;
-    });
+    await enqueueWorkspaceAutosave(
+      workspaceAutosaveRef.current,
+      getWorkspaceExportBundle(project),
+      workspaceFolderPath,
+    );
   }
 
   function persistRequestTabsNow(nextSessions: RequestSession[], nextActiveRequestId: string) {
@@ -235,6 +266,13 @@ export function useRequestSessionActions(scope: any) {
     persistRequestTabsNow(next, keptSession?.id ?? "");
     if (keptSession && sessionId !== activeRequestId) queueMicrotask(() => activateRequestSession(keptSession));
     if (!keptSession) queueMicrotask(clearActiveView);
+  }
+
+  function reorderRequestSessions(sourceId: string, targetId: string, position: "before" | "after") {
+    const next = reorderRequestSessionList(requestSessions, sourceId, targetId, position);
+    if (next === requestSessions) return;
+    setRequestSessions(next);
+    persistRequestTabsNow(next, activeRequestId);
   }
 
   function clearActiveResponse() {
@@ -415,6 +453,19 @@ export function useRequestSessionActions(scope: any) {
     });
   }
 
+  function setAuthorizationMetadata(value: string) {
+    setMetadata((current: MetadataPair[]) => {
+      const index = current.findIndex((item) => item.key.trim().toLowerCase() === "authorization");
+      const next =
+        index >= 0
+          ? current.map((item, itemIndex) => (itemIndex === index ? { key: "authorization", value } : item))
+          : [...current, { key: "authorization", value }];
+      updateActiveSession({ metadata: next });
+      patchActiveCollectionRequest({ headers: next });
+      return next;
+    });
+  }
+
   function upsertRequestSessionPreservingOrder(session: RequestSession) {
     setRequestSessions((current: RequestSession[]) => upsertRequestSessionPreservingOrderList(current, session));
   }
@@ -437,6 +488,8 @@ export function useRequestSessionActions(scope: any) {
     persistRequestTabsNow,
     prettifyRequestJson,
     removeMetadataRow,
+    reorderRequestSessions,
+    setAuthorizationMetadata,
     removeRestPairRow,
     selectMethod,
     updateActiveRestAuth,

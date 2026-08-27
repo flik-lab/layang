@@ -16,7 +16,9 @@ import type {
   WebSocketMockStatus,
 } from "../../shared/workbench-types";
 import type { GrpcEvent, GrpcResult, LoadedProto, MetadataPair, RpcMethodInfo } from "@/lib/types";
+import { copyTextWithAnnouncement } from "@/lib/accessibility";
 import type { ManagedWebSocketClient, WebSocketClientState } from "../websocket/use-websocket-controller";
+import { savedExampleAssertionJson } from "../../shared/entity-utils";
 
 type StateSetter<T> = (value: T | ((current: T) => T)) => void;
 type CollectionNamedRequest = ApiCollectionRequest & { collectionName?: string };
@@ -217,7 +219,7 @@ export function useRequestRunnerActions(ctx: ActionContext) {
 
   async function copyActiveWebSocketMockResponse() {
     try {
-      await navigator.clipboard?.writeText(activeWebSocketMockResponseText);
+      await copyTextWithAnnouncement(activeWebSocketMockResponseText, "WebSocket mock response");
       showToast("WebSocket mock response copied.", "success");
     } catch {
       showToast("Unable to copy WebSocket mock response.", "warning");
@@ -606,7 +608,7 @@ export function useRequestRunnerActions(ctx: ActionContext) {
     return true;
   }
 
-  function handleSendWebSocketMessage() {
+  function connectManualWebSocketClient(sendInitialMessage: boolean) {
     if (!activeCollectionRequest || activeCollectionRequest.kind !== "websocket") {
       showToast("Select a WebSocket request before sending a message.", "warning");
       return;
@@ -618,7 +620,7 @@ export function useRequestRunnerActions(ctx: ActionContext) {
       existing.requestId === activeCollectionRequest.id &&
       existing.socket.readyState === WebSocket.OPEN
     ) {
-      sendMessageThroughActiveWebSocket(existing);
+      if (sendInitialMessage) sendMessageThroughActiveWebSocket(existing);
       return;
     }
 
@@ -663,7 +665,7 @@ export function useRequestRunnerActions(ctx: ActionContext) {
         contentType: "",
       });
       setWsClientState({ readyState: "open", url, sessionId: session.id, messageCount: client.messages.length });
-      sendMessageThroughActiveWebSocket(client);
+      if (sendInitialMessage) sendMessageThroughActiveWebSocket(client);
     };
 
     socket.onmessage = (event) => {
@@ -722,6 +724,19 @@ export function useRequestRunnerActions(ctx: ActionContext) {
     };
   }
 
+  function handleConnectWebSocket() {
+    connectManualWebSocketClient(false);
+  }
+
+  function handleSendWebSocketMessage() {
+    const existing = wsClientRef.current;
+    if (existing?.socket.readyState === WebSocket.OPEN) {
+      sendMessageThroughActiveWebSocket(existing);
+      return;
+    }
+    connectManualWebSocketClient(true);
+  }
+
   function exportCurrentBenchmark() {
     if (!selectedMethod) return;
     if (benchmark.results.length === 0) {
@@ -753,6 +768,8 @@ export function useRequestRunnerActions(ctx: ActionContext) {
         p50Ms: stats.p50,
         p95Ms: stats.p95,
         errorRate: stats.errorRate,
+        intervalCount: stats.intervalCount,
+        timeToFirstMessageMs: stats.timeToFirstMessageMs,
       },
       results: benchmark.results,
     };
@@ -969,12 +986,12 @@ export function useRequestRunnerActions(ctx: ActionContext) {
       overrideCollectionRequest: collectionRequest,
       overrideRequestJson: example.requestJson,
       overrideMetadata: example.metadata,
-      overrideAssertionJson: example.expectedJson,
+      overrideAssertionJson: savedExampleAssertionJson(example),
     });
   }
 
   function copyPreviewUrl() {
-    navigator.clipboard?.writeText(previewUrl).catch(() => undefined);
+    void copyTextWithAnnouncement(previewUrl, "Preview URL");
   }
 
   function exportResponse() {
@@ -1018,6 +1035,7 @@ export function useRequestRunnerActions(ctx: ActionContext) {
     appendWebSocketEvent,
     closeManualWebSocketClient,
     sendMessageThroughActiveWebSocket,
+    handleConnectWebSocket,
     handleSendWebSocketMessage,
     exportCurrentBenchmark,
     websocketProtocolsFromMetadataRows,

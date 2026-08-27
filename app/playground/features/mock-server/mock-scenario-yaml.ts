@@ -162,6 +162,8 @@ export function parseYamlScalar(text: string): unknown {
  * Checks whether a value can be rendered on one YAML line.
  */
 export function isYamlScalar(value: unknown) {
+  if (Array.isArray(value)) return value.length === 0;
+  if (isPlainRecord(value)) return Object.keys(value).length === 0;
   return value === null || ["string", "number", "boolean"].includes(typeof value);
 }
 
@@ -169,6 +171,8 @@ export function isYamlScalar(value: unknown) {
  * Formats a scalar YAML value safely.
  */
 export function formatYamlScalar(value: unknown) {
+  if (Array.isArray(value) && value.length === 0) return "[]";
+  if (isPlainRecord(value) && Object.keys(value).length === 0) return "{}";
   if (value === null) return "null";
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   const text = String(value ?? "");

@@ -1,5 +1,18 @@
 # gRPC Mock Scenario Guide
 
+## Workbench layout
+
+Open **Services → gRPC**. The workspace is split into four tabs:
+
+- **Methods** — browse Proto-grouped methods and choose one active scenario per method.
+- **Proto** — attach schema revisions from the global Schemas registry and create scenarios directly from their methods.
+- **Web access** — configure the browser endpoint, native gRPC target, TLS, CORS, and bridge logs.
+- **Activity** — inspect received requests and runtime logs.
+
+A persistent **Run mode** selector appears above every tab. Choose **Native gRPC** for the local mock server or **Web access** for the browser bridge. The status and Start/Stop button remain in the same toolbar position when changing tabs or runtime state.
+
+The global **Schemas** workspace remains the source of truth for importing and updating Proto files. Attaching a Proto to gRPC does not duplicate the schema; it pins the schema revision used by that mock server.
+
 This guide explains how Layang mock scenarios work for gRPC methods, including request matching, unary output, server-streaming output, loop behavior, and common examples.
 
 ## Scope
@@ -22,12 +35,12 @@ Mock scenarios are typically stored under:
 mocks/
   mock-server.json
   scenarios/
-    demo.v1.GreeterService.SayHello.json
-    demo.v1.GreeterService.WatchHello.json
+    demo.v1.GreeterService.SayHello.yaml
+    demo.v1.GreeterService.WatchHello.yaml
     manifest.json
 ```
 
-Each method can have its own scenario file. The content can be `json` or `yaml`.
+Each scenario is stored in its own source file. YAML and JSON remain supported, with validation and formatting based on the active file format.
 
 ## Basic Scenario Shape
 

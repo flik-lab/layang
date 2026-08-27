@@ -1,7 +1,14 @@
 "use client";
 
 import type { LoadedProto, ProtoSourceFile, RpcMethodInfo } from "@/lib/types";
-import type { SavedExample, WorkspaceImportRecord } from "../../shared/workbench-types";
+import type { SavedExample, WorkspaceExportBundle, WorkspaceImportRecord } from "../../shared/workbench-types";
+import { WORKSPACE_EXPORT_VERSION } from "../../shared/workspace-versions";
+import { defaultProjectData } from "./workspace-model";
+import {
+  appendProtoLibraryVersion,
+  createPinnedGrpcBinding,
+  findProtoVersion,
+} from "../proto-library/proto-library-domain";
 
 export function useWorkspaceIoActions(scope: any) {
   const {
@@ -9,7 +16,6 @@ export function useWorkspaceIoActions(scope: any) {
     applyProject,
     applyWorkspaceBundle,
     applyWorkspaceLayout,
-    buildGrpcWebUrl,
     downloadTextFile,
     draftEffectiveBaseUrl,
     generateExampleFromType,
@@ -37,6 +43,7 @@ export function useWorkspaceIoActions(scope: any) {
     pendingCollectionImportRef,
     projectInputRef,
     protoFiles,
+    protoLibraries,
     protoInputRef,
     sampleProto,
     selectMethod,
@@ -47,6 +54,10 @@ export function useWorkspaceIoActions(scope: any) {
     setLastResult,
     setLoaded,
     setProtoFiles,
+    setProtoLibraries,
+    setProtoPreview,
+    setActiveProtoLibraryId,
+    setActiveProtoVersionId,
     setRequestJson,
     setSelectedMethodKey,
     setSideSection,
@@ -61,6 +72,15 @@ export function useWorkspaceIoActions(scope: any) {
     windowLocalStorageProjectStorageKey,
   } = scope;
 
+  function registerProtoVersion(files: ProtoSourceFile[]) {
+    const nextLibraries = appendProtoLibraryVersion(protoLibraries, files);
+    setProtoLibraries(nextLibraries);
+    const active = findProtoVersion(nextLibraries);
+    setActiveProtoLibraryId(active?.library.id ?? "");
+    setActiveProtoVersionId(active?.version.id ?? "");
+    return nextLibraries;
+  }
+
   function saveProjectNow() {
     window.localStorage.setItem(windowLocalStorageProjectStorageKey, JSON.stringify(getProjectSnapshot()));
     window.localStorage.setItem(scope.layoutStorageKey, JSON.stringify(getLayoutSnapshot()));
@@ -71,6 +91,55 @@ export function useWorkspaceIoActions(scope: any) {
     setWorkspaceMenuAnchor(null);
     saveProjectNow();
     showToast("Workspace saved locally.", "success");
+  }
+
+  async function rememberWorkspaceFolder(nextPath: string) {
+    setWorkspaceFolderPath(nextPath);
+    window.localStorage.setItem(workspaceFolderStorageKey, nextPath);
+    await window.electronWorkspace?.setPreference?.(nextPath).catch(() => undefined);
+  }
+
+  async function createNewWorkspaceFolder() {
+    setWorkspaceMenuAnchor(null);
+    if (!window.electronWorkspace?.createFolder) {
+      showToast("New workspace folders are available in the desktop app only.", "warning");
+      return;
+    }
+
+    try {
+      if (workspaceFolderPath && window.electronWorkspace.saveFolder) {
+        await window.electronWorkspace
+          .saveFolder(getWorkspaceExportBundle(), workspaceFolderPath)
+          .catch(() => undefined);
+      }
+      const project = defaultProjectData();
+      const bundle: WorkspaceExportBundle = {
+        type: "layang-workspace",
+        version: WORKSPACE_EXPORT_VERSION,
+        exportedAt: new Date().toISOString(),
+        app: "Layang",
+        project,
+        layout: getLayoutSnapshot(),
+        settings: { themeMode: scope.themeMode },
+      };
+      const result = await window.electronWorkspace.createFolder(bundle);
+      if (!result.ok || result.cancelled) {
+        if (result.error) showToast(result.error, "warning");
+        return;
+      }
+      if (!result.directoryPath) {
+        showToast("New workspace folder path was not returned.", "error");
+        return;
+      }
+      applyProject(project);
+      setProtoPreview(null);
+      setSideSection("collections");
+      await rememberWorkspaceFolder(result.directoryPath);
+      window.localStorage.setItem(windowLocalStorageProjectStorageKey, JSON.stringify(project));
+      showToast("New workspace created and activated.", "success");
+    } catch (err) {
+      showToast(`Create workspace failed: ${toErrorMessage(err)}`, "error");
+    }
   }
 
   function exportProject() {
@@ -96,10 +165,7 @@ export function useWorkspaceIoActions(scope: any) {
       );
       if (!result.ok || result.cancelled) return;
       const nextPath = result.directoryPath ?? workspaceFolderPath;
-      if (nextPath) {
-        setWorkspaceFolderPath(nextPath);
-        window.localStorage.setItem(workspaceFolderStorageKey, nextPath);
-      }
+      if (nextPath) await rememberWorkspaceFolder(nextPath);
       showToast("Workspace folder saved.", "success");
     } catch (err) {
       showToast(`Save workspace folder failed: ${toErrorMessage(err)}`, "error");
@@ -116,10 +182,7 @@ export function useWorkspaceIoActions(scope: any) {
     try {
       const result = await window.electronWorkspace.saveFolder(getWorkspaceExportBundle());
       if (!result.ok || result.cancelled) return;
-      if (result.directoryPath) {
-        setWorkspaceFolderPath(result.directoryPath);
-        window.localStorage.setItem(workspaceFolderStorageKey, result.directoryPath);
-      }
+      if (result.directoryPath) await rememberWorkspaceFolder(result.directoryPath);
       showToast("Workspace folder saved.", "success");
     } catch (err) {
       showToast(`Save workspace folder failed: ${toErrorMessage(err)}`, "error");
@@ -137,14 +200,21 @@ export function useWorkspaceIoActions(scope: any) {
       const result = await window.electronWorkspace.openFolder();
       if (!result.ok || result.cancelled || !result.bundle) return;
       const imported = applyWorkspaceBundle(result.bundle);
-      const nextPath = result.directoryPath ?? "";
-      if (nextPath) {
-        setWorkspaceFolderPath(nextPath);
-        window.localStorage.setItem(workspaceFolderStorageKey, nextPath);
+      if (imported) {
+        setProtoPreview(null);
+        setSideSection("collections");
       }
+      const nextPath = result.directoryPath ?? "";
+      if (nextPath) await rememberWorkspaceFolder(nextPath);
       showToast(
-        imported ? "Workspace folder loaded." : "The selected folder does not contain supported workspace data.",
-        imported ? "success" : "warning",
+        imported
+          ? result.migrated
+            ? result.cleanupWarning
+              ? "Workspace converted to Git/YAML, but some legacy files could not be cleaned up. The backup was kept."
+              : "Legacy workspace converted to Git/YAML and loaded."
+            : "Workspace folder loaded."
+          : "The selected folder does not contain supported workspace data.",
+        imported ? (result.cleanupWarning ? "warning" : "success") : "warning",
       );
     } catch (err) {
       showToast(`Open workspace folder failed: ${toErrorMessage(err)}`, "error");
@@ -171,6 +241,7 @@ export function useWorkspaceIoActions(scope: any) {
       const merged = mergeProtoFiles(protoFiles, bundledProtoFiles);
       const result = loadProtoFiles(merged) as LoadedProto;
       setProtoFiles(merged);
+      registerProtoVersion(merged);
       setLoaded(result);
       const methodInfo =
         bundle.method && typeof bundle.method === "object" ? (bundle.method as Partial<RpcMethodInfo>) : null;
@@ -354,6 +425,7 @@ export function useWorkspaceIoActions(scope: any) {
       const merged = mergeProtoFiles(protoFiles, incoming);
       const result = loadProtoFiles(merged) as LoadedProto;
       setProtoFiles(merged);
+      const nextProtoLibraries = registerProtoVersion(merged);
       setLoaded(result);
 
       if (result.methods.length === 0) {
@@ -375,16 +447,21 @@ export function useWorkspaceIoActions(scope: any) {
       const pendingCollectionId = pendingCollectionImportRef.current;
       pendingCollectionImportRef.current = "";
       if (pendingCollectionId) {
+        const activeProto = findProtoVersion(nextProtoLibraries);
+        const library = activeProto?.library;
+        const version = activeProto?.version;
         addCollectionRequest(pendingCollectionId, "grpc", {
           name: method.methodName,
-          url: buildGrpcWebUrl(draftEffectiveBaseUrl, method.serviceName, method.methodName),
+          url: draftEffectiveBaseUrl,
           grpcMethodKey: methodKey(method),
+          grpc: library && version ? createPinnedGrpcBinding(library, version, method) : undefined,
           body: JSON.stringify(generateExampleFromType(result.root, method.requestType), null, 2),
         });
+        setSideSection("collections");
       } else {
         selectMethod(result.root, method);
+        setSideSection("collections");
       }
-      setSideSection("registry");
     } catch (err) {
       const message = toErrorMessage(err);
       setError(message);
@@ -398,6 +475,11 @@ export function useWorkspaceIoActions(scope: any) {
   function removeProtoFile(name: string) {
     const next = protoFiles.filter((file: ProtoSourceFile) => file.name !== name);
     setProtoFiles(next);
+    const nextLibraries = next.length ? appendProtoLibraryVersion(protoLibraries, next) : [];
+    setProtoLibraries(nextLibraries);
+    const active = findProtoVersion(nextLibraries);
+    setActiveProtoLibraryId(active?.library.id ?? "");
+    setActiveProtoVersionId(active?.version.id ?? "");
     setEvents([]);
     setLastResult(null);
     setAssertionResults([]);
@@ -430,9 +512,10 @@ export function useWorkspaceIoActions(scope: any) {
       const merged = mergeProtoFiles(protoFiles, sample);
       const result = loadProtoFiles(merged);
       setProtoFiles(merged);
+      registerProtoVersion(merged);
       setLoaded(result);
       if (result.methods[0]) selectMethod(result.root, result.methods[0]);
-      setSideSection("registry");
+      setSideSection("collections");
     } catch (err) {
       const message = toErrorMessage(err);
       setError(message);
@@ -447,6 +530,7 @@ export function useWorkspaceIoActions(scope: any) {
     importWorkspaceFiles,
     loadSample,
     openProtoFolderImporter,
+    createNewWorkspaceFolder,
     openWorkspaceFolder,
     openWorkspaceImporter,
     removeProtoFile,

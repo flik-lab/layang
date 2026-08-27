@@ -5,17 +5,28 @@
  * a file watcher, or tests without importing React/Electron UI code.
  */
 export const workspaceFiles = {
+  manifest: "layang.yml",
+  collectionsDir: "collections",
+  protosDir: "protos",
+  environmentsDir: "environments",
+  examplesDir: "examples",
+  mocksDir: "mocks",
+  docsDir: "docs/published",
+  localDir: ".layang",
+
+  // Legacy v4 migration inputs. These are read only when layang.yml is absent.
   snapshot: "layang.workspace.json",
   project: "project.json",
   layout: "layout.json",
   settings: "settings.json",
-  protosDir: "protos",
-  environments: "environments/environments.json",
-  examples: "examples/examples.json",
-  docs: "docs/published-docs.json",
-  docResults: "docs/saved-results.json",
-  requestTabs: "requests/tabs.json",
-  history: "history/history.json",
+  legacyEnvironments: "environments/environments.json",
+  collections: "collections/collections.json",
+  legacyCollections: "collections/collections.json",
+  legacyExamples: "examples/examples.json",
+  legacyDocs: "docs/published-docs.json",
+  legacyDocResults: "docs/saved-results.json",
+  legacyRequestTabs: "requests/tabs.json",
+  legacyHistory: "history/history.json",
 } as const;
 
 /** Workspace envelope accepted by current and legacy importers. */

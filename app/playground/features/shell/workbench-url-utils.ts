@@ -5,7 +5,7 @@ import type { RpcMethodInfo } from "@/lib/types";
 export function grpcBaseUrlFallback(candidate: string | undefined, fallback: string | undefined) {
   if (candidate && !isWebSocketUrl(candidate)) return candidate;
   if (fallback && !isWebSocketUrl(fallback)) return fallback;
-  return "http://localhost:9080/grpc/web";
+  return "http://127.0.0.1:8080";
 }
 
 export function stripGrpcMethodPathFromUrl(

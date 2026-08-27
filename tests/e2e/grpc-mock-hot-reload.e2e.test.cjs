@@ -205,6 +205,35 @@ test("gRPC mock e2e keeps latest UI scenario across stale file reloads and stale
       "ui",
     );
     assert.equal((await callUnary(client, { name: "A" })).message, "ui-2");
+
+    await updateActiveMockServer(
+      {
+        uiRuntimeRevision: 3,
+        scenarios: [
+          { id: "ui-2", service: "demo.Greeter", method: "SayHello", response: { data: { message: "ui-2" } } },
+        ],
+        activeScenarioIds: { "demo.Greeter/SayHello": "ui-2" },
+        enabledMethods: { "demo.Greeter/SayHello": false },
+      },
+      "ui",
+    );
+    await assert.rejects(
+      callUnary(client, { name: "A" }),
+      (error) => error?.code === grpc.status.NOT_FOUND && /disabled/i.test(error.details || error.message),
+    );
+
+    await updateActiveMockServer(
+      {
+        uiRuntimeRevision: 4,
+        scenarios: [
+          { id: "ui-2", service: "demo.Greeter", method: "SayHello", response: { data: { message: "ui-2" } } },
+        ],
+        activeScenarioIds: { "demo.Greeter/SayHello": "ui-2" },
+        enabledMethods: { "demo.Greeter/SayHello": true },
+      },
+      "ui",
+    );
+    assert.equal((await callUnary(client, { name: "A" })).message, "ui-2");
   } finally {
     if (client && typeof client.close === "function") client.close();
     await stopMockServer();

@@ -47,6 +47,7 @@ export function useBenchmarkRunner({
   const [results, setResults] = useState<BenchmarkResult[]>([]);
   const [running, setRunning] = useState(false);
   const controlRef = useRef<BenchmarkControl | null>(null);
+  const runGenerationRef = useRef(0);
 
   const stopBenchmark = useCallback(() => {
     const benchmarkControl = controlRef.current;
@@ -61,7 +62,7 @@ export function useBenchmarkRunner({
   }, [showToast]);
 
   const runStreamingBenchmark = useCallback(
-    async (parsedJson: unknown) => {
+    async (parsedJson: unknown, runGeneration: number) => {
       if (!loaded || !selectedMethod) return;
 
       const maxPeriods = Math.max(1, Math.min(1000, Math.trunc(iterations || 1)));
@@ -75,6 +76,7 @@ export function useBenchmarkRunner({
       let lastMessageAt: number | null = null;
       let periodMessages = 0;
       let periodLatencies: number[] = [];
+      let periodTimeToFirstMessageMs: number | undefined;
       let periodIndex = 0;
       let completedPeriods = 0;
       let intervalId: number | null = null;
@@ -100,41 +102,50 @@ export function useBenchmarkRunner({
         periodIndex += 1;
         completedPeriods = periodIndex;
 
-        setResults((current: BenchmarkResult[]) => [
-          ...current,
-          {
-            id: createId(),
-            index: periodIndex,
-            status,
-            durationMs: avgLatency,
-            messageCount: messages,
-            ok,
-            timestamp: new Date().toISOString(),
-            mode: "stream-period",
-            periodDurationMs: fixedPeriodMs,
-            messagesPerSecond: throughput,
-            p50LatencyMs: percentileFromSorted(latencies, 50),
-            p95LatencyMs: percentileFromSorted(latencies, 95),
-          },
-        ]);
+        setResults((current: BenchmarkResult[]) =>
+          runGeneration === runGenerationRef.current
+            ? [
+                ...current,
+                {
+                  id: createId(),
+                  index: periodIndex,
+                  status,
+                  durationMs: avgLatency,
+                  messageCount: messages,
+                  ok,
+                  timestamp: new Date().toISOString(),
+                  mode: "stream-period",
+                  periodDurationMs: fixedPeriodMs,
+                  messagesPerSecond: throughput,
+                  p50LatencyMs: percentileFromSorted(latencies, 50),
+                  p95LatencyMs: percentileFromSorted(latencies, 95),
+                  intervalCount: latencies.length,
+                  timeToFirstMessageMs: periodTimeToFirstMessageMs,
+                },
+              ]
+            : current,
+        );
 
         periodMessages = 0;
         periodLatencies = [];
+        periodTimeToFirstMessageMs = undefined;
       };
 
       const recordStreamEvent = (event: GrpcEvent) => {
         if (event.type !== "message") return;
         const now = performance.now();
-        const latency = lastMessageAt === null ? now - streamStartedAt : now - lastMessageAt;
+        if (lastMessageAt === null) {
+          periodTimeToFirstMessageMs = Math.max(0, now - streamStartedAt);
+        } else {
+          periodLatencies.push(Math.max(0, now - lastMessageAt));
+        }
         lastMessageAt = now;
         periodMessages += 1;
-        periodLatencies.push(Math.max(0, latency));
       };
 
       benchmarkControl.abortController = abortController;
       benchmarkControl.nativeRunId = transportMode === "native-grpc" ? runId : "";
       controlRef.current = benchmarkControl;
-      setResults([]);
       setRunning(true);
 
       try {
@@ -207,7 +218,7 @@ export function useBenchmarkRunner({
         if (controlRef.current === benchmarkControl) controlRef.current = null;
         benchmarkControl.abortController = null;
         benchmarkControl.nativeRunId = "";
-        setRunning(false);
+        if (runGeneration === runGenerationRef.current) setRunning(false);
       }
     },
     [
@@ -227,6 +238,9 @@ export function useBenchmarkRunner({
 
   const runBenchmark = useCallback(async () => {
     if (!loaded || !selectedMethod || running) return;
+    const runGeneration = runGenerationRef.current + 1;
+    runGenerationRef.current = runGeneration;
+    setResults([]);
 
     let parsedJson: unknown;
     try {
@@ -237,7 +251,7 @@ export function useBenchmarkRunner({
     }
 
     if (selectedMethod.responseStream) {
-      await runStreamingBenchmark(parsedJson);
+      await runStreamingBenchmark(parsedJson, runGeneration);
       return;
     }
 
@@ -248,7 +262,6 @@ export function useBenchmarkRunner({
     let completedRuns = 0;
 
     controlRef.current = benchmarkControl;
-    setResults([]);
     setRunning(true);
 
     try {
@@ -288,36 +301,44 @@ export function useBenchmarkRunner({
 
           const status = result.trailers["grpc-status"] ?? String(result.httpStatus ?? "unknown");
           completedRuns += 1;
-          setResults((current: BenchmarkResult[]) => [
-            ...current,
-            {
-              id: createId(),
-              index,
-              status,
-              durationMs: result.durationMs,
-              messageCount: getResultMessageCount(result),
-              ok: status === "0" || status === "200",
-              timestamp,
-              mode: "unary",
-            },
-          ]);
+          setResults((current: BenchmarkResult[]) =>
+            runGeneration === runGenerationRef.current
+              ? [
+                  ...current,
+                  {
+                    id: createId(),
+                    index,
+                    status,
+                    durationMs: result.durationMs,
+                    messageCount: getResultMessageCount(result),
+                    ok: status === "0" || status === "200",
+                    timestamp,
+                    mode: "unary",
+                  },
+                ]
+              : current,
+          );
         } catch (err) {
           if (benchmarkControl.cancelled || abortController.signal.aborted) break;
 
           completedRuns += 1;
-          setResults((current: BenchmarkResult[]) => [
-            ...current,
-            {
-              id: createId(),
-              index,
-              status: toErrorMessage(err),
-              durationMs: 0,
-              messageCount: 0,
-              ok: false,
-              timestamp,
-              mode: "unary",
-            },
-          ]);
+          setResults((current: BenchmarkResult[]) =>
+            runGeneration === runGenerationRef.current
+              ? [
+                  ...current,
+                  {
+                    id: createId(),
+                    index,
+                    status: toErrorMessage(err),
+                    durationMs: 0,
+                    messageCount: 0,
+                    ok: false,
+                    timestamp,
+                    mode: "unary",
+                  },
+                ]
+              : current,
+          );
         } finally {
           if (benchmarkControl.abortController === abortController) benchmarkControl.abortController = null;
           if (benchmarkControl.nativeRunId === runId) benchmarkControl.nativeRunId = "";
@@ -331,7 +352,7 @@ export function useBenchmarkRunner({
       }
     } finally {
       if (controlRef.current === benchmarkControl) controlRef.current = null;
-      setRunning(false);
+      if (runGeneration === runGenerationRef.current) setRunning(false);
     }
   }, [
     baseUrl,

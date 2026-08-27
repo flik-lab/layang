@@ -2,19 +2,62 @@ import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 
 import { hasNativeGrpcBridge } from "@/lib/native-grpc-client";
 import type { ColorMode } from "../../design-system";
 import { toErrorMessage } from "../../shared/error-utils";
-import { workspaceFolderStorageKey } from "../../shared/workbench-constants";
+import {
+  legacyLocalWorkspaceMigrationKey,
+  legacyProjectStorageKey,
+  legacyWorkspaceKey,
+  projectStorageKey,
+  workspaceFolderStorageKey,
+} from "../../shared/workbench-constants";
 import type { ProjectData, WorkspaceExportBundle } from "../../shared/workbench-types";
+import {
+  GIT_WORKSPACE_VERSION,
+  LEGACY_LOCAL_MIGRATION_MARKER_VERSION,
+  WORKSPACE_EXPORT_VERSION,
+} from "../../shared/workspace-versions";
 import { readStoredProject } from "./workspace-model";
-
-type WorkspaceAutosaveState = {
-  lastPayload: string;
-  saving: boolean;
-  pendingPayload: string;
-  pendingBundle: WorkspaceExportBundle | null;
-  pendingPath: string;
-};
+import { createWorkspaceAutosaveState } from "./workspace-autosave";
 
 type ToastSeverity = "info" | "success" | "warning" | "error";
+
+function hasLegacyLocalWorkspaceState() {
+  if (typeof window === "undefined") return false;
+  return [projectStorageKey, legacyProjectStorageKey, legacyWorkspaceKey].some((key) => {
+    const value = window.localStorage.getItem(key);
+    return typeof value === "string" && value.trim().length > 0;
+  });
+}
+
+function hasCompletedLegacyLocalMigration() {
+  if (typeof window === "undefined") return false;
+  const raw = window.localStorage.getItem(legacyLocalWorkspaceMigrationKey);
+  if (!raw) return false;
+  try {
+    const marker = JSON.parse(raw) as { version?: number; status?: string };
+    return (
+      Number(marker.version || 0) >= LEGACY_LOCAL_MIGRATION_MARKER_VERSION &&
+      (marker.status === "migrated" || marker.status === "already-current")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function markLegacyLocalMigration(directoryPath: string, migration: { status?: string; sourceFingerprint?: string }) {
+  window.localStorage.setItem(
+    legacyLocalWorkspaceMigrationKey,
+    JSON.stringify({
+      version: LEGACY_LOCAL_MIGRATION_MARKER_VERSION,
+      status: migration.status === "already-current" ? "already-current" : "migrated",
+      source: "electron-local-storage",
+      sourceVersion: WORKSPACE_EXPORT_VERSION,
+      sourceFingerprint: migration.sourceFingerprint ?? "",
+      targetGitWorkspaceVersion: GIT_WORKSPACE_VERSION,
+      directoryPath,
+      completedAt: new Date().toISOString(),
+    }),
+  );
+}
 
 type UseWorkspaceControllerOptions = {
   prefersDark: boolean;
@@ -44,13 +87,10 @@ export function useWorkspaceController({
   const [workspaceSetupOpen, setWorkspaceSetupOpen] = useState(false);
   const [workspaceSetupDefaultPath, setWorkspaceSetupDefaultPath] = useState("");
   const [workspaceSetupPending, setWorkspaceSetupPending] = useState(false);
-  const workspaceAutosaveRef = useRef<WorkspaceAutosaveState>({
-    lastPayload: "",
-    saving: false,
-    pendingPayload: "",
-    pendingBundle: null,
-    pendingPath: "",
-  });
+  const workspaceAutosaveRef = useRef(createWorkspaceAutosaveState());
+  const externalRevisionRef = useRef("");
+  const pendingExternalRevisionRef = useRef({ fingerprint: "", seen: 0 });
+  const externalReloadBusyRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -106,6 +146,57 @@ export function useWorkspaceController({
         }
       }
 
+      // Releases before the Git/YAML workspace format persisted the active project in
+      // Electron localStorage. Convert that state before showing the new-workspace setup
+      // or starting normal workspace activity. The main process keeps a local backup and
+      // verifies the resulting layang.yml workspace before this marker is written.
+      if (
+        !storedWorkspacePath &&
+        hasLegacyLocalWorkspaceState() &&
+        !hasCompletedLegacyLocalMigration() &&
+        window.electronWorkspace?.migrateLegacyLocalState
+      ) {
+        const legacyBundle: WorkspaceExportBundle = {
+          type: "layang-workspace",
+          version: WORKSPACE_EXPORT_VERSION,
+          exportedAt: new Date().toISOString(),
+          app: "Layang",
+          project: cachedProject,
+          layout: cachedLayout,
+          settings: { themeMode: initialThemeMode },
+        };
+
+        try {
+          const migration = await window.electronWorkspace.migrateLegacyLocalState(
+            legacyBundle,
+            workspacePreference?.directoryPath,
+          );
+          if (!cancelled && migration.ok && migration.directoryPath && migration.bundle) {
+            const imported = applyWorkspaceBundle(migration.bundle);
+            if (imported) {
+              rememberWorkspaceFolder(migration.directoryPath);
+              await window.electronWorkspace.setPreference?.(migration.directoryPath).catch(() => undefined);
+              markLegacyLocalMigration(migration.directoryPath, migration);
+              setHydrated(true);
+              showToast(
+                migration.cleanupWarning
+                  ? "Workspace converted, but some legacy files could not be cleaned up. The backup was kept."
+                  : migration.migrated
+                    ? "Previous local workspace converted to the Git/YAML format."
+                    : "Existing Git/YAML workspace activated; previous local state was kept as fallback.",
+                migration.cleanupWarning ? "warning" : "success",
+              );
+              return;
+            }
+          }
+          if (migration && !migration.ok) {
+            console.warn("Legacy local workspace migration was skipped.", migration.error);
+          }
+        } catch (err) {
+          console.warn("Legacy local workspace migration failed; keeping the local draft available.", err);
+        }
+      }
+
       if (cancelled) return;
 
       if (!storedWorkspacePath && workspacePreference?.ok && !workspacePreference.hasCustomPreference) {
@@ -122,7 +213,7 @@ export function useWorkspaceController({
         try {
           const defaultWorkspaceBundle: WorkspaceExportBundle = {
             type: "layang-workspace",
-            version: 4,
+            version: WORKSPACE_EXPORT_VERSION,
             exportedAt: new Date().toISOString(),
             app: "Layang",
             project: cachedProject,
@@ -155,6 +246,70 @@ export function useWorkspaceController({
       cancelled = true;
     };
   }, [prefersDark]);
+
+  useEffect(() => {
+    if (!workspaceFolderPath || !window.electronWorkspace?.getRevision || !window.electronWorkspace?.openFolder) return;
+    let cancelled = false;
+    externalRevisionRef.current = "";
+
+    async function checkExternalWorkspaceChanges() {
+      if (cancelled || externalReloadBusyRef.current) return;
+      const autosave = workspaceAutosaveRef.current;
+      if (autosave.saving || autosave.pendingBundle || autosave.flushPromise) return;
+
+      const revision = await window.electronWorkspace?.getRevision?.(workspaceFolderPath).catch(() => null);
+      if (!revision?.ok || !revision.fingerprint || revision.writeInProgress) return;
+
+      // Internal autosave can touch many files. The main process records the final
+      // fingerprint so those writes never masquerade as an external edit.
+      if (revision.internalFingerprint && revision.fingerprint === revision.internalFingerprint) {
+        externalRevisionRef.current = revision.fingerprint;
+        pendingExternalRevisionRef.current = { fingerprint: "", seen: 0 };
+        return;
+      }
+
+      if (!externalRevisionRef.current) {
+        externalRevisionRef.current = revision.fingerprint;
+        return;
+      }
+      if (externalRevisionRef.current === revision.fingerprint) {
+        pendingExternalRevisionRef.current = { fingerprint: "", seen: 0 };
+        return;
+      }
+      if (Date.now() - Number(revision.internalWriteAt || 0) < 2_000) return;
+
+      // Wait until the same external fingerprint is observed twice. This avoids
+      // reloading halfway through a Git checkout or an editor saving several files.
+      const pending = pendingExternalRevisionRef.current;
+      if (pending.fingerprint !== revision.fingerprint) {
+        pendingExternalRevisionRef.current = { fingerprint: revision.fingerprint, seen: 1 };
+        return;
+      }
+      pending.seen += 1;
+      if (pending.seen < 2) return;
+
+      externalReloadBusyRef.current = true;
+      try {
+        const result = await window.electronWorkspace?.openFolder?.(workspaceFolderPath);
+        if (!cancelled && result?.ok && result.bundle && applyWorkspaceBundle(result.bundle)) {
+          externalRevisionRef.current = revision.fingerprint;
+          pendingExternalRevisionRef.current = { fingerprint: "", seen: 0 };
+          showToast("Workspace reloaded after external file changes.", "info");
+        }
+      } catch (error) {
+        if (!cancelled) showToast(`External workspace reload failed: ${toErrorMessage(error)}`, "warning");
+      } finally {
+        externalReloadBusyRef.current = false;
+      }
+    }
+
+    void checkExternalWorkspaceChanges();
+    const interval = window.setInterval(() => void checkExternalWorkspaceChanges(), 2_500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [workspaceFolderPath, applyWorkspaceBundle, showToast]);
 
   async function applyWorkspacePreference(directoryPath?: string) {
     if (!window.electronWorkspace?.ensureFolder) return;

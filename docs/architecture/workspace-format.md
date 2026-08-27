@@ -1,249 +1,284 @@
-# Workspace Format
+# Workspace Format v6
 
-This document defines the durable workspace structure used by Layang.
+Layang workspace v6 is a human-readable, Git-friendly filesystem. YAML, Markdown, and raw `.proto` files are the canonical source of truth. Desktop and CLI use the same loader in `lib/git-workspace.cjs`.
 
-Layang workspaces are local-first and Git-friendly. The folder should be readable, reviewable, and mergeable in Git without relying on a binary database.
+## Design rules
 
-## Goals
+- One saved request is one protocol-suffixed YAML file.
+- Collection and folder hierarchy matches the filesystem.
+- Request bodies, assertions, examples, and mock payloads are native YAML values instead of JSON strings inside YAML.
+- Global proto libraries live once under `protos/` and can be shared by every collection.
+- Every proto revision is an immutable, self-contained snapshot of raw `.proto` files.
+- A request stores only the stable proto library ID, revision ID, method, and version policy. Request/response types and checksums are derived on load.
+- Shared defaults are tracked. Last-used environments, local paths, secrets, tabs, layout, and runtime state live under `.layang/` and are ignored by Git.
+- Examples use stable request references and are stored beside their request.
+- Writes are per-file and atomic; Layang does not replace the entire workspace directory.
+- Unknown entity fields are preserved under `extensions`. Existing YAML comments are retained as a preserved comment block when a managed file is rewritten.
 
-- Keep requests, protos, examples, docs, mocks, and settings in plain files.
-- Allow users to edit scenario files manually.
-- Keep workspace diffs readable in Git.
-- Avoid global state that cannot be reconstructed from files.
-- Make load/save deterministic.
+## Layout
 
-## Folder layout
-
-A typical workspace should look like this:
-
-```txt
+```text
 workspace/
-  layang.workspace.json
-  project.json
-  layout.json
-  settings.json
-  environments.json
-
-  protos/
-    notification.proto
-    tactical-display.proto
-
-  collections/
-    collection-a.json
-    collection-b.json
-
-  requests/
-    <optional request files>
-
-  mocks/
-    mock-server.json
-    scenarios/
-      notification_management.NotificationManagementService.NotificationListStream/
-        success.json
-        empty.json
-        error.json
-
-  docs/
-    method-docs.json
-    examples/
-      <example files>
-
-  history/
-    <response history files>
+├── layang.yml
+├── README.md
+├── collections/
+│   └── track-api--<stable-id>/
+│       ├── collection.yml
+│       ├── README.md
+│       └── track-query--<stable-id>/
+│           ├── folder.yml
+│           ├── README.md
+│           ├── get-track--<stable-id>.grpc.yml
+│           ├── get-track--<stable-id>.grpc.md
+│           └── get-track--<stable-id>.examples/
+│               └── friendly-track--<stable-id>.example.yml
+├── protos/
+│   ├── .layang-managed
+│   └── track-api--<stable-id>/
+│       ├── library.yml
+│       └── revisions/
+│           ├── revision-1--<stable-id>/
+│           │   ├── revision.yml
+│           │   └── files/**/*.proto
+│           └── revision-2--<stable-id>/
+│               ├── revision.yml
+│               └── files/**/*.proto
+├── environments/*.environment.yml
+├── mocks/
+│   ├── grpc/
+│   ├── rest/
+│   └── websocket/
+├── gateways/*.gateway.yml
+├── docs/
+├── workspace-schemas/*.schema.json
+└── .layang/
+    ├── local.yml
+    ├── layout.yml
+    ├── settings.yml
+    ├── tabs/*.tab.yml
+    ├── history.yml
+    ├── doc-results.yml
+    └── backups/
 ```
 
-Not every folder must exist. Missing optional folders should be treated as empty.
+## Root manifest
 
-## Root files
+`layang.yml` contains only stable workspace metadata and format identifiers.
 
-### `layang.workspace.json`
-
-Workspace identity and version marker.
-
-```json
-{
-  "version": 1,
-  "name": "My API Workspace",
-  "createdAt": "2026-06-06T10:00:00.000Z",
-  "updatedAt": "2026-06-06T10:00:00.000Z"
-}
+```yaml
+version: 6
+kind: workspace
+workspace:
+  id: workspace-a1b2c3
+  name: Naval Development
+  description: Tactical API integration workspace
+format:
+  collections: yaml-entity-v2
+  protos: revision-snapshot-v1
+  mocks: native-yaml-v2
+  examples: request-ref-v2
+  localState: .layang/
 ```
 
-### `project.json`
+Opening a tab, running a request, or changing the last-used environment does not modify this tracked file.
 
-Project-level data that does not belong to a specific feature file.
+## Collections and requests
 
-Recommended content:
+Each collection owns a directory with `collection.yml`. Each UI folder owns a directory with `folder.yml`. Each request is a separate protocol-suffixed YAML file:
 
-```json
-{
-  "version": 1,
-  "name": "My API Workspace",
-  "description": "Local-first API workspace"
-}
+```text
+login.rest.yml
+track-events.websocket.yml
+get-track.grpc.yml
 ```
 
-### `layout.json`
+Ordering uses `order` with stable numeric gaps. Moving or editing one request normally changes only that request file.
 
-UI layout persistence only. It must never contain request content or mock runtime state.
+A gRPC request stores a compact schema reference:
 
-```json
-{
-  "version": 1,
-  "sidebarWidth": 320,
-  "responsePanelWidth": 480,
-  "activePanel": "request"
-}
+```yaml
+version: 2
+kind: request
+info:
+  id: request-get-track
+  name: Get Track
+  protocol: grpc
+  order: 1000
+request:
+  url: localhost:50051
+  grpc:
+    schema:
+      libraryId: proto-track
+      revisionId: proto-track-r2
+    method: tactical.track.v1.TrackService/GetTrack
+    versionPolicy: pinned
+  body:
+    tacticalTrackNumber: 342
+  assertions:
+    grpcStatus: OK
+    bodyContains:
+      identity: IDENTITY_FRIEND
+  defaults:
+    environment: development
 ```
 
-### `settings.json`
+`requestType`, `responseType`, method signature, schema checksum, and validity are derived from the referenced snapshot when the workspace loads.
 
-Workspace settings such as default target, default transport mode, or mock defaults.
+## Proto libraries and revisions
 
-### `environments.json`
+Each revision directory is self-contained and stores the complete raw source tree under `files/`:
 
-Named environment targets.
-
-```json
-{
-  "version": 1,
-  "activeEnvironmentId": "local",
-  "environments": [
-    {
-      "id": "local",
-      "name": "Local",
-      "variables": {
-        "host": "localhost",
-        "port": "50051"
-      }
-    }
-  ]
-}
+```text
+revision-2--93a821ef/
+├── revision.yml
+└── files/
+    ├── tactical/track.proto
+    └── common/types.proto
 ```
 
-## Collections
+`revision.yml`:
 
-Collections are groups of saved requests.
-
-A collection file should contain:
-
-```json
-{
-  "version": 1,
-  "id": "collection-main",
-  "name": "Main API",
-  "requests": [
-    {
-      "id": "request-1",
-      "name": "Notification stream",
-      "kind": "grpc",
-      "service": "notification_management.NotificationManagementService",
-      "method": "NotificationListStream",
-      "protoPath": "protos/notification.proto"
-    }
-  ]
-}
+```yaml
+version: 2
+kind: proto-revision
+revision:
+  id: proto-track-r2
+  label: Revision 2
+  lifecycle: active
+  checksum: fnv1a64:a8fd38d120adb813
+  previousRevisionId: proto-track-r1
+  storage: snapshot
+  immutable: true
+  source:
+    type: directory
+    name: tactical-protos
+    localRef: proto-source:proto-track-r2
 ```
 
-Request ids should be stable. UI labels may change, but ids should not be regenerated unless the user duplicates a request.
+The actual absolute import directory is stored only in `.layang/local.yml`. On load, Layang recomputes the checksum from all normalized `.proto` files. If a stored immutable revision was edited externally, it is marked `externally-modified` and cannot be silently overwritten; create a new revision from the changed files instead.
 
-## Proto files
+Workspace v5 delta revisions remain readable for migration. Migration reconstructs each revision and writes a complete v6 snapshot.
 
-Proto files are source artifacts. They should be stored under `protos/` exactly as imported, unless the user explicitly edits them.
+## Environments
 
-Derived method metadata should not be considered more authoritative than the proto source. If a proto is removed, any tab/session that depends on it should close or become invalid with a clear message.
+Shared, non-secret environment definitions are tracked:
 
-## Mock files
-
-Mock files live under `mocks/`.
-
-```txt
-mocks/
-  mock-server.json
-  scenarios/
-    <service>.<method>/
-      <scenario-id>.json
+```yaml
+version: 2
+kind: environment
+environment:
+  key: development
+  label: Development
+  targets:
+    rest: http://localhost:3000
+    grpcNative: localhost:50051
+    grpcWeb: http://localhost:8080
+    websocket: ws://localhost:8090
+  variables:
+    trackId: "342"
 ```
 
-`mock-server.json` stores selected scenario ids and method enablement.
+A request may track a shared default in `request.defaults.environment`. The last environment selected by each user is stored per request in `.layang/local.yml`:
 
-Scenario files store individual scenario definitions.
-
-See [Mock State Sync](./mock-state-sync.md) and [Mock Server Runtime](./mock-server-runtime.md) for runtime rules.
-
-## Docs and examples
-
-Generated docs and saved examples should be stored separately.
-
-```txt
-docs/
-  method-docs.json
-  examples/
-    get-user-success.json
-    notification-stream.json
+```yaml
+requestEnvironments:
+  request-get-track: staging
+  request-watch-track: development
 ```
 
-Docs should not be required for requests to work. They are metadata that can be rebuilt or edited independently.
+This keeps personal switching behavior out of Git.
 
-## History
+## Examples
 
-Response history can be large. Keep it optional and pruneable.
+Examples use stable request IDs and native YAML values:
 
-Recommended policy:
-
-- Save history only when the user enables it or explicitly saves a result.
-- Avoid storing huge binary response bodies.
-- Store enough metadata to reopen useful results.
-
-## Load behavior
-
-When opening a workspace:
-
-1. Read root workspace files.
-2. Load protos.
-3. Load collections and requests.
-4. Load environments.
-5. Load mock server config and scenario files.
-6. Load docs/examples.
-7. Restore layout.
-8. Validate references.
-
-Invalid references should not crash the workspace. They should produce warnings and safe fallback state.
-
-## Delete behavior
-
-When deleting a workspace entity, dependent UI state must be cleaned up.
-
-| Deleted entity | Required cleanup |
-| --- | --- |
-| Collection | close tabs for all requests in the collection |
-| Request | close tabs for that request |
-| Proto | close gRPC tabs that depend on methods from that proto |
-| Scenario | clear selected scenario if it points to the deleted scenario |
-| Environment | switch active environment to a valid fallback |
-
-## Save behavior
-
-Workspace writes should be deterministic.
-
-Recommended order:
-
-1. Write content files such as scenarios, collections, docs.
-2. Write index/manifest files last.
-3. Update root `updatedAt` only after successful content writes.
-
-For Windows compatibility, prefer per-file writes over folder-level atomic replace for folders that are actively watched, especially `mocks/scenarios`.
-
-## Compatibility rule
-
-Workspace format changes must be versioned.
-
-If the shape changes, add a migration function:
-
-```txt
-load old format
-  -> normalize to current in-memory format
-  -> save current format only when user saves
+```yaml
+version: 2
+kind: example
+example:
+  id: example-friendly
+  name: Friendly track
+  enabled: true
+  requestRef:
+    id: request-get-track
+  input:
+    body:
+      tacticalTrackNumber: 342
+  expected:
+    status: OK
+    body:
+      identity: IDENTITY_FRIEND
+  assertions:
+    bodyContains:
+      identity: IDENTITY_FRIEND
 ```
 
-Do not silently drop unknown fields unless they are known to be obsolete.
+Examples are stored beside their request in `<request-file>.examples/`. Unresolved legacy examples are retained under `examples/orphaned/` rather than discarded.
+
+## Mocks
+
+REST and WebSocket scenarios are one native YAML file per scenario. gRPC method mocks store native `scenarios` arrays and never persist nested `scenarioText` JSON.
+
+```yaml
+version: 2
+kind: grpc-mock
+method:
+  service: tactical.track.v1.TrackService
+  name: GetTrack
+scenarios:
+  - id: friendly
+    input:
+      equals:
+        tacticalTrackNumber: 342
+    response:
+      data:
+        identity: IDENTITY_FRIEND
+```
+
+The existing runtime model is reconstructed on load so the desktop mock editor and CLI remain compatible.
+
+## Local paths and secrets
+
+Tracked YAML may contain a portable reference such as `certificateRef` or `localRef`, but never an absolute certificate, private-key, PFX, or imported-proto path. Actual local mappings live in `.layang/local.yml`, which is ignored by Git.
+
+The writer maintains this ignore block:
+
+```gitignore
+# BEGIN Layang local state
+.layang/
+environments/*.local.yml
+*.secret.yml
+*.local.yml
+# END Layang local state
+```
+
+## Documentation and external editing
+
+Layang creates readable Markdown templates for the workspace, collections, folders, and requests. Once edited, they become normal documentation sources. Generated API output follows `docs/settings.yml` and defaults to `generatedOutput: ignore`.
+
+`workspace-schemas/` contains JSON Schema files for common v2 entities, enabling validation and editor assistance outside Layang.
+
+Managed YAML uses a deterministic JSON-compatible YAML subset. Ambiguous values such as `{{token}}`, URLs, and YAML indicator-prefixed strings are quoted, so files remain valid for standard YAML parsers. Unknown fields are retained under `extensions`.
+
+## Loading and migration
+
+Load order:
+
+1. Read v6 split files when `layang.yml` exists.
+2. Continue reading v5 split files, including delta proto revisions, for backward compatibility.
+3. Otherwise read legacy v4 `layang.workspace.json` or `project.json` inputs.
+4. Normalize to the current in-memory `ProjectData`.
+5. On migration/save, back up the previous tracked workspace under `.layang/backups/`, then write v6 files.
+
+CLI commands:
+
+```bash
+layang workspace:migrate . --check
+layang workspace:migrate .
+layang workspace:format . --check
+layang workspace:format .
+```
+
+## Shared loader
+
+Electron and CLI both call `readGitWorkspace()`. Requests, local overlays, mock scenarios, and pinned proto snapshots therefore resolve identically in the UI and command line.

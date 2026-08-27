@@ -139,6 +139,7 @@ export function renderMethodPublicationMarkdown(input: {
   currentMetadata?: MetadataPair[];
 }): string {
   const { method, examples, protoFiles, latestResult } = input;
+  const visibleExamples = examples.filter((example) => example.enabled !== false);
   const methodMocks = input.mockScenarios ?? [];
   const source =
     protoFiles.find((file) => file.name === method.sourceFile) ??
@@ -146,7 +147,7 @@ export function renderMethodPublicationMarkdown(input: {
       file.text.includes(`service ${method.serviceName.split(".").pop() ?? method.serviceName}`),
     );
   const latestMessage = latestResult?.messages?.at(-1);
-  const requestExample = examples[0]?.requestJson?.trim() || "{}";
+  const requestExample = visibleExamples[0]?.requestJson?.trim() || "{}";
   const responseExample = latestMessage ?? latestResult?.messages?.[0] ?? null;
 
   return [
@@ -189,8 +190,8 @@ export function renderMethodPublicationMarkdown(input: {
     "",
     "## Examples",
     "",
-    examples.length
-      ? examples.flatMap((example, index) => renderExampleDocBlock(example, index)).join("\n")
+    visibleExamples.length
+      ? visibleExamples.flatMap((example, index) => renderExampleDocBlock(example, index)).join("\n")
       : "No saved examples yet.",
     "",
     "## Mock scenarios",
@@ -209,16 +210,60 @@ export function renderMethodPublicationMarkdown(input: {
  * Renders one saved example with request and metadata snippets.
  */
 export function renderExampleDocBlock(example: SavedExample, index: number): string[] {
-  return [
-    `### ${index + 1}. ${example.name}`,
-    "",
-    "Request:",
+  const documentation = {
+    summary: example.documentation?.summary?.trim() ?? "",
+    whenThisHappens: example.documentation?.whenThisHappens?.trim() ?? "",
+    explanation: example.documentation?.explanation?.trim() ?? "",
+    notes: example.documentation?.notes ?? [],
+  };
+  const lines = [`### ${index + 1}. ${example.name}`, ""];
+  const badges = [
+    example.expectedStatus ? `Status: \`${example.expectedStatus}\`` : "",
+    example.tags?.length ? `Tags: ${example.tags.map((tag) => `\`${tag}\``).join(", ")}` : "",
+  ].filter(Boolean);
+  if (badges.length) lines.push(badges.join(" · "), "");
+  if (documentation.summary) lines.push(documentation.summary, "");
+  if (documentation.whenThisHappens) lines.push("#### When this happens", "", documentation.whenThisHappens, "");
+  if (documentation.explanation) lines.push("#### Explanation", "", documentation.explanation, "");
+  if (documentation.notes.length) {
+    lines.push("#### Important notes", "", ...documentation.notes.map((note) => `- ${note}`), "");
+  }
+  const metadata = example.metadata.filter((item) => item.key.trim());
+  if (metadata.length) {
+    lines.push("#### Request metadata", "", "| Name | Value |", "|---|---|");
+    for (const item of metadata) lines.push(`| \`${item.key}\` | \`${redactExampleValue(item.key, item.value)}\` |`);
+    lines.push("");
+  }
+  lines.push(
+    "#### Request body",
     "",
     "```json",
     safePrettyJson(safeJsonParse(example.requestJson.trim() || "{}")),
     "```",
     "",
-  ];
+  );
+  if (example.expectedJson.trim())
+    lines.push("#### Expected response", "", "```json", safePrettyJson(safeJsonParse(example.expectedJson)), "```", "");
+  const trailers = example.expectedTrailers?.filter((item) => item.key.trim()) ?? [];
+  if (trailers.length) {
+    lines.push("#### Expected trailers / response metadata", "", "| Name | Value |", "|---|---|");
+    for (const item of trailers) lines.push(`| \`${item.key}\` | \`${redactExampleValue(item.key, item.value)}\` |`);
+    lines.push("");
+  }
+  if (example.assertions?.trim())
+    lines.push(
+      "#### Additional assertions",
+      "",
+      "```json",
+      safePrettyJson(safeJsonParse(example.assertions)),
+      "```",
+      "",
+    );
+  return lines;
+}
+
+function redactExampleValue(key: string, value: string): string {
+  return /authorization|token|secret|password|api[-_]?key|cookie|private[-_]?key/i.test(key) ? "{{secret}}" : value;
 }
 
 /**
