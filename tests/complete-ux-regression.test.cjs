@@ -44,8 +44,8 @@ test("mock controls use larger consistent checkbox and switch hit targets", () =
   assert.match(checkbox, /size-\[18px\]/);
   assert.match(toggle, /h-6 w-11/);
   assert.match(toggle, /bg-white/);
-  assert.match(services, /<Select[\s\S]{0,220}sx=\{\{ minHeight: 38 \}\}/);
-  assert.match(services, /sx=\{\{ width: 38, height: 38/);
+  assert.match(services, /<Select[\s\S]{0,700}minHeight: 34, height: 34, fontSize: 12\.5/);
+  assert.match(services, /sx=\{\{ width: 32, height: 32/);
 });
 
 test("source-control setup uses balanced desktop cards", () => {

@@ -19,6 +19,7 @@ import { createDefaultGatewayProfile, normalizeGatewayProfile, saveMockScenarioF
 import { syncRunningMockServerFromEditor } from "./use-mock-runtime-sync";
 import { createPinnedGrpcBinding, findProtoVersion } from "../proto-library/proto-library-domain";
 import type { ProtoLibrary } from "../proto-library/proto-library-types";
+import { recordGuiCliCommand } from "../cli/cli-command-history";
 
 type StateSetter<T> = (value: T | ((current: T) => T)) => void;
 type MockScenarioEditorDraft = {
@@ -1288,6 +1289,11 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
       showToast(`gRPC Mock failed: ${outcome.error}`, "error");
       return null;
     }
+    recordGuiCliCommand({
+      command: "layang mock:start --protocol grpc --daemon",
+      label: "Start gRPC mock from GUI",
+      workspacePath: workspaceFolderPath,
+    });
     showToast(`gRPC Mock running on ${outcome.localTarget}.`, "success");
     return outcome.localTarget;
   }
@@ -1334,6 +1340,20 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
 
   /** Stops only the native gRPC mock runtime. */
   async function stopMockServer() {
+    // CLI-started runtimes run in their own daemon process. Stop that daemon
+    // instead of calling the Electron in-process mock service.
+    if (mockServerStatus.runtimeSource === "cli" && window.electronCli?.stopMockRuntime) {
+      setMockServerStatus((current) => ({ ...current, message: "Stopping CLI mock runtime..." }));
+      const result = await window.electronCli.stopMockRuntime(workspaceFolderPath);
+      if (!result?.ok) {
+        showToast(`Stop CLI mock runtime failed: ${result?.error ?? "Unknown error"}`, "error");
+        return;
+      }
+      setMockServerStatus({ running: false, runtimeKind: "mock", message: result.message });
+      showToast(result.message || "CLI mock runtime stopped.", "success");
+      return;
+    }
+
     // Reflect the user's stop command immediately. The main process force-closes
     // active streams and confirms cleanup asynchronously.
     setMockServerStatus({ running: false, runtimeKind: "mock", message: "Stopping gRPC Mock..." });
@@ -1345,6 +1365,11 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
       const result = await window.electronMock?.stop?.();
       mockRuntimeLastSyncSignatureRef.current = "";
       setMockServerStatus({ running: false, runtimeKind: "mock", message: result?.message });
+      recordGuiCliCommand({
+        command: "layang mock:stop --protocol grpc",
+        label: "Stop gRPC mock from GUI",
+        workspacePath: workspaceFolderPath,
+      });
       showToast("gRPC Mock stopped.", "success");
     } catch (err) {
       showToast(`Stop gRPC Mock failed: ${toErrorMessage(err)}`, "error");
@@ -1352,10 +1377,10 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
   }
 
   /** Starts the single-upstream gRPC-Web bridge used by browser clients. */
-  async function startWebAccess(profileOverride?: GrpcGatewayProfile) {
+  async function startWebAccess(profileOverride?: GrpcGatewayProfile, projectOverride?: MockServerProject) {
     try {
       if (!ensureMockScenarioEditorSaved()) return false;
-      const effectiveMockServer: MockServerProject = mockServerRef?.current ?? mockServer;
+      const effectiveMockServer: MockServerProject = projectOverride ?? mockServerRef?.current ?? mockServer;
       const projectSnapshot = {
         ...getProjectSnapshot(),
         mockServer: effectiveMockServer,

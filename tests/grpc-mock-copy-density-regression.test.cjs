@@ -39,10 +39,12 @@ test("gRPC mock groups methods by Proto and keeps scenarios in an active dropdow
 
   assert.match(panel, /scenarioProtoGroups\.map/);
   assert.match(panel, /proto\.services\.map/);
-  assert.match(panel, /Active scenario/);
+  assert.match(panel, /Scenario\s*<\/Typography>/);
   assert.match(panel, /selectScenarioFromMethod\(method, String\(event\.target\.value\)\)/);
   assert.match(panel, /Scenario settings/);
-  assert.match(services, /Manage scenarios/);
+  const sharedControls = read("app/playground/features/mock-server/grpc-mock-scenario-controls.tsx");
+  assert.match(services, /<GrpcMockScenarioActionsMenu/);
+  assert.match(sharedControls, /Manage scenarios/);
   assert.doesNotMatch(panel, /aria-label="gRPC Mock scenarios"/);
   assert.doesNotMatch(panel, /Loop responses/);
 

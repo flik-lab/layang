@@ -20,13 +20,18 @@ test("shared method status indicator uses compact icons and hover details", () =
   assert.match(indicator, /context/);
 });
 
-test("gRPC request errors use the shared indicator instead of a status text chip", () => {
+test("collection sidebar keeps gRPC errors quiet with warning icons while details live in the request workspace", () => {
   const collection = read("app/playground/features/collection/collection-sidebar.tsx");
 
   assert.match(collection, /grpcRequestStatusCopy/);
-  assert.match(collection, /<MethodStatusIndicator/);
-  assert.match(collection, /tone=\{grpcStatusPresentation\.error \? "error" : "warning"\}/);
-  assert.match(collection, /context=\{grpcMethodFullName \|\| undefined\}/);
+  assert.match(collection, /grpcStatusPresentation\?\.error/);
+  assert.match(collection, /<WarningIcon color="warning" sx=\{\{ fontSize: 13 \}\} \/>/);
+  assert.match(collection, /folderHasWarning/);
+  assert.match(collection, /collectionHasWarning/);
+  assert.doesNotMatch(collection, /grpcStatusPresentation\.detail[\s\S]{0,240}<\/Tooltip>/);
+  assert.doesNotMatch(collection, /<MethodStatusIndicator/);
+  assert.doesNotMatch(collection, /className="request-row-action"/);
+  assert.doesNotMatch(collection, /aria-label=\{requestRunning/);
   assert.doesNotMatch(collection, /label=\{[\s\S]{0,120}request\.grpc\.status/);
 });
 

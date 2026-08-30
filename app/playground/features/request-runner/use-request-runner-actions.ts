@@ -19,6 +19,7 @@ import type { GrpcEvent, GrpcResult, LoadedProto, MetadataPair, RpcMethodInfo } 
 import { copyTextWithAnnouncement } from "@/lib/accessibility";
 import type { ManagedWebSocketClient, WebSocketClientState } from "../websocket/use-websocket-controller";
 import { savedExampleAssertionJson } from "../../shared/entity-utils";
+import { recordGuiCliCommand } from "../cli/cli-command-history";
 
 type StateSetter<T> = (value: T | ((current: T) => T)) => void;
 type CollectionNamedRequest = ApiCollectionRequest & { collectionName?: string };
@@ -126,6 +127,8 @@ export function useRequestRunnerActions(ctx: ActionContext) {
     wsClientRef,
     wsMockScenarioId,
     wsMockServer,
+    wsMockStatus,
+    workspaceFolderPath,
   } = ctx;
 
   function selectWebSocketMockScenario(scenarioId: string) {
@@ -404,6 +407,11 @@ export function useRequestRunnerActions(ctx: ActionContext) {
       return;
     }
     setRestMockStatus({ running: true, ...result });
+    recordGuiCliCommand({
+      command: "layang mock:start --protocol rest --daemon",
+      label: "Start REST mock from GUI",
+      workspacePath: workspaceFolderPath,
+    });
     showToast(result.message || "REST mock server started.", "success");
   }
 
@@ -415,8 +423,23 @@ export function useRequestRunnerActions(ctx: ActionContext) {
   }
 
   async function stopRestMockServer() {
+    if (restMockStatus.runtimeSource === "cli" && window.electronCli?.stopMockRuntime) {
+      const result = await window.electronCli.stopMockRuntime(workspaceFolderPath);
+      if (!result?.ok) {
+        showToast(result?.error || "Unable to stop CLI mock runtime.", "error");
+        return;
+      }
+      setRestMockStatus({ running: false, message: result.message });
+      showToast(result.message || "CLI mock runtime stopped.", "info");
+      return;
+    }
     const result = await window.electronRestMock?.stop?.();
     setRestMockStatus({ running: false, message: result?.message });
+    recordGuiCliCommand({
+      command: "layang mock:stop --protocol rest",
+      label: "Stop REST mock from GUI",
+      workspacePath: workspaceFolderPath,
+    });
     showToast(result?.message || "REST mock server stopped.", "info");
   }
 
@@ -436,6 +459,11 @@ export function useRequestRunnerActions(ctx: ActionContext) {
       return;
     }
     setWsMockStatus({ running: true, ...result });
+    recordGuiCliCommand({
+      command: "layang mock:start --protocol websocket --daemon",
+      label: "Start WebSocket mock from GUI",
+      workspacePath: workspaceFolderPath,
+    });
     if (result.port) handleWebSocketMockPortChange(result.port);
     if (activeCollectionRequest?.kind === "websocket") {
       const scenarioUrl = activeWebSocketMockScenario
@@ -451,6 +479,16 @@ export function useRequestRunnerActions(ctx: ActionContext) {
   }
 
   async function stopWebSocketMockServer() {
+    if (wsMockStatus.runtimeSource === "cli" && window.electronCli?.stopMockRuntime) {
+      const result = await window.electronCli.stopMockRuntime(workspaceFolderPath);
+      if (!result?.ok) {
+        showToast(result?.error || "Unable to stop CLI mock runtime.", "error");
+        return;
+      }
+      setWsMockStatus({ running: false, message: result.message });
+      showToast(result.message || "CLI mock runtime stopped.", "success");
+      return;
+    }
     if (!window.electronWsMock?.stop) {
       showToast("WebSocket mock server is available in the desktop app only.", "warning");
       return;
@@ -461,6 +499,11 @@ export function useRequestRunnerActions(ctx: ActionContext) {
       return;
     }
     setWsMockStatus({ running: false });
+    recordGuiCliCommand({
+      command: "layang mock:stop --protocol websocket",
+      label: "Stop WebSocket mock from GUI",
+      workspacePath: workspaceFolderPath,
+    });
     showToast("WebSocket mock server stopped.", "success");
   }
 

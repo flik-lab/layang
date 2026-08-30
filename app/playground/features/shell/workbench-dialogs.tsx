@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Language, Stream, Terminal } from "@/components/shadcn/icons";
+import { Checkbox } from "@/components/shadcn/compat";
 import type { ProtoSourceFile, RpcMethodInfo } from "@/lib/types";
 import { loadProtoFiles } from "@/lib/proto-loader";
 import type { LayangLoggerSettings, LayangLogLevel } from "../../shared/logger";
@@ -16,6 +17,7 @@ import {
   type ProtoVersionImportPlan,
 } from "../proto-library/proto-version-management";
 import { canReplaceGrpcRequestName, uniqueCollectionRequestName } from "../collection/grpc-request-name";
+import { NEW_SCHEMA_COLLECTION_TARGET } from "../collection/quick-request-creator-domain";
 
 type TextInputChangeEvent = ChangeEvent<HTMLInputElement | HTMLTextAreaElement>;
 type SelectInputChangeEvent = ChangeEvent<HTMLSelectElement>;
@@ -95,6 +97,9 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
     requestGrpcLibraryIdDraft,
     requestGrpcVersionIdDraft,
     requestGrpcMethodKeyDraft,
+    requestGrpcBatchMethodKeysDraft,
+    requestGrpcSelectionModeDraft,
+    requestGrpcSkipExistingDraft,
     requestNameDialogOpen,
     requestNameDraft,
     setCollectionDialogOpen,
@@ -119,6 +124,9 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
     setRequestGrpcLibraryIdDraft,
     setRequestGrpcVersionIdDraft,
     setRequestGrpcMethodKeyDraft,
+    setRequestGrpcBatchMethodKeysDraft,
+    setRequestGrpcSelectionModeDraft,
+    setRequestGrpcSkipExistingDraft,
     setRequestTargetCollectionId,
     setRequestTargetFolderId,
     setRequestLocationEditable,
@@ -137,27 +145,53 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
   const collectionSchemaFolderInputRef = useRef<HTMLInputElement | null>(null);
   const [protoImportReview, setProtoImportReview] = useState<ProtoImportReviewState | null>(null);
   const [updateCompatibleRequests, setUpdateCompatibleRequests] = useState(true);
-  const requestTargetCollection = collections.find(
-    (collection: { id: string }) => collection.id === requestTargetCollectionId,
-  );
-  const requestTargetLocation = requestTargetCollection
-    ? [
-        requestTargetCollection.name,
-        ...getCollectionNodeBreadcrumb(requestTargetCollection, requestTargetFolderId),
-      ].join(" / ")
-    : "Collection";
-  const requestLocationOptions = collections.flatMap((collection: any) => [
-    { value: `${collection.id}|`, label: collection.name, collectionId: collection.id, folderId: null },
-    ...(collection.folders ?? []).map((folder: any) => ({
-      value: `${collection.id}|${folder.id}`,
-      label: [collection.name, ...getCollectionNodeBreadcrumb(collection, folder.id)].join(" / "),
-      collectionId: collection.id,
-      folderId: folder.id,
-    })),
-  ]);
+  const [recentSchemaIds, setRecentSchemaIds] = useState<string[]>([]);
+  const [recentServices, setRecentServices] = useState<string[]>([]);
   const globalProtoSchemas = protoLibraries as ProtoLibrary[];
   const selectedRequestSchema =
     globalProtoSchemas.find((library) => library.id === requestGrpcLibraryIdDraft) ?? globalProtoSchemas[0];
+  const requestTargetCollection = collections.find(
+    (collection: { id: string }) => collection.id === requestTargetCollectionId,
+  );
+  const newSchemaCollectionName = selectedRequestSchema?.name?.trim() || "gRPC Schema";
+  const requestTargetLocation =
+    requestTargetCollectionId === NEW_SCHEMA_COLLECTION_TARGET
+      ? `New collection · ${newSchemaCollectionName}`
+      : requestTargetCollection
+        ? [
+            requestTargetCollection.name,
+            ...getCollectionNodeBreadcrumb(requestTargetCollection, requestTargetFolderId),
+          ].join(" / ")
+        : "Collection";
+  const requestLocationOptions = [
+    ...((requestKindDraft === "grpc" || requestTargetCollectionId === NEW_SCHEMA_COLLECTION_TARGET) && selectedRequestSchema
+      ? [
+          {
+            value: `${NEW_SCHEMA_COLLECTION_TARGET}|`,
+            label: `New collection · ${newSchemaCollectionName}`,
+            collectionId: NEW_SCHEMA_COLLECTION_TARGET,
+            folderId: null,
+          },
+        ]
+      : []),
+    ...collections.flatMap((collection: any) => [
+      { value: `${collection.id}|`, label: collection.name, collectionId: collection.id, folderId: null },
+      ...(collection.folders ?? []).map((folder: any) => ({
+        value: `${collection.id}|${folder.id}`,
+        label: [collection.name, ...getCollectionNodeBreadcrumb(collection, folder.id)].join(" / "),
+        collectionId: collection.id,
+        folderId: folder.id,
+      })),
+    ]),
+  ];
+  const orderedGlobalProtoSchemas = [...globalProtoSchemas].sort((left, right) => {
+    const leftIndex = recentSchemaIds.indexOf(left.id);
+    const rightIndex = recentSchemaIds.indexOf(right.id);
+    if (leftIndex < 0 && rightIndex < 0) return left.name.localeCompare(right.name);
+    if (leftIndex < 0) return 1;
+    if (rightIndex < 0) return -1;
+    return leftIndex - rightIndex;
+  });
   const selectedRequestSchemaVersion =
     selectedRequestSchema?.versions.find((version) => version.id === requestGrpcVersionIdDraft) ??
     selectedRequestSchema?.versions.find((version) => version.id === selectedRequestSchema.defaultVersionId) ??
@@ -170,6 +204,15 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
   const selectedRequestServices = Array.from(new Set(selectedRequestMethods.map((method) => method.serviceName))).sort(
     (left, right) => left.localeCompare(right),
   );
+  const selectedRequestServicesKey = selectedRequestServices.join("\u0000");
+  const orderedRequestServices = [...selectedRequestServices].sort((left, right) => {
+    const leftIndex = recentServices.indexOf(left);
+    const rightIndex = recentServices.indexOf(right);
+    if (leftIndex < 0 && rightIndex < 0) return left.localeCompare(right);
+    if (leftIndex < 0) return 1;
+    if (rightIndex < 0) return -1;
+    return leftIndex - rightIndex;
+  });
   const selectedRequestMethod = selectedRequestMethods.find(
     (method) => methodKey(method) === requestGrpcMethodKeyDraft,
   );
@@ -177,8 +220,85 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
   const selectedServiceMethods = selectedRequestMethods.filter(
     (method) => method.serviceName === selectedRequestServiceName,
   );
+  const requestGrpcBatchMethodKeys = new Set<string>(requestGrpcBatchMethodKeysDraft ?? []);
+  const requestGrpcBatchMethods = selectedRequestMethods.filter((method) =>
+    requestGrpcBatchMethodKeys.has(methodKey(method)),
+  );
+  const isGrpcBatch = requestKindDraft === "grpc" && requestGrpcSelectionModeDraft === "multi";
+  const [grpcMethodFilter, setGrpcMethodFilter] = useState("");
+  const [grpcServiceFilter, setGrpcServiceFilter] = useState("*");
+  const [grpcAdvancedOpen, setGrpcAdvancedOpen] = useState(false);
+  const visibleRequestMethods = selectedRequestMethods.filter((method) => {
+    const serviceMatches = grpcServiceFilter === "*" || method.serviceName === grpcServiceFilter;
+    const query = grpcMethodFilter.trim().toLowerCase();
+    const queryMatches =
+      !query ||
+      method.methodName.toLowerCase().includes(query) ||
+      method.serviceName.toLowerCase().includes(query) ||
+      `${method.serviceName}/${method.methodName}`.toLowerCase().includes(query);
+    return serviceMatches && queryMatches;
+  });
+  const existingRequestMethodNames = new Set(
+    (requestTargetCollection?.requests ?? [])
+      .filter((request: any) => request.kind === "grpc" && request.grpc?.libraryId === selectedRequestSchema?.id)
+      .map((request: any) => request.grpc?.methodFullName)
+      .filter(Boolean),
+  );
+  const selectedExistingCount = requestGrpcBatchMethods.filter((method) =>
+    existingRequestMethodNames.has(`${method.serviceName}/${method.methodName}`),
+  ).length;
+  const selectedNewCount = requestGrpcBatchMethods.length - selectedExistingCount;
 
   const existingRequestNames = requestTargetCollection?.requests.map((request: { name: string }) => request.name) ?? [];
+
+  useEffect(() => {
+    try {
+      const schemaIds = JSON.parse(window.localStorage.getItem("layang:recent-request-schema-ids") ?? "[]");
+      const services = JSON.parse(window.localStorage.getItem("layang:recent-request-services") ?? "[]");
+      setRecentSchemaIds(Array.isArray(schemaIds) ? schemaIds.filter((value) => typeof value === "string").slice(0, 5) : []);
+      setRecentServices(Array.isArray(services) ? services.filter((value) => typeof value === "string").slice(0, 8) : []);
+    } catch {
+      setRecentSchemaIds([]);
+      setRecentServices([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!requestNameDialogOpen || requestKindDraft !== "grpc") return;
+    setGrpcMethodFilter("");
+    setGrpcAdvancedOpen(false);
+    const rememberedService = window.localStorage.getItem("layang:last-request-service-name") ?? "";
+    const preferredService = selectedRequestServices.includes(rememberedService)
+      ? rememberedService
+      : selectedRequestMethod?.serviceName ?? selectedRequestServices[0] ?? "*";
+    setGrpcServiceFilter(isGrpcBatch && requestGrpcBatchMethodKeys.size > 1 ? "*" : preferredService);
+  }, [requestNameDialogOpen]);
+
+  useEffect(() => {
+    if (!requestNameDialogOpen || requestKindDraft !== "grpc" || !selectedRequestSchema) return;
+    window.localStorage.setItem("layang:last-request-schema-id", selectedRequestSchema.id);
+    setRecentSchemaIds((current: string[]) => {
+      if (current[0] === selectedRequestSchema.id) return current;
+      const next = [selectedRequestSchema.id, ...current.filter((id: string) => id !== selectedRequestSchema.id)].slice(0, 5);
+      window.localStorage.setItem("layang:recent-request-schema-ids", JSON.stringify(next));
+      return next;
+    });
+    if (grpcServiceFilter !== "*" && selectedRequestServices.includes(grpcServiceFilter)) {
+      window.localStorage.setItem("layang:last-request-service-name", grpcServiceFilter);
+      setRecentServices((current: string[]) => {
+        if (current[0] === grpcServiceFilter) return current;
+        const next = [grpcServiceFilter, ...current.filter((name: string) => name !== grpcServiceFilter)].slice(0, 8);
+        window.localStorage.setItem("layang:recent-request-services", JSON.stringify(next));
+        return next;
+      });
+    }
+  }, [
+    grpcServiceFilter,
+    requestKindDraft,
+    requestNameDialogOpen,
+    selectedRequestSchema?.id,
+    selectedRequestServicesKey,
+  ]);
 
   const selectGrpcMethodDraft = (nextMethod: { methodName: string } | undefined, nextMethodKey: string) => {
     const previousMethodName = selectedRequestMethod?.methodName;
@@ -288,19 +408,38 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
 
   const selectRequestKind = (kind: "rest" | "websocket" | "grpc") => {
     setRequestKindDraft(kind);
+    setRequestGrpcBatchMethodKeysDraft([]);
+    setRequestGrpcSkipExistingDraft(true);
     if (kind !== "grpc") {
+      setRequestGrpcSelectionModeDraft("single");
       setRequestGrpcLibraryIdDraft("");
       setRequestGrpcVersionIdDraft("");
       setRequestGrpcMethodKeyDraft("");
+      if (!collections.some((collection: any) => collection.id === requestTargetCollectionId)) {
+        setRequestNameDialogOpen(false);
+        setCollectionNameDraft("Untitled Collection");
+        setCollectionDialogOpen(true);
+      }
       return;
     }
-    const schema = globalProtoSchemas[0];
+    setRequestGrpcSelectionModeDraft("multi");
+    const rememberedSchemaId = window.localStorage.getItem("layang:last-request-schema-id") ?? "";
+    const schema = globalProtoSchemas.find((item) => item.id === rememberedSchemaId) ?? globalProtoSchemas[0];
     const version = schema?.versions.find((item) => item.id === schema.defaultVersionId) ?? schema?.versions[0];
     const runtime = schema && version ? protoRuntimeRegistry.resolveVersion(schema.id, version.id) : null;
+    const rememberedService = window.localStorage.getItem("layang:last-request-service-name") ?? "";
+    const firstMethod =
+      runtime?.loaded.methods.find((method: RpcMethodInfo) => method.serviceName === rememberedService) ??
+      runtime?.loaded.methods[0];
     setRequestGrpcLibraryIdDraft(schema?.id ?? "");
     setRequestGrpcVersionIdDraft(version?.id ?? "");
-    const firstMethod = runtime?.loaded.methods[0];
-    selectGrpcMethodDraft(firstMethod, firstMethod ? methodKey(firstMethod) : "");
+    if (!collections.some((collection: any) => collection.id === requestTargetCollectionId)) {
+      setRequestTargetCollectionId(NEW_SCHEMA_COLLECTION_TARGET);
+      setRequestTargetFolderId(null);
+      setRequestLocationEditable(true);
+    }
+    setRequestGrpcMethodKeyDraft(firstMethod ? methodKey(firstMethod) : "");
+    setRequestGrpcBatchMethodKeysDraft(firstMethod ? [methodKey(firstMethod)] : []);
   };
 
   return (
@@ -320,7 +459,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
             </Paper>
           </Stack>
         </DialogContent>
-        <DialogActions>
+        <DialogActions sx={{ px: 2, py: 1.25 }}>
           <Button onClick={() => void chooseCustomWorkspacePreference()} disabled={workspaceSetupPending}>
             Choose custom folder
           </Button>
@@ -380,185 +519,329 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
         </DialogActions>
       </Dialog>
 
-      <Dialog open={requestNameDialogOpen} onClose={() => setRequestNameDialogOpen(false)} fullWidth maxWidth="sm">
+      <Dialog
+        open={requestNameDialogOpen}
+        onClose={() => {
+          setRequestNameDialogOpen(false);
+          setRequestLocationEditable(false);
+          setRequestGrpcBatchMethodKeysDraft([]);
+          setRequestGrpcSelectionModeDraft("single");
+          setRequestGrpcSkipExistingDraft(true);
+        }}
+        fullWidth
+        maxWidth="md"
+      >
         <DialogTitle>
-          {requestKindDraft === "grpc"
-            ? "New gRPC request"
-            : requestKindDraft === "rest"
-              ? "New HTTP request"
-              : requestKindDraft === "websocket"
-                ? "New WebSocket request"
-                : "New request"}
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
+            <Box sx={{ minWidth: 0, flex: 1 }}>
+              <Typography component="span" sx={{ fontSize: 14, fontWeight: 600 }}>
+                Quick Create
+              </Typography>
+              {requestKindDraft ? (
+                <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.8 }}>
+                  {isGrpcBatch
+                    ? "gRPC batch"
+                    : requestKindDraft === "grpc"
+                      ? "gRPC request"
+                      : requestKindDraft === "rest"
+                        ? "HTTP request"
+                        : "WebSocket request"}
+                </Typography>
+              ) : null}
+            </Box>
+          </Stack>
         </DialogTitle>
-        <DialogContent sx={{ pt: 1 }}>
-          <Stack spacing={1.4} sx={{ mt: 0.5 }}>
-            {!requestKindDraft && (
-              <Box>
+        <DialogContent sx={{ pt: 1.25, px: 2, overflowX: "hidden" }}>
+          <Stack spacing={1.25} sx={{ mt: 0.25, minWidth: 0, overflowX: "hidden" }}>
+            <Box sx={{ minWidth: 0 }}>
+              <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between">
                 <Typography variant="caption" color="text.secondary">
-                  Request type
+                  Protocol
                 </Typography>
-                <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ mt: 0.5 }}>
+                {requestKindDraft === "grpc" ? (
                   <Button
-                    variant={requestKindDraft === "rest" ? "contained" : "outlined"}
-                    onClick={() => selectRequestKind("rest")}
-                    sx={{ flex: 1, minHeight: 56, justifyContent: "flex-start", px: 1.25 }}
+                    size="small"
+                    variant="text"
+                    onClick={() => {
+                      setGrpcAdvancedOpen(true);
+                      window.setTimeout(() => collectionSchemaInputRef.current?.click(), 0);
+                    }}
+                    sx={{ minHeight: 26, px: 0.7 }}
                   >
-                    <Language sx={{ fontSize: 18, mr: 1 }} />
-                    <Box sx={{ textAlign: "left" }}>
-                      <Typography variant="body2" fontWeight={600}>
-                        REST
-                      </Typography>
-                      <Typography variant="caption" sx={{ opacity: 0.8 }}>
-                        HTTP request
-                      </Typography>
-                    </Box>
+                    Import Proto
                   </Button>
-                  <Button
-                    variant={requestKindDraft === "websocket" ? "contained" : "outlined"}
-                    onClick={() => selectRequestKind("websocket")}
-                    sx={{ flex: 1, minHeight: 56, justifyContent: "flex-start", px: 1.25 }}
-                  >
-                    <Stream sx={{ fontSize: 18, mr: 1 }} />
-                    <Box sx={{ textAlign: "left" }}>
-                      <Typography variant="body2" fontWeight={600}>
-                        WebSocket
-                      </Typography>
-                      <Typography variant="caption" sx={{ opacity: 0.8 }}>
-                        Socket request
-                      </Typography>
-                    </Box>
-                  </Button>
-                  <Button
-                    variant={requestKindDraft === "grpc" ? "contained" : "outlined"}
-                    onClick={() => selectRequestKind("grpc")}
-                    sx={{ flex: 1, minHeight: 56, justifyContent: "flex-start", px: 1.25 }}
-                  >
-                    <Terminal sx={{ fontSize: 18, mr: 1 }} />
-                    <Box sx={{ textAlign: "left" }}>
-                      <Typography variant="body2" fontWeight={600}>
-                        gRPC
-                      </Typography>
-                      <Typography variant="caption" sx={{ opacity: 0.8 }}>
-                        Proto method
-                      </Typography>
-                    </Box>
-                  </Button>
-                </Stack>
-              </Box>
-            )}
-
-            {requestLocationEditable ? (
-              <Box>
-                <Typography variant="caption" color="text.secondary">
-                  Location
-                </Typography>
-                <Select
-                  value={`${requestTargetCollectionId}|${requestTargetFolderId ?? ""}`}
-                  onChange={(event: SelectInputChangeEvent) => {
-                    const option = requestLocationOptions.find(
-                      (item: any) => item.value === String(event.target.value),
-                    );
-                    if (!option) return;
-                    setRequestTargetCollectionId(option.collectionId);
-                    setRequestTargetFolderId(option.folderId);
-                  }}
-                  fullWidth
-                  size="small"
-                  aria-label="Request location"
+                ) : null}
+              </Stack>
+              <Box
+                role="group"
+                aria-label="Quick Create protocol"
+                className="mt-1 grid min-w-0 grid-cols-1 gap-1 sm:grid-cols-3"
+              >
+                <Button
+                  variant={requestKindDraft === "rest" ? "contained" : "outlined"}
+                  onClick={() => selectRequestKind("rest")}
+                  startIcon={<Language sx={{ fontSize: 16 }} />}
+                  sx={{ minWidth: 0, minHeight: 36, height: 36, justifyContent: "flex-start", px: 1, lineHeight: "20px" }}
                 >
-                  {requestLocationOptions.map((option: any) => (
-                    <MenuItem key={option.value} value={option.value}>
-                      {option.label}
-                    </MenuItem>
-                  ))}
-                </Select>
+                  HTTP
+                </Button>
+                <Button
+                  variant={requestKindDraft === "grpc" ? "contained" : "outlined"}
+                  onClick={() => selectRequestKind("grpc")}
+                  startIcon={<Terminal sx={{ fontSize: 16 }} />}
+                  sx={{ minWidth: 0, minHeight: 36, height: 36, justifyContent: "flex-start", px: 1, lineHeight: "20px" }}
+                >
+                  gRPC
+                </Button>
+                <Button
+                  variant={requestKindDraft === "websocket" ? "contained" : "outlined"}
+                  onClick={() => selectRequestKind("websocket")}
+                  startIcon={<Stream sx={{ fontSize: 16 }} />}
+                  sx={{ minWidth: 0, minHeight: 36, height: 36, justifyContent: "flex-start", px: 1, lineHeight: "20px" }}
+                >
+                  WebSocket
+                </Button>
               </Box>
-            ) : (
-              <Paper variant="outlined" sx={{ px: 1, py: 0.75 }}>
-                <Typography variant="caption" color="text.secondary">
-                  Location
+              {!requestKindDraft ? (
+                <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.55 }}>
+                  Choose a protocol. Only fields needed for that request type will be shown.
                 </Typography>
-                <Typography variant="body2" noWrap title={requestTargetLocation}>
-                  {requestTargetLocation}
-                </Typography>
-              </Paper>
-            )}
+              ) : null}
+            </Box>
 
-            {requestKindDraft && (
-              <TextField
-                autoFocus
-                size="small"
-                label="Request name"
-                value={requestNameDraft}
-                onChange={(event: TextInputChangeEvent) => setRequestNameDraft(event.target.value)}
-                onKeyDown={(event: TextInputKeyboardEvent) => {
-                  if (event.key === "Enter" && requestKindDraft !== "grpc") confirmAddCollectionRequest();
-                }}
-                placeholder={
-                  requestKindDraft === "grpc"
-                    ? "Subscribe Track"
-                    : requestKindDraft === "websocket"
-                      ? "Track Events"
-                      : "List Tracks"
-                }
-              />
-            )}
+            {requestKindDraft ? (
+              <Box
+                className={isGrpcBatch ? "grid min-w-0 grid-cols-1 gap-2" : "grid min-w-0 grid-cols-1 gap-2 md:grid-cols-2"}
+              >
+                {requestLocationEditable ? (
+                  <Box className="quick-create-field" sx={{ minWidth: 0, overflow: "visible" }}>
+                    <Typography className="quick-create-field-label" variant="caption" color="text.secondary">
+                      Destination
+                    </Typography>
+                    <Select
+                      value={`${requestTargetCollectionId}|${requestTargetFolderId ?? ""}`}
+                      onChange={(event: SelectInputChangeEvent) => {
+                        const option = requestLocationOptions.find((item: any) => item.value === String(event.target.value));
+                        if (!option) return;
+                        setRequestTargetCollectionId(option.collectionId);
+                        setRequestTargetFolderId(option.folderId);
+                      }}
+                      fullWidth
+                      size="small"
+                      aria-label="Request location"
+                    >
+                      {requestLocationOptions.map((option: any) => (
+                        <MenuItem key={option.value} value={option.value}>
+                          {option.label}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                    {requestKindDraft === "grpc" && isGrpcBatch ? (
+                      <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.4 }}>
+                        Service folders are created automatically for batch requests.
+                      </Typography>
+                    ) : null}
+                  </Box>
+                ) : (
+                  <Box className="quick-create-field" sx={{ minWidth: 0, overflow: "visible" }}>
+                    <Typography className="quick-create-field-label" variant="caption" color="text.secondary">
+                      Destination
+                    </Typography>
+                    <Paper
+                      variant="outlined"
+                      sx={{ minWidth: 0, minHeight: 38, height: 38, px: 1, display: "flex", alignItems: "center", overflow: "hidden" }}
+                    >
+                      <Typography variant="body2" noWrap title={requestTargetLocation} sx={{ minWidth: 0, fontSize: 12.5 }}>
+                        {requestTargetLocation}
+                      </Typography>
+                    </Paper>
+                  </Box>
+                )}
+
+                {!isGrpcBatch ? (
+                  <Box className="quick-create-field" sx={{ minWidth: 0, overflow: "visible" }}>
+                    <Typography
+                      component="label"
+                      variant="caption"
+                      htmlFor="quick-create-request-name"
+                      color="text.secondary"
+                      className="quick-create-field-label"
+                    >
+                      Request name
+                    </Typography>
+                    <TextField
+                      id="quick-create-request-name"
+                      autoFocus
+                      size="small"
+                      value={requestNameDraft}
+                      onChange={(event: TextInputChangeEvent) => setRequestNameDraft(event.target.value)}
+                      onKeyDown={(event: TextInputKeyboardEvent) => {
+                        if (event.key === "Enter" && requestKindDraft !== "grpc") confirmAddCollectionRequest();
+                      }}
+                      placeholder={
+                        requestKindDraft === "grpc"
+                          ? "Subscribe Track"
+                          : requestKindDraft === "websocket"
+                            ? "Track Events"
+                            : "List Tracks"
+                      }
+                      fullWidth
+                      sx={{ minWidth: 0, overflow: "visible" }}
+                    />
+                  </Box>
+                ) : null}
+              </Box>
+            ) : null}
 
             {requestKindDraft === "grpc" && (
-              <Paper variant="outlined" sx={{ p: 1.1 }}>
-                <Stack spacing={1}>
-                  <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1}>
-                    <Box>
-                      <Typography variant="subtitle2">gRPC schema and method</Typography>
+              <Paper variant="outlined" sx={{ p: 1, minWidth: 0, overflow: "hidden" }}>
+                <Stack spacing={1} sx={{ minWidth: 0 }}>
+                  <Box className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
+                    <Box sx={{ minWidth: 0 }}>
                       <Typography variant="caption" color="text.secondary">
-                        Reusable across collections.
+                        Schema
                       </Typography>
+                      <Select
+                        value={selectedRequestSchema?.id ?? ""}
+                        onChange={(event: SelectInputChangeEvent) => {
+                          const libraryId = String(event.target.value);
+                          const schema = globalProtoSchemas.find((item) => item.id === libraryId);
+                          const version =
+                            schema?.versions.find((item) => item.id === schema.defaultVersionId) ?? schema?.versions[0];
+                          const runtime = schema && version ? protoRuntimeRegistry.resolveVersion(schema.id, version.id) : null;
+                          const rememberedService = window.localStorage.getItem("layang:last-request-service-name") ?? "";
+                          const firstMethod =
+                            runtime?.loaded.methods.find(
+                              (method: RpcMethodInfo) => method.serviceName === rememberedService,
+                            ) ??
+                            runtime?.loaded.methods[0];
+                          setRequestGrpcLibraryIdDraft(libraryId);
+                          setRequestGrpcVersionIdDraft(version?.id ?? "");
+                          if (requestTargetCollectionId === NEW_SCHEMA_COLLECTION_TARGET) setRequestTargetFolderId(null);
+                          setGrpcServiceFilter(firstMethod?.serviceName ?? "*");
+                          setRequestGrpcMethodKeyDraft(firstMethod ? methodKey(firstMethod) : "");
+                          setRequestGrpcBatchMethodKeysDraft(isGrpcBatch && firstMethod ? [methodKey(firstMethod)] : []);
+                          if (!isGrpcBatch) selectGrpcMethodDraft(firstMethod, firstMethod ? methodKey(firstMethod) : "");
+                        }}
+                        fullWidth
+                        size="small"
+                        aria-label="Schema"
+                      >
+                        {orderedGlobalProtoSchemas.map((library) => (
+                          <MenuItem key={library.id} value={library.id}>
+                            {library.name}
+                          </MenuItem>
+                        ))}
+                      </Select>
                     </Box>
-                    <Stack direction="row" spacing={0.5}>
-                      <input
-                        ref={collectionSchemaInputRef}
-                        hidden
-                        multiple
-                        type="file"
-                        accept=".proto,text/x-protobuf"
-                        onChange={(event: ChangeEvent<HTMLInputElement>) => void importSchemaForRequest(event)}
-                      />
-                      <input
-                        ref={(node) => {
-                          collectionSchemaFolderInputRef.current = node;
-                          if (node) {
-                            node.setAttribute("webkitdirectory", "");
-                            node.setAttribute("directory", "");
-                          }
+
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography variant="caption" color="text.secondary">
+                        Revision
+                      </Typography>
+                      <Select
+                        value={selectedRequestSchemaVersion?.id ?? ""}
+                        onChange={(event: SelectInputChangeEvent) => {
+                          const versionId = String(event.target.value);
+                          const runtime = selectedRequestSchema
+                            ? protoRuntimeRegistry.resolveVersion(selectedRequestSchema.id, versionId)
+                            : null;
+                          const firstMethod = runtime?.loaded.methods[0];
+                          setRequestGrpcVersionIdDraft(versionId);
+                          setGrpcServiceFilter(firstMethod?.serviceName ?? "*");
+                          setRequestGrpcMethodKeyDraft(firstMethod ? methodKey(firstMethod) : "");
+                          setRequestGrpcBatchMethodKeysDraft(isGrpcBatch && firstMethod ? [methodKey(firstMethod)] : []);
+                          if (!isGrpcBatch) selectGrpcMethodDraft(firstMethod, firstMethod ? methodKey(firstMethod) : "");
                         }}
-                        hidden
-                        multiple
-                        type="file"
-                        accept=".proto,text/x-protobuf"
-                        onChange={(event: ChangeEvent<HTMLInputElement>) => void importSchemaForRequest(event)}
-                      />
-                      <Button size="small" variant="text" onClick={() => collectionSchemaInputRef.current?.click()}>
-                        Upload files
-                      </Button>
-                      <Button
+                        fullWidth
                         size="small"
-                        variant="text"
-                        onClick={() => collectionSchemaFolderInputRef.current?.click()}
+                        aria-label="Proto revision"
                       >
-                        Upload folder
-                      </Button>
-                      <Button
-                        size="small"
-                        variant="text"
-                        onClick={() => {
-                          setRequestNameDialogOpen(false);
-                          setSideSection("proto-schemas");
-                        }}
-                      >
-                        Manage schemas
-                      </Button>
-                    </Stack>
+                        {(selectedRequestSchema?.versions ?? []).map((version) => (
+                          <MenuItem key={version.id} value={version.id}>
+                            {version.version}
+                            {version.id === selectedRequestSchema?.defaultVersionId ? " · Default" : ""}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </Box>
+
+                    {isGrpcBatch ? (
+                      <Box sx={{ minWidth: 0 }}>
+                        <Typography variant="caption" color="text.secondary">
+                          Service
+                        </Typography>
+                        <Select
+                          value={grpcServiceFilter}
+                          onChange={(event: SelectInputChangeEvent) => setGrpcServiceFilter(String(event.target.value))}
+                          fullWidth
+                          size="small"
+                          aria-label="Filter RPC service"
+                        >
+                          <MenuItem value="*">All services</MenuItem>
+                          {orderedRequestServices.map((serviceName) => (
+                            <MenuItem key={serviceName} value={serviceName}>
+                              {serviceName}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </Box>
+                    ) : null}
+                  </Box>
+
+                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap" useFlexGap>
+                    <Typography variant="caption" color="text.secondary">
+                      Requests stay pinned to the selected schema revision.
+                    </Typography>
+                    <Button size="small" variant="text" onClick={() => setGrpcAdvancedOpen((value: boolean) => !value)}>
+                      {grpcAdvancedOpen ? "Hide options" : "More options"}
+                    </Button>
                   </Stack>
+
+                  {grpcAdvancedOpen ? (
+                    <Paper variant="outlined" sx={{ p: 0.9, bgcolor: "action.hover", minWidth: 0 }}>
+                      <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                        <input
+                          ref={collectionSchemaInputRef}
+                          hidden
+                          multiple
+                          type="file"
+                          accept=".proto,text/x-protobuf"
+                          onChange={(event: ChangeEvent<HTMLInputElement>) => void importSchemaForRequest(event)}
+                        />
+                        <input
+                          ref={(node) => {
+                            collectionSchemaFolderInputRef.current = node;
+                            if (node) {
+                              node.setAttribute("webkitdirectory", "");
+                              node.setAttribute("directory", "");
+                            }
+                          }}
+                          hidden
+                          multiple
+                          type="file"
+                          accept=".proto,text/x-protobuf"
+                          onChange={(event: ChangeEvent<HTMLInputElement>) => void importSchemaForRequest(event)}
+                        />
+                        <Button size="small" variant="text" onClick={() => collectionSchemaInputRef.current?.click()}>
+                          Upload proto files
+                        </Button>
+                        <Button size="small" variant="text" onClick={() => collectionSchemaFolderInputRef.current?.click()}>
+                          Upload proto folder
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="text"
+                          onClick={() => {
+                            setRequestNameDialogOpen(false);
+                            setSideSection("proto-schemas");
+                          }}
+                        >
+                          Manage schemas
+                        </Button>
+                      </Stack>
+                    </Paper>
+                  ) : null}
 
                   {globalProtoSchemas.length === 0 ? (
                     <Paper variant="outlined" sx={{ p: 1, bgcolor: "action.hover" }}>
@@ -566,138 +849,208 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
                         No global proto schema yet
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
-                        Upload proto files or a proto folder to the global registry. Every collection can reuse it.
+                        Use Import Proto or More options to upload a proto file or folder.
                       </Typography>
                     </Paper>
-                  ) : (
+                  ) : isGrpcBatch ? (
                     <>
-                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                        <Box sx={{ flex: 1 }}>
-                          <Typography variant="caption" color="text.secondary">
-                            Global proto schema
-                          </Typography>
-                          <Select
-                            value={selectedRequestSchema?.id ?? ""}
-                            onChange={(event: SelectInputChangeEvent) => {
-                              const libraryId = String(event.target.value);
-                              const schema = globalProtoSchemas.find((item) => item.id === libraryId);
-                              const version =
-                                schema?.versions.find((item) => item.id === schema.defaultVersionId) ??
-                                schema?.versions[0];
-                              const runtime =
-                                schema && version ? protoRuntimeRegistry.resolveVersion(schema.id, version.id) : null;
-                              setRequestGrpcLibraryIdDraft(libraryId);
-                              setRequestGrpcVersionIdDraft(version?.id ?? "");
-                              const firstMethod = runtime?.loaded.methods[0];
-                              selectGrpcMethodDraft(firstMethod, firstMethod ? methodKey(firstMethod) : "");
-                            }}
-                            fullWidth
-                            size="small"
-                          >
-                            {globalProtoSchemas.map((library) => (
-                              <MenuItem key={library.id} value={library.id}>
-                                {library.name}
-                              </MenuItem>
-                            ))}
-                          </Select>
-                        </Box>
-                        <Box sx={{ flex: 1 }}>
-                          <Typography variant="caption" color="text.secondary">
-                            Revision
-                          </Typography>
-                          <Select
-                            value={selectedRequestSchemaVersion?.id ?? ""}
-                            onChange={(event: SelectInputChangeEvent) => {
-                              const versionId = String(event.target.value);
-                              const runtime = selectedRequestSchema
-                                ? protoRuntimeRegistry.resolveVersion(selectedRequestSchema.id, versionId)
-                                : null;
-                              setRequestGrpcVersionIdDraft(versionId);
-                              const firstMethod = runtime?.loaded.methods[0];
-                              selectGrpcMethodDraft(firstMethod, firstMethod ? methodKey(firstMethod) : "");
-                            }}
-                            fullWidth
-                            size="small"
-                          >
-                            {(selectedRequestSchema?.versions ?? []).map((version) => (
-                              <MenuItem key={version.id} value={version.id}>
-                                {version.version}
-                              </MenuItem>
-                            ))}
-                          </Select>
-                        </Box>
-                      </Stack>
+                      <TextField
+                        size="small"
+                        value={grpcMethodFilter}
+                        onChange={(event: TextInputChangeEvent) => setGrpcMethodFilter(event.target.value)}
+                        placeholder="Search methods or services"
+                        inputProps={{ "aria-label": "Search RPC methods" }}
+                      />
 
-                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                        <Box sx={{ flex: 1 }}>
-                          <Typography variant="caption" color="text.secondary">
-                            Service
-                          </Typography>
-                          <Select
-                            value={selectedRequestServiceName}
-                            onChange={(event: SelectInputChangeEvent) => {
-                              const serviceName = String(event.target.value);
-                              const firstMethod = selectedRequestMethods.find(
-                                (method) => method.serviceName === serviceName,
-                              );
-                              selectGrpcMethodDraft(firstMethod, firstMethod ? methodKey(firstMethod) : "");
-                            }}
-                            fullWidth
+                      <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                        <Button
+                          size="small"
+                          variant="text"
+                          onClick={() =>
+                            setRequestGrpcBatchMethodKeysDraft(
+                              Array.from(new Set([...requestGrpcBatchMethodKeysDraft, ...visibleRequestMethods.map(methodKey)])),
+                            )
+                          }
+                          disabled={visibleRequestMethods.length === 0}
+                        >
+                          Select visible ({visibleRequestMethods.length})
+                        </Button>
+                        {grpcServiceFilter !== "*" && (
+                          <Button
                             size="small"
-                          >
-                            {selectedRequestServices.map((serviceName) => (
-                              <MenuItem key={serviceName} value={serviceName}>
-                                {serviceName}
-                              </MenuItem>
-                            ))}
-                          </Select>
-                        </Box>
-                        <Box sx={{ flex: 1 }}>
-                          <Typography variant="caption" color="text.secondary">
-                            Method
-                          </Typography>
-                          <Select
-                            value={
-                              selectedServiceMethods.some((method) => methodKey(method) === requestGrpcMethodKeyDraft)
-                                ? requestGrpcMethodKeyDraft
-                                : ""
+                            variant="text"
+                            onClick={() =>
+                              setRequestGrpcBatchMethodKeysDraft(
+                                selectedRequestMethods
+                                  .filter((method) => method.serviceName === grpcServiceFilter)
+                                  .map(methodKey),
+                              )
                             }
-                            onChange={(event: SelectInputChangeEvent) => {
-                              const nextMethodKey = String(event.target.value);
-                              const nextMethod = selectedServiceMethods.find(
-                                (method) => methodKey(method) === nextMethodKey,
-                              );
-                              selectGrpcMethodDraft(nextMethod, nextMethodKey);
-                            }}
-                            fullWidth
-                            size="small"
                           >
-                            {selectedServiceMethods.map((method) => (
-                              <MenuItem key={methodKey(method)} value={methodKey(method)}>
-                                {method.responseStream || method.requestStream ? "STREAM" : "RPC"} · {method.methodName}
-                              </MenuItem>
-                            ))}
-                          </Select>
-                        </Box>
+                            Select service
+                          </Button>
+                        )}
+                        <Button
+                          size="small"
+                          variant="text"
+                          onClick={() => setRequestGrpcBatchMethodKeysDraft(selectedRequestMethods.map(methodKey))}
+                          disabled={selectedRequestMethods.length === 0}
+                        >
+                          Select all {selectedRequestMethods.length}
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="text"
+                          onClick={() => setRequestGrpcBatchMethodKeysDraft([])}
+                          disabled={requestGrpcBatchMethodKeys.size === 0}
+                        >
+                          Clear
+                        </Button>
                       </Stack>
 
-                      {selectedRequestMethods.length === 0 && (
-                        <Typography variant="body2" color="warning.main">
-                          This schema revision does not expose any RPC method.
-                        </Typography>
-                      )}
+                      <Paper variant="outlined" sx={{ maxHeight: 300, overflowY: "auto", overflowX: "hidden", minWidth: 0 }}>
+                        <Stack spacing={0}>
+                          {visibleRequestMethods.length === 0 ? (
+                            <Typography variant="body2" color="text.secondary" sx={{ p: 1.25 }}>
+                              No RPC method matches this filter.
+                            </Typography>
+                          ) : (
+                            visibleRequestMethods.map((method) => {
+                              const key = methodKey(method);
+                              const checked = requestGrpcBatchMethodKeys.has(key);
+                              const alreadyExists = existingRequestMethodNames.has(`${method.serviceName}/${method.methodName}`);
+                              return (
+                                <Box
+                                  key={key}
+                                  component="label"
+                                  sx={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 1,
+                                    px: 1,
+                                    py: 0.7,
+                                    cursor: "pointer",
+                                    borderBottom: "1px solid",
+                                    borderColor: "divider",
+                                    bgcolor: checked ? "action.selected" : "transparent",
+                                    "&:last-child": { borderBottom: 0 },
+                                    "&:hover": { bgcolor: checked ? "action.selected" : "action.hover" },
+                                  }}
+                                >
+                                  <Checkbox
+                                    checked={checked}
+                                    onChange={(_event: unknown, nextChecked: boolean) => {
+                                      setRequestGrpcBatchMethodKeysDraft((current: string[]) => {
+                                        const next = new Set(current);
+                                        if (nextChecked) next.add(key);
+                                        else next.delete(key);
+                                        return [...next];
+                                      });
+                                    }}
+                                    inputProps={{ "aria-label": `Select ${method.serviceName}/${method.methodName}` }}
+                                  />
+                                  <Box sx={{ minWidth: 0, flex: 1 }}>
+                                    <Typography variant="body2" fontWeight={500} noWrap title={method.methodName}>
+                                      {method.methodName}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary" noWrap>
+                                      {method.serviceName} · {method.requestStream || method.responseStream ? "Stream" : "Unary"}
+                                      {alreadyExists ? " · Already exists" : ""}
+                                    </Typography>
+                                  </Box>
+                                </Box>
+                              );
+                            })
+                          )}
+                        </Stack>
+                      </Paper>
+
+                      <Paper variant="outlined" sx={{ p: 1, bgcolor: "action.hover" }}>
+                        <Stack spacing={0.7}>
+                          <Typography variant="body2" fontWeight={600}>
+                            {requestGrpcBatchMethods.length} selected · {selectedNewCount} new
+                            {selectedExistingCount ? ` · ${selectedExistingCount} already exist` : ""}
+                          </Typography>
+                          <Stack direction="row" spacing={0.8} alignItems="center">
+                            <Checkbox
+                              checked={requestGrpcSkipExistingDraft}
+                              onChange={(_event: unknown, checked: boolean) => setRequestGrpcSkipExistingDraft(checked)}
+                              inputProps={{ "aria-label": "Skip existing requests" }}
+                            />
+                            <Box>
+                              <Typography variant="body2">Skip existing requests</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                Match by schema and RPC path so repeated bulk creates stay clean.
+                              </Typography>
+                            </Box>
+                          </Stack>
+                        </Stack>
+                      </Paper>
                     </>
+                  ) : (
+                    <Box className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
+                      <Box sx={{ minWidth: 0 }}>
+                        <Typography variant="caption" color="text.secondary">
+                          Service
+                        </Typography>
+                        <Select
+                          value={selectedRequestServiceName}
+                          onChange={(event: SelectInputChangeEvent) => {
+                            const serviceName = String(event.target.value);
+                            window.localStorage.setItem("layang:last-request-service-name", serviceName);
+                            const firstMethod = selectedRequestMethods.find((method) => method.serviceName === serviceName);
+                            selectGrpcMethodDraft(firstMethod, firstMethod ? methodKey(firstMethod) : "");
+                          }}
+                          fullWidth
+                          size="small"
+                        >
+                          {orderedRequestServices.map((serviceName) => (
+                            <MenuItem key={serviceName} value={serviceName}>
+                              {serviceName}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </Box>
+                      <Box sx={{ minWidth: 0 }}>
+                        <Typography variant="caption" color="text.secondary">
+                          Method
+                        </Typography>
+                        <Select
+                          value={
+                            selectedServiceMethods.some((method) => methodKey(method) === requestGrpcMethodKeyDraft)
+                              ? requestGrpcMethodKeyDraft
+                              : ""
+                          }
+                          onChange={(event: SelectInputChangeEvent) => {
+                            const nextMethodKey = String(event.target.value);
+                            const nextMethod = selectedServiceMethods.find((method) => methodKey(method) === nextMethodKey);
+                            selectGrpcMethodDraft(nextMethod, nextMethodKey);
+                          }}
+                          fullWidth
+                          size="small"
+                        >
+                          {selectedServiceMethods.map((method) => (
+                            <MenuItem key={methodKey(method)} value={methodKey(method)}>
+                              {method.responseStream || method.requestStream ? "STREAM" : "RPC"} · {method.methodName}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </Box>
+                    </Box>
                   )}
                 </Stack>
               </Paper>
             )}
           </Stack>
         </DialogContent>
-        <DialogActions>
+        <DialogActions sx={{ px: 2, py: 1.25 }}>
           <Button
             onClick={() => {
               setRequestNameDialogOpen(false);
               setRequestLocationEditable(false);
+              setRequestGrpcBatchMethodKeysDraft([]);
+              setRequestGrpcSelectionModeDraft("single");
+              setRequestGrpcSkipExistingDraft(true);
             }}
           >
             Cancel
@@ -706,13 +1059,25 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
             <Button
               variant="contained"
               disabled={
-                !requestNameDraft.trim() ||
-                (requestKindDraft === "grpc" &&
-                  (!selectedRequestSchema || !selectedRequestSchemaVersion || !requestGrpcMethodKeyDraft))
+                isGrpcBatch
+                  ? !selectedRequestSchema ||
+                    !selectedRequestSchemaVersion ||
+                    requestGrpcBatchMethods.length !== requestGrpcBatchMethodKeys.size ||
+                    requestGrpcBatchMethodKeys.size === 0 ||
+                    (requestGrpcSkipExistingDraft && selectedNewCount === 0)
+                  : !requestNameDraft.trim() ||
+                    (requestKindDraft === "grpc" &&
+                      (!selectedRequestSchema || !selectedRequestSchemaVersion || !requestGrpcMethodKeyDraft))
               }
               onClick={confirmAddCollectionRequest}
             >
-              Create Request
+              {isGrpcBatch
+                ? `Create ${requestGrpcSkipExistingDraft ? selectedNewCount : requestGrpcBatchMethodKeys.size} ${
+                    (requestGrpcSkipExistingDraft ? selectedNewCount : requestGrpcBatchMethodKeys.size) === 1
+                      ? "Request"
+                      : "Requests"
+                  }`
+                : "Create Request"}
             </Button>
           )}
         </DialogActions>
@@ -941,8 +1306,8 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
       </Dialog>
       <Dialog open={loggerSettingsOpen} onClose={() => setLoggerSettingsOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Logger settings</DialogTitle>
-        <DialogContent sx={{ pt: 1 }}>
-          <Stack spacing={1.4} sx={{ mt: 0.5 }}>
+        <DialogContent sx={{ pt: 1.25, px: 2, overflowX: "hidden" }}>
+          <Stack spacing={1.25} sx={{ mt: 0.25, minWidth: 0, overflowX: "hidden" }}>
             <Typography variant="body2" color="text.secondary">
               Runtime changes apply immediately and are saved for the next app start. Environment variables can still
               override these values when the app starts.
@@ -1043,8 +1408,8 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
       </Dialog>
       <Dialog open={certificateSettingsOpen} onClose={() => setCertificateSettingsOpen(false)} fullWidth maxWidth="md">
         <DialogTitle>Certificate settings</DialogTitle>
-        <DialogContent sx={{ pt: 1 }}>
-          <Stack spacing={1.4} sx={{ mt: 0.5 }}>
+        <DialogContent sx={{ pt: 1.25, px: 2, overflowX: "hidden" }}>
+          <Stack spacing={1.25} sx={{ mt: 0.25, minWidth: 0, overflowX: "hidden" }}>
             <Typography variant="body2" color="text.secondary">
               These settings are stored in desktop user data, not in the workspace. Use imported certificates for
               internal HTTPS, self-signed APISIX, REST, gRPC-Web, or native gRPC lab targets.

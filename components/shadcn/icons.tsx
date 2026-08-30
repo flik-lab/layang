@@ -3,7 +3,6 @@
 import type { CSSProperties } from "react";
 import {
   ArrowUp,
-  ArrowUpDown,
   BookOpen,
   Braces,
   CardSim,
@@ -49,12 +48,14 @@ import {
   Search as SearchIcon,
   Settings2,
   Square,
+  SquareTerminal,
   Sun,
   Trash2,
   Upload,
   ExternalLink,
   CircleCheckBig,
   X,
+  TriangleAlert,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -136,6 +137,7 @@ export const iconSourceMap = {
   Build: "Hammer",
   CheckCircle: "CircleCheckBig",
   ErrorIcon: "CircleX",
+  WarningIcon: "TriangleAlert",
   Speed: "Gauge",
   Storage: "FileCodeCorner",
   StopCircle: "CircleStop",
@@ -143,7 +145,7 @@ export const iconSourceMap = {
   MockServer: "RadioTower",
   PanelBottom: "PanelBottom",
   PanelRight: "PanelRight",
-  Terminal: "ArrowUpDown",
+  Terminal: "SquareTerminal",
   UploadFile: "Upload",
   SourceControl: "GitBranch",
   GitCommit: "GitCommitHorizontal",
@@ -192,6 +194,7 @@ export const Settings = createCompatIcon(Settings2);
 export const Build = createCompatIcon(Hammer);
 export const CheckCircle = createCompatIcon(CircleCheckBig);
 export const ErrorIcon = createCompatIcon(CircleX);
+export const WarningIcon = createCompatIcon(TriangleAlert);
 export const Speed = createCompatIcon(Gauge);
 export const Storage = createCompatIcon(FileCodeCorner);
 export const StopCircle = createCompatIcon(CircleStop);
@@ -199,7 +202,7 @@ export const Stream = createCompatIcon(Podcast);
 export const MockServer = createCompatIcon(RadioTower);
 export const PanelBottom = createCompatIcon(PanelBottomIcon);
 export const PanelRight = createCompatIcon(PanelRightIcon);
-export const Terminal = createCompatIcon(ArrowUpDown);
+export const Terminal = createCompatIcon(SquareTerminal);
 export const UploadFile = createCompatIcon(Upload);
 export const SourceControl = createCompatIcon(GitBranch);
 export const GitCommit = createCompatIcon(GitCommitHorizontal);

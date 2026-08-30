@@ -29,9 +29,9 @@ import {
   Add,
   Close,
   ContentCopy,
-  Delete,
-  Edit,
   Folder,
+  KeyboardArrowDown,
+  KeyboardArrowRight,
   MockServer,
   MoreHoriz,
   PlayArrow,
@@ -48,9 +48,10 @@ import { RestMockPanel } from "../rest/rest-panels";
 import { WebSocketMockPanel } from "../websocket/websocket-panels";
 import { CodeTextField as FeatureCodeTextField } from "../request-editor/request-editor-panels";
 import { WebAccessSecurityPanel } from "./web-access-security-panel";
-import { testHttpsEndpoint } from "../../shared/certificate-settings";
+import { chooseHttpsPemFiles, testHttpsEndpoint } from "../../shared/certificate-settings";
 import {
   buildDefaultMockScenario,
+  createDefaultGatewayProfile,
   ensureUniqueMockScenarioId,
   formatMockScenarioBundle,
   formatSingleMockScenarioForEditor,
@@ -62,8 +63,17 @@ import {
 } from "../mock-server/mock-scenario-model";
 import { methodKey } from "../../shared/rpc-method-utils";
 import { uiCopy } from "../../shared/ui-copy";
+import { grpcMockOverviewMethodKey } from "../../shared/workbench-constants";
 import { mockScenarioDisplayName, rpcMethodKindLabel } from "../mock-server/mock-scenario-ui";
-import type { MockFormat, MockScenario, MockServerProject, MockProtoSource } from "../../shared/workbench-types";
+import { GrpcMockScenarioActionsMenu, GrpcMockScenarioManagerDialog } from "../mock-server/grpc-mock-scenario-controls";
+import type {
+  GrpcGatewayProfile,
+  GrpcWebProxyConfig,
+  MockFormat,
+  MockProtoSource,
+  MockScenario,
+  MockServerProject,
+} from "../../shared/workbench-types";
 
 const cardSx = {
   border: "1px solid",
@@ -89,7 +99,7 @@ const webAccessSectionSx = {
 type ViewContext = Record<string, any>;
 type GrpcMockTab = "scenarios" | "proto" | "web-access" | "activity";
 type GrpcMockActivityView = "requests" | "logs";
-type GrpcMockSettingsPage = "server" | "security" | "defaults" | "advanced";
+type GrpcMockSettingsPage = "server" | "security" | "web-server" | "defaults" | "advanced";
 const grpcMockTabs = ["scenarios", "proto", "web-access", "activity"] as const;
 type AttachedMethod = {
   source: MockProtoSource;
@@ -134,6 +144,14 @@ export function ServicesWorkspace({ ctx }: { ctx: ViewContext }) {
     addRestMockScenarioPair,
     addWebSocketMockScenario,
     copyActiveWebSocketMockResponse,
+    mockServer,
+    mockServerStatus,
+    setMockServer,
+    startMockServer,
+    stopMockServer,
+    startWebAccess,
+    stopWebAccess,
+    webAccessStatus,
     handleRestMockBindHostChange,
     handleRestMockPortChange,
     handleWebSocketMockPortChange,
@@ -162,14 +180,17 @@ export function ServicesWorkspace({ ctx }: { ctx: ViewContext }) {
     wsMockStreamOnConnect,
   } = ctx;
   const [protocolTab, setProtocolTab] = useState<"scenarios" | "activity">("scenarios");
+  const [grpcSettingsOpen, setGrpcSettingsOpen] = useState(false);
+  const [grpcSettingsPage, setGrpcSettingsPage] = useState<GrpcMockSettingsPage>("server");
 
-  if (serviceProtocol === "grpc-mock" || serviceProtocol === "web-access") {
-    return <GrpcMockWorkspace ctx={ctx} initialTab={serviceProtocol === "web-access" ? "web-access" : "scenarios"} />;
-  }
-
+  const isGrpc = serviceProtocol === "grpc-mock" || serviceProtocol === "web-access";
   const isRest = serviceProtocol === "rest";
   const protocolStatus = isRest ? restMockStatus : wsMockStatus;
-  return (
+
+  const grpcOverviewSelected = ctx.mockSelectedMethodKey === grpcMockOverviewMethodKey;
+  const workspaceContent = isGrpc ? (
+    grpcOverviewSelected ? <GrpcMockWorkspace ctx={ctx} initialTab="scenarios" /> : <GrpcFocusedMockWorkspace ctx={ctx} />
+  ) : (
     <WorkspaceFrame
       title={isRest ? "REST Mock" : "WebSocket Mock"}
       description={
@@ -266,6 +287,226 @@ export function ServicesWorkspace({ ctx }: { ctx: ViewContext }) {
       )}
     </WorkspaceFrame>
   );
+
+  const toggleRuntime = async (kind: "grpc" | "web" | "rest" | "websocket", checked: boolean) => {
+    if (kind === "grpc") {
+      if (checked) await startMockServer();
+      else await stopMockServer();
+      return;
+    }
+    if (kind === "web") {
+      if (checked) await startWebAccess();
+      else await stopWebAccess();
+      return;
+    }
+    if (kind === "rest") {
+      if (checked) await startRestMockServer();
+      else await stopRestMockServer();
+      return;
+    }
+    if (checked) await startWebSocketMockServer();
+    else await stopWebSocketMockServer();
+  };
+
+  return (
+    <Box sx={{ width: "100%", height: "100%", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <MockRuntimeStrip
+        grpcRunning={Boolean(mockServerStatus?.running)}
+        webRunning={Boolean(webAccessStatus?.running)}
+        restRunning={Boolean(restMockStatus?.running)}
+        websocketRunning={Boolean(wsMockStatus?.running)}
+        onToggle={(kind, checked) => void toggleRuntime(kind, checked)}
+        onOpenSettings={() => setGrpcSettingsOpen(true)}
+      />
+      <Box sx={{ minHeight: 0, flex: 1, overflow: "hidden" }}>{workspaceContent}</Box>
+      <GrpcMockSettingsDialog
+        open={grpcSettingsOpen}
+        page={grpcSettingsPage}
+        onPageChange={setGrpcSettingsPage}
+        mockServer={mockServer}
+        running={Boolean(mockServerStatus?.running)}
+        webRunning={Boolean(webAccessStatus?.running)}
+        onClose={() => setGrpcSettingsOpen(false)}
+        onSave={(next) => setMockServer({ ...next, updatedAt: new Date().toISOString() })}
+        onSaveAndRestart={async (next) => {
+          const grpcWasRunning = Boolean(mockServerStatus?.running);
+          const webWasRunning = Boolean(webAccessStatus?.running);
+          if (webWasRunning) await stopWebAccess();
+          if (grpcWasRunning) await stopMockServer();
+          const nextProject = { ...next, updatedAt: new Date().toISOString() };
+          setMockServer(nextProject);
+          if (grpcWasRunning) await startMockServer(nextProject);
+          if (webWasRunning) {
+            const profile =
+              nextProject.gatewayProfiles.find((item) => item.id === nextProject.activeGatewayProfileId) ??
+              nextProject.gatewayProfiles[0];
+            await startWebAccess(profile, nextProject);
+          }
+        }}
+      />
+    </Box>
+  );
+}
+
+function MockRuntimeStrip({
+  grpcRunning,
+  webRunning,
+  restRunning,
+  websocketRunning,
+  onToggle,
+  onOpenSettings,
+}: {
+  grpcRunning: boolean;
+  webRunning: boolean;
+  restRunning: boolean;
+  websocketRunning: boolean;
+  onToggle: (kind: "grpc" | "web" | "rest" | "websocket", checked: boolean) => void;
+  onOpenSettings: () => void;
+}) {
+  const items = [
+    { kind: "grpc" as const, label: "gRPC Mock", checked: grpcRunning },
+    { kind: "web" as const, label: "Web Access", checked: webRunning },
+    { kind: "rest" as const, label: "REST Mock", checked: restRunning },
+    { kind: "websocket" as const, label: "WebSocket Mock", checked: websocketRunning },
+  ];
+  return (
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={0.9}
+      sx={{
+        minHeight: 38,
+        px: 1.25,
+        borderBottom: "1px solid var(--border-strong)",
+        bgcolor: "background.default",
+        flexShrink: 0,
+        overflowX: "auto",
+      }}
+      aria-label="Mock runtimes"
+    >
+      <Typography variant="caption" sx={{ fontWeight: 700, letterSpacing: "0.04em", color: "text.secondary", mr: 0.3 }}>
+        RUNTIMES
+      </Typography>
+      {items.map((item) => (
+        <Stack key={item.kind} direction="row" alignItems="center" spacing={0.3} sx={{ flexShrink: 0 }}>
+          <Switch
+            size="small"
+            checked={item.checked}
+            inputProps={{ "aria-label": `${item.label} ${item.checked ? "active" : "inactive"}` }}
+            onChange={(event: any) => onToggle(item.kind, event.target.checked)}
+          />
+          <Typography variant="caption" color={item.checked ? "text.primary" : "text.secondary"}>
+            {item.label}
+          </Typography>
+        </Stack>
+      ))}
+      <Box sx={{ flex: 1 }} />
+      <Button size="small" variant="outlined" startIcon={<Settings sx={{ fontSize: 14 }} />} onClick={onOpenSettings} sx={{ flexShrink: 0 }}>
+        Mock Settings
+      </Button>
+    </Stack>
+  );
+}
+
+function GrpcFocusedMockWorkspace({ ctx }: { ctx: ViewContext }) {
+  const {
+    addMockScenarioForMethod,
+    currentMockActiveScenario,
+    currentMockEditorText,
+    currentMockFile,
+    currentMockScenarios,
+    discardMockScenarioEditorDraft,
+    formatMockScenarioEditor,
+    handleMockFormatChange,
+    handleMockMethodEnabledChange,
+    handleMockScenarioSelectChange,
+    handleMockScenarioTextChange,
+    mockScenarioEditorDirty,
+    mockScenarioEditorError,
+    mockSelectedMethod,
+    mockServer,
+    openMockScenarioFolder,
+    openMockScenarioManager,
+    saveMockScenarioEditorDraft,
+  } = ctx;
+  const [settingsAnchor, setSettingsAnchor] = useState<HTMLElement | null>(null);
+  const method = mockSelectedMethod as RpcMethodInfo | null;
+  const key = method ? methodKey(method) : "";
+  const enabled = method ? mockServer.enabledMethods?.[key] !== false : false;
+  const selectedScenarioId = currentMockActiveScenario?.id ?? currentMockScenarios?.[0]?.id ?? "";
+  if (!method) {
+    return (
+      <WorkspaceFrame title="Mocking" description="Select a gRPC method from the Mocking sidebar.">
+        <Box sx={{ flex: 1, display: "grid", placeItems: "center", color: "text.secondary" }}>
+          <Typography variant="body2">Select a method to edit its mock scenario.</Typography>
+        </Box>
+      </WorkspaceFrame>
+    );
+  }
+
+  return (
+    <Paper elevation={0} sx={{ width: "100%", height: "100%", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden", borderRadius: 0 }}>
+      <Stack direction="row" alignItems="center" spacing={0.8} sx={{ minHeight: 54, px: 1.5, borderBottom: "1px solid var(--border-strong)", flexShrink: 0 }}>
+        <Box sx={{ minWidth: 0, flex: 1 }}>
+          <Typography variant="subtitle1" fontWeight={600} noWrap title={method.methodName}>{method.methodName}</Typography>
+          <Typography variant="caption" color="text.secondary" noWrap>{method.serviceName} · {rpcMethodKindLabel(method)}</Typography>
+        </Box>
+      </Stack>
+
+      <Stack direction="row" alignItems="center" spacing={0.65} sx={{ minHeight: 42, px: 1.5, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
+        <Typography variant="caption" color="text.secondary">Scenario</Typography>
+        <FormControl size="small" sx={{ minWidth: 220, maxWidth: 360 }}>
+          <Select
+            value={selectedScenarioId}
+            displayEmpty
+            inputProps={{ "aria-label": `Scenario for ${method.methodName}` }}
+            onChange={(event: any) => handleMockScenarioSelectChange(method, String(event.target.value))}
+          >
+            {currentMockScenarios?.length ? currentMockScenarios.map((scenario: MockScenario) => (
+              <MenuItem key={scenario.id} value={scenario.id}>{mockScenarioDisplayName(scenario, method)}</MenuItem>
+            )) : <MenuItem value="" disabled>No scenarios</MenuItem>}
+          </Select>
+        </FormControl>
+        <Button size="small" variant="outlined" startIcon={<Settings sx={{ fontSize: 14 }} />} onClick={(event: any) => setSettingsAnchor(event.currentTarget)}>
+          Scenario Settings
+        </Button>
+        <Stack direction="row" alignItems="center" spacing={0.4} sx={{ ml: "auto" }}>
+          <Typography variant="caption" color="text.secondary">Active</Typography>
+          <Switch size="small" checked={enabled} disabled={!currentMockScenarios?.length} onChange={(event: any) => handleMockMethodEnabledChange(method, event.target.checked)} />
+        </Stack>
+      </Stack>
+
+      <Menu anchorEl={settingsAnchor} open={Boolean(settingsAnchor)} onClose={() => setSettingsAnchor(null)}>
+        <MenuItem onClick={() => { setSettingsAnchor(null); addMockScenarioForMethod(method); }}>Add scenario</MenuItem>
+        <MenuItem disabled={!selectedScenarioId} onClick={() => { setSettingsAnchor(null); openMockScenarioManager(method, selectedScenarioId); }}>Manage scenario</MenuItem>
+        <MenuItem onClick={() => { setSettingsAnchor(null); void openMockScenarioFolder(); }}>Open scenario folder</MenuItem>
+        <MenuItem onClick={() => { setSettingsAnchor(null); handleMockMethodEnabledChange(method, !enabled); }}>{enabled ? "Disable mock" : "Enable mock"}</MenuItem>
+      </Menu>
+
+      <Box sx={{ minHeight: 0, flex: 1, display: "flex", flexDirection: "column", p: 1.25, gap: 0.65 }}>
+        <Stack direction="row" alignItems="center" spacing={0.45} sx={{ minHeight: 28 }}>
+          <Button size="small" variant={currentMockFile?.format === "yaml" ? "contained" : "text"} onClick={() => handleMockFormatChange("yaml")}>YAML</Button>
+          <Button size="small" variant={currentMockFile?.format === "json" ? "contained" : "text"} onClick={() => handleMockFormatChange("json")}>JSON</Button>
+          <Box sx={{ flex: 1 }} />
+          {mockScenarioEditorError ? <Typography variant="caption" color="error.main" noWrap title={mockScenarioEditorError}>{mockScenarioEditorError}</Typography> : null}
+          <Button size="small" variant="text" onClick={() => formatMockScenarioEditor()} disabled={!currentMockScenarios?.length}>Format</Button>
+          <Button size="small" variant="text" onClick={() => discardMockScenarioEditorDraft()} disabled={!mockScenarioEditorDirty}>Revert</Button>
+          <Button size="small" variant="contained" onClick={() => saveMockScenarioEditorDraft()} disabled={!mockScenarioEditorDirty || Boolean(mockScenarioEditorError)}>Save</Button>
+        </Stack>
+        <Box sx={{ minHeight: 0, flex: 1 }}>
+          <FeatureCodeTextField
+            value={currentMockEditorText ?? ""}
+            onChange={handleMockScenarioTextChange}
+            minRows={18}
+            fullHeight
+            language={currentMockFile?.format ?? "yaml"}
+            showFormatAction={false}
+            fullscreenTitle={`${method.methodName} scenario`}
+          />
+        </Box>
+      </Box>
+    </Paper>
+  );
 }
 
 export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: ViewContext; initialTab?: GrpcMockTab }) {
@@ -293,6 +534,8 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
   const [tab, setTab] = useState<GrpcMockTab>(initialTab);
   const [activityView, setActivityView] = useState<GrpcMockActivityView>("logs");
   const [query, setQuery] = useState("");
+  const [methodFilter, setMethodFilter] = useState<"all" | "live" | "ready" | "setup">("all");
+  const [collapsedServiceKeys, setCollapsedServiceKeys] = useState<Set<string>>(() => new Set());
   const [newOpen, setNewOpen] = useState(false);
   const [newMethodKey, setNewMethodKey] = useState("");
   const [attachOpen, setAttachOpen] = useState(false);
@@ -419,7 +662,14 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
 
   const scenarioProtoGroups = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery) return allScenarioProtoGroups;
+    const matchesStatus = (method: ScenarioMethodGroup) => {
+      const configured = Boolean(method.enabled && method.activeScenario && !method.errorDetail);
+      const live = Boolean(mockServerStatus.running && configured);
+      if (methodFilter === "live") return live;
+      if (methodFilter === "ready") return configured && !live;
+      if (methodFilter === "setup") return !configured;
+      return true;
+    };
 
     return allScenarioProtoGroups
       .map((proto) => {
@@ -430,7 +680,8 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
           .map((service) => {
             const serviceMatches = service.serviceName.toLowerCase().includes(normalizedQuery);
             const methods = service.methods.filter((method) => {
-              if (protoMatches || serviceMatches) return true;
+              if (!matchesStatus(method)) return false;
+              if (!normalizedQuery || protoMatches || serviceMatches) return true;
               const scenarioSearch = method.scenarios
                 .map(
                   (row) =>
@@ -447,7 +698,7 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
         return { ...proto, services };
       })
       .filter((proto) => proto.services.length > 0);
-  }, [allScenarioProtoGroups, query]);
+  }, [allScenarioProtoGroups, methodFilter, mockServerStatus.running, query]);
 
   const visibleMethodCount = useMemo(
     () =>
@@ -458,6 +709,25 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
       ),
     [scenarioProtoGroups],
   );
+
+  const grpcMethodStatusSummary = useMemo(() => {
+    let total = 0;
+    let ready = 0;
+    let live = 0;
+    let needsSetup = 0;
+    for (const proto of allScenarioProtoGroups) {
+      for (const service of proto.services) {
+        for (const method of service.methods) {
+          total += 1;
+          const configured = Boolean(method.enabled && method.activeScenario && !method.errorDetail);
+          if (!configured) needsSetup += 1;
+          else if (mockServerStatus.running) live += 1;
+          else ready += 1;
+        }
+      }
+    }
+    return { total, ready, live, needsSetup };
+  }, [allScenarioProtoGroups, mockServerStatus.running]);
 
   const managedMethod = useMemo(
     () =>
@@ -781,7 +1051,9 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
       : runtimeAction === "stop"
         ? "Stopping"
         : runModeRunning
-          ? "Running"
+          ? runMode === "native" && mockServerStatus.runtimeSource === "cli"
+            ? "Running · CLI"
+            : "Running"
           : "Stopped";
   const runtimeActionLabel =
     runtimeAction === "start"
@@ -842,7 +1114,7 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
   return (
     <WorkspaceFrame title="gRPC" description="Run native gRPC mocks and expose them to browser clients.">
       <Stack spacing={1} sx={{ minHeight: 0, flex: 1 }}>
-        <Paper variant="outlined" sx={{ px: 1, py: 0.8 }}>
+        <Paper variant="outlined" sx={{ px: 1, py: 0.65 }}>
           <Stack direction={{ xs: "column", md: "row" }} spacing={0.8} alignItems={{ md: "center" }}>
             <Stack spacing={0.25} sx={{ width: { xs: "100%", md: 180 }, flexShrink: 0 }}>
               <Typography variant="caption" color="text.secondary">
@@ -973,282 +1245,425 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
             tabIndex={0}
             sx={{ minHeight: 0, flex: 1, overflow: "auto" }}
           >
-            <Stack direction="row" spacing={0.6} sx={{ pb: 0.8 }}>
-              <TextField
-                size="small"
-                fullWidth
-                value={query}
-                onChange={(event: any) => setQuery(event.target.value)}
-                placeholder="Search Proto, method, or scenario"
-                inputProps={{ "aria-label": "Search gRPC Mock methods and scenarios" }}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <Search sx={{ fontSize: 15 }} />
-                    </InputAdornment>
-                  ),
-                }}
-              />
-              <Tooltip title={uiCopy.actions.addScenario}>
-                <IconButton
-                  color="primary"
-                  aria-label={uiCopy.actions.addScenario}
-                  onClick={() => {
-                    setNewMethodKey(
-                      mockSelectedMethod &&
-                        mockableMethods.some((item) => methodKey(item.method) === methodKey(mockSelectedMethod))
-                        ? methodKey(mockSelectedMethod)
-                        : mockableMethods[0]
-                          ? methodKey(mockableMethods[0].method)
-                          : "",
-                    );
-                    setNewOpen(true);
+            <Stack spacing={0.7}>
+              <Box className="flex min-w-0 flex-col gap-1.5 lg:flex-row lg:items-center">
+                <TextField
+                  size="small"
+                  fullWidth
+                  value={query}
+                  onChange={(event: any) => setQuery(event.target.value)}
+                  placeholder="Search Proto, service, method, or scenario"
+                  inputProps={{ "aria-label": "Search gRPC Mock methods and scenarios" }}
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <Search sx={{ fontSize: 15 }} />
+                      </InputAdornment>
+                    ),
                   }}
-                >
-                  <Add />
-                </IconButton>
-              </Tooltip>
-            </Stack>
+                  sx={{ minWidth: 0, flex: 1 }}
+                />
+                <Stack direction="row" spacing={0.35} alignItems="center" flexWrap="wrap" useFlexGap sx={{ flexShrink: 0 }}>
+                  {([
+                    ["all", "All", grpcMethodStatusSummary.total],
+                    ["live", "Live", grpcMethodStatusSummary.live],
+                    ["ready", "Ready", grpcMethodStatusSummary.ready],
+                    ["setup", "Needs setup", grpcMethodStatusSummary.needsSetup],
+                  ] as const).map(([value, label, count]) => (
+                    <Button
+                      key={value}
+                      size="small"
+                      variant={methodFilter === value ? "contained" : "text"}
+                      aria-pressed={methodFilter === value}
+                      onClick={() => setMethodFilter(value)}
+                      sx={{ minWidth: 0, height: 28, px: 0.85, boxShadow: "none" }}
+                    >
+                      {label} {count}
+                    </Button>
+                  ))}
+                  <Tooltip title={uiCopy.actions.addScenario}>
+                    <IconButton
+                      size="small"
+                      color="primary"
+                      aria-label={uiCopy.actions.addScenario}
+                      onClick={() => {
+                        setNewMethodKey(
+                          mockSelectedMethod &&
+                            mockableMethods.some((item) => methodKey(item.method) === methodKey(mockSelectedMethod))
+                            ? methodKey(mockSelectedMethod)
+                            : mockableMethods[0]
+                              ? methodKey(mockableMethods[0].method)
+                              : "",
+                        );
+                        setNewOpen(true);
+                      }}
+                    >
+                      <Add />
+                    </IconButton>
+                  </Tooltip>
+                </Stack>
+              </Box>
 
-            {scenarioProtoGroups.length === 0 ? (
-              <EmptyCard
-                title={query.trim() ? "No results" : "No Proto methods"}
-                body={
-                  query.trim()
-                    ? "Try another search."
-                    : sourceRefs.length
-                      ? "The attached Proto revisions do not contain mockable methods."
-                      : "Attach a Proto first."
-                }
-              />
-            ) : (
-              <Stack spacing={1} aria-label="gRPC Mock methods grouped by Proto">
-                {scenarioProtoGroups.map((proto) => {
-                  const protoKey = `${proto.source.libraryId}:${proto.source.versionId}`;
-                  return (
-                    <Paper key={protoKey} variant="outlined" sx={{ overflow: "hidden" }}>
-                      <Stack
-                        direction={{ xs: "column", sm: "row" }}
-                        spacing={0.5}
-                        alignItems={{ sm: "center" }}
-                        sx={{ px: 1.1, py: 0.85, bgcolor: "action.hover" }}
-                      >
-                        <Box sx={{ minWidth: 0, flex: 1 }}>
-                          <Typography variant="subtitle1" noWrap title={proto.library?.name ?? "Proto"}>
+              <Stack direction="row" spacing={0.7} alignItems="center" sx={{ minHeight: 18, px: 0.15 }}>
+                <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
+                  {visibleMethodCount} shown
+                </Typography>
+                <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0, flex: 1 }}>
+                  {mockServerStatus.running
+                    ? `Runtime running on :${mockServerStatus.port ?? mockServer.port}`
+                    : "Runtime stopped — ready methods serve immediately after Start"}
+                </Typography>
+              </Stack>
+
+              {scenarioProtoGroups.length === 0 ? (
+                <EmptyCard
+                  title={query.trim() || methodFilter !== "all" ? "No matching methods" : "No Proto methods"}
+                  body={
+                    query.trim() || methodFilter !== "all"
+                      ? "Change the search or status filter."
+                      : sourceRefs.length
+                        ? "The attached Proto revisions do not contain mockable methods."
+                        : "Attach a Proto first."
+                  }
+                />
+              ) : (
+                <Stack spacing={0.65} aria-label="gRPC Mock methods grouped by Proto">
+                  {scenarioProtoGroups.map((proto) => {
+                    const protoKey = `${proto.source.libraryId}:${proto.source.versionId}`;
+                    return (
+                      <Paper key={protoKey} variant="outlined" sx={{ overflow: "hidden", minWidth: 0 }}>
+                        <Stack
+                          direction="row"
+                          spacing={0.75}
+                          alignItems="center"
+                          sx={{ minWidth: 0, minHeight: 36, px: 1, py: 0.55, bgcolor: "action.hover" }}
+                        >
+                          <Typography
+                            variant="body2"
+                            fontWeight={600}
+                            noWrap
+                            title={proto.library?.name ?? "Proto"}
+                            sx={{ minWidth: 0, fontSize: 13, lineHeight: "20px" }}
+                          >
                             {proto.library?.name ?? "Proto"}
                           </Typography>
-                          <Typography variant="caption" color="text.secondary" noWrap>
-                            {proto.version?.version ?? proto.source.versionId}
+                          <Chip
+                            size="small"
+                            variant="outlined"
+                            label={proto.version?.version ?? proto.source.versionId}
+                            sx={{ flexShrink: 0, maxWidth: 150 }}
+                          />
+                          <Typography variant="caption" color="text.secondary" sx={{ ml: "auto", flexShrink: 0 }}>
+                            {proto.methodCount} method{proto.methodCount === 1 ? "" : "s"} · {proto.scenarioCount} scenario{proto.scenarioCount === 1 ? "" : "s"}
                           </Typography>
-                        </Box>
-                        <Typography variant="caption" color="text.secondary">
-                          {proto.methodCount} method{proto.methodCount === 1 ? "" : "s"} · {proto.scenarioCount}{" "}
-                          scenario{proto.scenarioCount === 1 ? "" : "s"}
-                        </Typography>
-                      </Stack>
+                        </Stack>
 
-                      <Stack spacing={1} sx={{ p: 1 }}>
-                        {proto.services.map((service) => (
-                          <Stack key={`${protoKey}:${service.serviceName}`} spacing={0.45}>
-                            <Stack direction="row" spacing={0.7} alignItems="center" sx={{ px: 0.5 }}>
-                              <Typography variant="caption" fontWeight={600} color="text.secondary" noWrap>
-                                {service.serviceName}
-                              </Typography>
-                              <Divider sx={{ flex: 1 }} />
-                            </Stack>
+                        <Stack spacing={0}>
+                          {proto.services.map((service, serviceIndex) => {
+                            const serviceKey = `${protoKey}:${service.serviceName}`;
+                            const collapsed = collapsedServiceKeys.has(serviceKey);
+                            const serviceLive = service.methods.filter(
+                              (method) => mockServerStatus.running && method.enabled && method.activeScenario && !method.errorDetail,
+                            ).length;
+                            const serviceReady = service.methods.filter(
+                              (method) => !mockServerStatus.running && method.enabled && method.activeScenario && !method.errorDetail,
+                            ).length;
+                            const serviceNeedsSetup = service.methods.length - serviceLive - serviceReady;
 
-                            {service.methods.map((method) => {
-                              const key = methodKey(method.method);
-                              const selected = Boolean(mockSelectedMethod && methodKey(mockSelectedMethod) === key);
-                              const activeScenario = method.activeScenario;
-                              const running = Boolean(
-                                mockServerStatus.running && method.enabled && activeScenario && !method.errorDetail,
-                              );
-                              const warningDetail =
-                                method.scenarios.length === 0
-                                  ? "Add a scenario before enabling this method."
-                                  : !activeScenario
-                                    ? "Choose an active scenario."
-                                    : !method.enabled
-                                      ? "The active scenario is disabled."
-                                      : "";
-
-                              const selectMethod = () => {
-                                selectProtoLibraryVersion(method.source.libraryId, method.source.versionId);
-                                setMockSelectedMethodKey(key);
-                                if (activeScenario) {
-                                  setFocusedScenarioKey(`${key}:${activeScenario.scenario.id}`);
-                                }
-                              };
-
-                              return (
+                            return (
+                              <Box
+                                key={serviceKey}
+                                sx={{ borderTop: serviceIndex > 0 ? "1px solid" : "none", borderTopColor: "divider" }}
+                              >
                                 <Box
-                                  key={`${protoKey}:${key}`}
-                                  role="group"
-                                  tabIndex={0}
-                                  aria-label={`${method.method.methodName} mock method`}
-                                  aria-current={selected ? "true" : undefined}
-                                  onClick={selectMethod}
-                                  onKeyDown={(event: any) => {
-                                    if (event.currentTarget !== event.target) return;
-                                    if (event.key === " " || event.key === "Enter") {
-                                      event.preventDefault();
-                                      selectMethod();
-                                    }
-                                  }}
+                                  component="button"
+                                  type="button"
+                                  className="transition-colors hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary focus-visible:-outline-offset-2"
+                                  aria-expanded={!collapsed}
+                                  aria-controls={`${serviceKey}-methods`}
+                                  onClick={() =>
+                                    setCollapsedServiceKeys((current) => {
+                                      const next = new Set(current);
+                                      if (next.has(serviceKey)) next.delete(serviceKey);
+                                      else next.add(serviceKey);
+                                      return next;
+                                    })
+                                  }
                                   sx={{
+                                    width: "100%",
                                     minWidth: 0,
-                                    border: "1px solid",
-                                    borderColor: selected ? "primary.main" : "divider",
-                                    borderLeft: "2px solid",
-                                    borderLeftColor: selected ? "primary.main" : "transparent",
-                                    borderRadius: 1,
-                                    bgcolor: selected ? "action.selected" : "transparent",
-                                    px: 1,
-                                    py: 0.75,
-                                    "&:hover": { bgcolor: selected ? "action.selected" : "action.hover" },
+                                    minHeight: 36,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 0.55,
+                                    px: 0.85,
+                                    py: 0.45,
+                                    border: 0,
+                                    bgcolor: "transparent",
+                                    color: "text.primary",
+                                    textAlign: "left",
+                                    cursor: "pointer",
                                   }}
                                 >
-                                  <Stack direction="row" spacing={0.6} alignItems="flex-start">
-                                    <Box sx={{ minWidth: 0, flex: 1 }}>
-                                      <Typography
-                                        variant="body2"
-                                        fontWeight={500}
-                                        noWrap
-                                        title={method.method.methodName}
-                                      >
-                                        {method.method.methodName}
+                                  {collapsed ? (
+                                    <KeyboardArrowRight sx={{ fontSize: 15, color: "text.secondary", flex: "0 0 auto" }} />
+                                  ) : (
+                                    <KeyboardArrowDown sx={{ fontSize: 15, color: "text.secondary", flex: "0 0 auto" }} />
+                                  )}
+                                  <Typography
+                                    variant="body2"
+                                    fontWeight={600}
+                                    noWrap
+                                    title={service.serviceName}
+                                    sx={{ minWidth: 0, flex: 1, fontSize: 12.5, lineHeight: "20px" }}
+                                  >
+                                    {service.serviceName}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary" noWrap sx={{ flex: "0 0 auto", lineHeight: "18px" }}>
+                                    {service.methods.length} methods
+                                    {serviceLive > 0 ? ` · ${serviceLive} live` : ""}
+                                    {serviceReady > 0 ? ` · ${serviceReady} ready` : ""}
+                                    {serviceNeedsSetup > 0 ? ` · ${serviceNeedsSetup} setup` : ""}
+                                  </Typography>
+                                </Box>
+
+                                {!collapsed ? (
+                                  <Box id={`${serviceKey}-methods`} sx={{ minWidth: 0 }}>
+                                    <Box
+                                      aria-hidden="true"
+                                      className="grpc-mock-manager-header"
+                                      sx={{
+                                        alignItems: "center",
+                                        minHeight: 32,
+                                        px: 1,
+                                        borderTop: "1px solid",
+                                        borderBottom: "1px solid",
+                                        borderColor: "divider",
+                                        bgcolor: "background.default",
+                                      }}
+                                    >
+                                      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, letterSpacing: "0.02em" }}>
+                                        Method
                                       </Typography>
-                                      <Typography variant="caption" color="text.secondary" noWrap>
-                                        {rpcMethodKindLabel(method.method)}
+                                      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, letterSpacing: "0.02em" }}>
+                                        Scenario
                                       </Typography>
+                                      <Typography variant="caption" color="text.secondary" align="center" sx={{ fontWeight: 600, letterSpacing: "0.02em" }}>
+                                        Status
+                                      </Typography>
+                                      <Typography variant="caption" color="text.secondary" align="center" sx={{ fontWeight: 600, letterSpacing: "0.02em" }}>
+                                        Enabled
+                                      </Typography>
+                                      <Box />
                                     </Box>
 
-                                    {method.errorDetail ? (
-                                      <MethodStatusIndicator
-                                        tone="error"
-                                        title="Method unavailable"
-                                        detail={method.errorDetail}
-                                        context={`${method.method.serviceName}/${method.method.methodName}`}
-                                      />
-                                    ) : running ? (
-                                      <MethodStatusIndicator
-                                        tone="running"
-                                        title="Mock running"
-                                        detail={`Serving ${activeScenario?.scenario.id ?? "the active scenario"}.`}
-                                        context={`${method.method.serviceName}/${method.method.methodName}`}
-                                      />
-                                    ) : warningDetail ? (
-                                      <MethodStatusIndicator
-                                        tone="warning"
-                                        title={method.scenarios.length === 0 ? "No scenarios" : "Method not active"}
-                                        detail={warningDetail}
-                                        context={`${method.method.serviceName}/${method.method.methodName}`}
-                                      />
-                                    ) : null}
-                                  </Stack>
+                                    {service.methods.map((method, methodIndex) => {
+                                      const key = methodKey(method.method);
+                                      const selected = Boolean(mockSelectedMethod && methodKey(mockSelectedMethod) === key);
+                                      const activeScenario = method.activeScenario;
+                                      const running = Boolean(
+                                        mockServerStatus.running && method.enabled && activeScenario && !method.errorDetail,
+                                      );
+                                      const statusLabel = method.errorDetail
+                                        ? "ERR"
+                                        : running
+                                          ? "LIVE"
+                                          : method.enabled && activeScenario
+                                            ? "READY"
+                                            : method.scenarios.length
+                                              ? "OFF"
+                                              : "SETUP";
 
-                                  {!method.errorDetail ? (
-                                    <Stack
-                                      direction={{ xs: "column", sm: "row" }}
-                                      spacing={0.55}
-                                      alignItems={{ sm: "flex-end" }}
-                                      sx={{ mt: 0.7 }}
-                                      onPointerDown={(event: any) => event.stopPropagation()}
-                                      onMouseDown={(event: any) => event.stopPropagation()}
-                                      onClick={(event: any) => event.stopPropagation()}
-                                      onKeyDown={(event: any) => event.stopPropagation()}
-                                    >
-                                      {method.scenarios.length > 0 ? (
-                                        <Stack spacing={0.3} sx={{ minWidth: 0, flex: 1 }}>
-                                          <Typography variant="caption" color="text.secondary">
-                                            Active scenario
-                                          </Typography>
-                                          <FormControl size="small" fullWidth>
-                                            <Select
-                                              value={activeScenario?.scenario.id ?? ""}
-                                              displayEmpty
-                                              sx={{ minHeight: 38 }}
-                                              inputProps={{
-                                                "aria-label": `Active scenario for ${method.method.methodName}`,
-                                              }}
-                                              onChange={(event: any) =>
-                                                selectScenarioFromMethod(method, String(event.target.value))
-                                              }
-                                            >
-                                              <MenuItem value="" disabled>
-                                                Choose scenario
-                                              </MenuItem>
-                                              {method.scenarios.map((row) => {
-                                                const displayName = mockScenarioDisplayName(row.scenario, row.method);
-                                                const optionLabel =
-                                                  displayName === row.scenario.id
-                                                    ? displayName
-                                                    : `${displayName} — ${row.scenario.id}`;
-                                                return (
-                                                  <MenuItem key={`${key}:${row.scenario.id}`} value={row.scenario.id}>
-                                                    {optionLabel}
-                                                  </MenuItem>
-                                                );
-                                              })}
-                                            </Select>
-                                          </FormControl>
-                                        </Stack>
-                                      ) : (
-                                        <Button
-                                          size="small"
-                                          variant="outlined"
-                                          startIcon={<Add />}
-                                          onClick={() => createScenario(method)}
-                                          sx={{ alignSelf: { sm: "flex-end" } }}
-                                        >
-                                          {uiCopy.actions.addScenario}
-                                        </Button>
-                                      )}
+                                      const selectMethod = () => {
+                                        selectProtoLibraryVersion(method.source.libraryId, method.source.versionId);
+                                        setMockSelectedMethodKey(key);
+                                        if (activeScenario) setFocusedScenarioKey(`${key}:${activeScenario.scenario.id}`);
+                                      };
 
-                                      <Stack spacing={0.15} alignItems="center" sx={{ minWidth: 58 }}>
-                                        <Typography variant="caption" color="text.secondary">
-                                          Active
-                                        </Typography>
-                                        <Switch
-                                          size="small"
-                                          checked={method.enabled}
-                                          disabled={method.scenarios.length === 0}
-                                          inputProps={{
-                                            "aria-label": `Enable mock for ${method.method.methodName}`,
+                                      return (
+                                        <Box
+                                          key={`${protoKey}:${key}`}
+                                          role="group"
+                                          tabIndex={0}
+                                          className={`grpc-mock-manager-row ${selected ? "bg-accent transition-colors" : "transition-colors hover:bg-muted"}`}
+                                          aria-label={`${method.method.methodName} mock method`}
+                                          aria-current={selected ? "true" : undefined}
+                                          onClick={selectMethod}
+                                          onKeyDown={(event: any) => {
+                                            if (event.currentTarget !== event.target) return;
+                                            if (event.key === " " || event.key === "Enter") {
+                                              event.preventDefault();
+                                              selectMethod();
+                                            }
                                           }}
-                                          onChange={(event: any) =>
-                                            handleMockMethodEnabledChange(method.method, event.target.checked)
-                                          }
-                                        />
-                                      </Stack>
-
-                                      <Tooltip title="Scenario settings">
-                                        <span>
-                                          <IconButton
-                                            size="small"
-                                            aria-label={`Scenario settings for ${method.method.methodName}`}
-                                            disabled={method.scenarios.length === 0}
-                                            onClick={(event: any) => openScenarioActions(event.currentTarget, method)}
-                                            sx={{ width: 38, height: 38, mb: method.scenarios.length > 0 ? 0.1 : 0 }}
+                                          sx={{
+                                            minWidth: 0,
+                                            minHeight: 48,
+                                            alignItems: "center",
+                                            borderTop: methodIndex > 0 ? "1px solid" : "none",
+                                            borderTopColor: "divider",
+                                            borderLeft: "2px solid",
+                                            borderLeftColor: selected ? "primary.main" : "transparent",
+                                            px: 0.85,
+                                            py: 0.5,
+                                          }}
+                                        >
+                                          <Box
+                                            data-cell="method"
+                                            sx={{
+                                              minWidth: 0,
+                                              gridArea: "method",
+                                              display: "flex",
+                                              alignItems: "center",
+                                              gap: "6px",
+                                              overflow: "visible",
+                                            }}
                                           >
-                                            <Settings sx={{ fontSize: 16 }} />
-                                          </IconButton>
-                                        </span>
-                                      </Tooltip>
-                                    </Stack>
-                                  ) : null}
-                                </Box>
-                              );
-                            })}
-                          </Stack>
-                        ))}
-                      </Stack>
-                    </Paper>
-                  );
-                })}
-              </Stack>
-            )}
+                                            <Box
+                                              component="span"
+                                              className="grpc-mock-method-name"
+                                              title={method.method.methodName}
+                                            >
+                                              {method.method.methodName}
+                                            </Box>
+                                            <Box
+                                              component="span"
+                                              className="grpc-mock-method-kind"
+                                              title={rpcMethodKindLabel(method.method)}
+                                            >
+                                              {rpcMethodKindLabel(method.method)}
+                                            </Box>
+                                          </Box>
+
+                                          <Box
+                                            sx={{ minWidth: 0, gridArea: "scenario", display: "flex", alignItems: "center" }}
+                                            onPointerDown={(event: any) => event.stopPropagation()}
+                                            onMouseDown={(event: any) => event.stopPropagation()}
+                                            onClick={(event: any) => event.stopPropagation()}
+                                            onKeyDown={(event: any) => event.stopPropagation()}
+                                          >
+                                            {method.errorDetail ? (
+                                              <Typography variant="caption" color="error.main" noWrap title={method.errorDetail}>
+                                                {method.errorDetail}
+                                              </Typography>
+                                            ) : method.scenarios.length > 0 ? (
+                                              <FormControl size="small" fullWidth sx={{ minWidth: 0 }}>
+                                                <Select
+                                                  key={`${key}:${activeScenario?.scenario.id ?? ""}:${method.scenarios
+                                                    .map((row) => row.scenario.id)
+                                                    .join("|")}`}
+                                                  value={activeScenario?.scenario.id ?? ""}
+                                                  displayEmpty
+                                                  className="grpc-mock-scenario-select"
+                                                  sx={{ minHeight: 34, height: 34, fontSize: 12.5, lineHeight: "20px" }}
+                                                  inputProps={{ "aria-label": `Active scenario for ${method.method.methodName}` }}
+                                                  onChange={(event: any) => selectScenarioFromMethod(method, String(event.target.value))}
+                                                >
+                                                  <MenuItem value="" disabled>
+                                                    Choose scenario
+                                                  </MenuItem>
+                                                  {method.scenarios.map((row) => (
+                                                    <MenuItem key={`${key}:${row.scenario.id}`} value={row.scenario.id}>
+                                                      {mockScenarioDisplayName(row.scenario, row.method)}
+                                                    </MenuItem>
+                                                  ))}
+                                                </Select>
+                                              </FormControl>
+                                            ) : (
+                                              <Button
+                                                size="small"
+                                                variant="text"
+                                                startIcon={<Add />}
+                                                onClick={() => createScenario(method)}
+                                                sx={{ minHeight: 32, height: 32, px: 0.8, lineHeight: "20px", justifySelf: "start" }}
+                                              >
+                                                Add scenario
+                                              </Button>
+                                            )}
+                                          </Box>
+
+                                          <Box
+                                            sx={{
+                                              gridArea: "status",
+                                              justifySelf: "center",
+                                              minWidth: 0,
+                                              display: "flex",
+                                              alignItems: "center",
+                                              gap: 0.35,
+                                            }}
+                                          >
+                                            {method.errorDetail ? (
+                                              <MethodStatusIndicator
+                                                tone="error"
+                                                title="Method unavailable"
+                                                detail={method.errorDetail}
+                                                context={`${method.method.serviceName}/${method.method.methodName}`}
+                                              />
+                                            ) : null}
+                                            <Chip
+                                              size="small"
+                                              className="grpc-mock-status-chip"
+                                              color={running ? "success" : statusLabel === "READY" ? "primary" : statusLabel === "ERR" ? "error" : "default"}
+                                              variant={running ? undefined : "outlined"}
+                                              label={statusLabel}
+                                              sx={{ minWidth: 52, minHeight: 24, height: 24, justifyContent: "center", fontSize: 11.5, lineHeight: "16px" }}
+                                            />
+                                          </Box>
+
+                                          <Box
+                                            sx={{ gridArea: "enabled", justifySelf: "center" }}
+                                            onPointerDown={(event: any) => event.stopPropagation()}
+                                            onClick={(event: any) => event.stopPropagation()}
+                                            onKeyDown={(event: any) => event.stopPropagation()}
+                                          >
+                                            {!method.errorDetail ? (
+                                              <Switch
+                                                size="small"
+                                                checked={method.enabled}
+                                                disabled={method.scenarios.length === 0}
+                                                inputProps={{ "aria-label": `Enable mock for ${method.method.methodName}` }}
+                                                onChange={(event: any) => handleMockMethodEnabledChange(method.method, event.target.checked)}
+                                              />
+                                            ) : null}
+                                          </Box>
+
+                                          <Box
+                                            sx={{ gridArea: "actions", justifySelf: "end" }}
+                                            onPointerDown={(event: any) => event.stopPropagation()}
+                                            onClick={(event: any) => event.stopPropagation()}
+                                            onKeyDown={(event: any) => event.stopPropagation()}
+                                          >
+                                            {!method.errorDetail ? (
+                                              <Tooltip title="Scenario settings">
+                                                <span>
+                                                  <IconButton
+                                                    size="small"
+                                                    aria-label={`Scenario settings for ${method.method.methodName}`}
+                                                    disabled={method.scenarios.length === 0}
+                                                    onClick={(event: any) => openScenarioActions(event.currentTarget, method)}
+                                                    sx={{ width: 32, height: 32 }}
+                                                  >
+                                                    <Settings sx={{ fontSize: 15 }} />
+                                                  </IconButton>
+                                                </span>
+                                              </Tooltip>
+                                            ) : null}
+                                          </Box>
+                                        </Box>
+                                      );
+                                    })}
+                                  </Box>
+                                ) : null}
+                              </Box>
+                            );
+                          })}
+                        </Stack>
+                      </Paper>
+                    );
+                  })}
+                </Stack>
+              )}
+            </Stack>
           </Box>
         )}
 
@@ -1418,180 +1833,65 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
         )}
       </Stack>
 
-      <Menu anchorEl={scenarioMenu?.anchor ?? null} open={Boolean(scenarioMenu)} onClose={() => setScenarioMenu(null)}>
-        <MenuItem
-          disabled={!scenarioMenu?.scenario}
-          onClick={() => {
-            if (scenarioMenu?.scenario) openScenarioEditor(scenarioMenu.scenario);
-            setScenarioMenu(null);
-          }}
-        >
-          <Edit sx={{ fontSize: 15, mr: 0.7 }} />
-          Edit source
-        </MenuItem>
-        <MenuItem
-          onClick={() => {
-            if (scenarioMenu) manageScenarios(scenarioMenu.method);
-            setScenarioMenu(null);
-          }}
-        >
-          <Settings sx={{ fontSize: 15, mr: 0.7 }} />
-          Manage scenarios
-        </MenuItem>
-        <MenuItem
-          onClick={() => {
-            if (scenarioMenu) createScenario(scenarioMenu.method);
-            setScenarioMenu(null);
-          }}
-        >
-          <Add sx={{ fontSize: 15, mr: 0.7 }} />
-          {uiCopy.actions.addScenario}
-        </MenuItem>
-        <Divider />
-        <MenuItem
-          disabled={!scenarioMenu?.scenario}
-          onClick={() => {
-            if (scenarioMenu?.scenario) setScenarioActive(scenarioMenu.scenario, !scenarioMenu.method.enabled);
-            setScenarioMenu(null);
-          }}
-        >
-          {scenarioMenu?.method.enabled ? "Disable method" : "Enable method"}
-        </MenuItem>
-        <MenuItem
-          disabled={!scenarioMenu?.scenario}
-          onClick={() => {
-            if (scenarioMenu?.scenario) duplicateScenario(scenarioMenu.scenario);
-            setScenarioMenu(null);
-          }}
-        >
-          <ContentCopy sx={{ fontSize: 15, mr: 0.7 }} />
-          Duplicate active
-        </MenuItem>
-        <MenuItem
-          disabled={!scenarioMenu?.scenario}
-          onClick={() => {
-            if (scenarioMenu?.scenario) deleteScenario(scenarioMenu.scenario);
-            setScenarioMenu(null);
-          }}
-          sx={{ color: "error.main" }}
-        >
-          <Delete sx={{ fontSize: 15, mr: 0.7 }} />
-          Delete active
-        </MenuItem>
-      </Menu>
+      <GrpcMockScenarioActionsMenu
+        anchor={scenarioMenu?.anchor ?? null}
+        scenarioId={scenarioMenu?.scenario?.scenario.id ?? ""}
+        enabled={scenarioMenu?.method.enabled ?? false}
+        onClose={() => setScenarioMenu(null)}
+        onEditSource={() => {
+          if (scenarioMenu?.scenario) openScenarioEditor(scenarioMenu.scenario);
+        }}
+        onManageScenarios={() => {
+          if (scenarioMenu) manageScenarios(scenarioMenu.method);
+        }}
+        onAddScenario={() => {
+          if (scenarioMenu) createScenario(scenarioMenu.method);
+        }}
+        onToggleEnabled={() => {
+          if (scenarioMenu?.scenario) setScenarioActive(scenarioMenu.scenario, !scenarioMenu.method.enabled);
+        }}
+        onDuplicateActive={() => {
+          if (scenarioMenu?.scenario) duplicateScenario(scenarioMenu.scenario);
+        }}
+        onDeleteActive={() => {
+          if (scenarioMenu?.scenario) deleteScenario(scenarioMenu.scenario);
+        }}
+      />
 
-      <Dialog open={Boolean(managedMethod)} onClose={() => setManagedMethodKey("")} fullWidth maxWidth="sm">
-        <DialogTitle>
-          <Stack direction="row" spacing={1} alignItems="center">
-            <Box sx={{ minWidth: 0, flex: 1 }}>
-              <Typography variant="subtitle1" noWrap>
-                {managedMethod?.method.methodName ?? "Manage scenarios"}
-              </Typography>
-              {managedMethod ? (
-                <Typography variant="caption" color="text.secondary" noWrap>
-                  {managedMethod.method.serviceName} · {rpcMethodKindLabel(managedMethod.method)}
-                </Typography>
-              ) : null}
-            </Box>
-            <IconButton aria-label="Close scenario manager" onClick={() => setManagedMethodKey("")}>
-              <Close />
-            </IconButton>
-          </Stack>
-        </DialogTitle>
-        <DialogContent sx={{ minHeight: 180 }}>
-          {!managedMethod || managedMethod.scenarios.length === 0 ? (
-            <EmptyCard title="No scenarios" body="Add a scenario for this method." />
-          ) : (
-            <Stack spacing={0.5} role="listbox" aria-label="Method scenarios">
-              {managedMethod.scenarios.map((row) => {
-                const active = managedMethod.activeScenario?.scenario.id === row.scenario.id && managedMethod.enabled;
-                const displayName = mockScenarioDisplayName(row.scenario, row.method);
-                return (
-                  <Paper
-                    key={`${methodKey(row.method)}:${row.scenario.id}`}
-                    variant="outlined"
-                    sx={{
-                      display: "grid",
-                      gridTemplateColumns: "minmax(0, 1fr) auto",
-                      alignItems: "center",
-                      gap: 0.5,
-                      px: 0.9,
-                      py: 0.65,
-                      borderColor: active ? "primary.main" : "divider",
-                      bgcolor: active ? "action.selected" : "transparent",
-                    }}
-                  >
-                    <ListItemButton
-                      component="div"
-                      role="option"
-                      aria-selected={active}
-                      selected={active}
-                      onClick={() => setScenarioActive(row, true)}
-                      sx={{ minWidth: 0, px: 0.35, py: 0.25, borderRadius: 1 }}
-                    >
-                      <Box sx={{ minWidth: 0, flex: 1 }}>
-                        <Typography variant="body2" fontWeight={500} noWrap>
-                          {displayName}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary" noWrap>
-                          {row.scenario.id}
-                          {active ? " · Active" : ""}
-                        </Typography>
-                      </Box>
-                    </ListItemButton>
-                    <Stack direction="row" spacing={0.2}>
-                      <Tooltip title="Edit source">
-                        <IconButton
-                          size="small"
-                          aria-label={`Edit ${row.scenario.id}`}
-                          onClick={() => {
-                            setManagedMethodKey("");
-                            openScenarioEditor(row);
-                          }}
-                        >
-                          <Edit sx={{ fontSize: 15 }} />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Duplicate">
-                        <IconButton
-                          size="small"
-                          aria-label={`Duplicate ${row.scenario.id}`}
-                          onClick={() => duplicateScenario(row)}
-                        >
-                          <ContentCopy sx={{ fontSize: 15 }} />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Delete">
-                        <IconButton
-                          size="small"
-                          color="error"
-                          aria-label={`Delete ${row.scenario.id}`}
-                          onClick={() => deleteScenario(row)}
-                        >
-                          <Delete sx={{ fontSize: 15 }} />
-                        </IconButton>
-                      </Tooltip>
-                    </Stack>
-                  </Paper>
-                );
-              })}
-            </Stack>
-          )}
-        </DialogContent>
-        <DialogActions sx={{ justifyContent: "space-between" }}>
-          <Button
-            size="small"
-            startIcon={<Add />}
-            disabled={!managedMethod}
-            onClick={() => {
-              if (managedMethod) createScenario(managedMethod);
-            }}
-          >
-            {uiCopy.actions.addScenario}
-          </Button>
-          <Button onClick={() => setManagedMethodKey("")}>Close</Button>
-        </DialogActions>
-      </Dialog>
+      <GrpcMockScenarioManagerDialog
+        open={Boolean(managedMethod)}
+        method={managedMethod?.method ?? null}
+        scenarios={managedMethod?.scenarios.map((row) => row.scenario) ?? []}
+        activeScenarioId={managedMethod?.activeScenario?.scenario.id ?? ""}
+        enabled={managedMethod?.enabled ?? false}
+        onClose={() => setManagedMethodKey("")}
+        onSelect={(scenarioId) => {
+          const row = managedMethod?.scenarios.find((item) => item.scenario.id === scenarioId);
+          if (row) setScenarioActive(row, true);
+        }}
+        onEdit={(scenarioId) => {
+          const row = managedMethod?.scenarios.find((item) => item.scenario.id === scenarioId);
+          if (!row) return;
+          setManagedMethodKey("");
+          openScenarioEditor(row);
+        }}
+        onDuplicate={(scenarioId) => {
+          const row = managedMethod?.scenarios.find((item) => item.scenario.id === scenarioId);
+          if (row) duplicateScenario(row);
+        }}
+        onDelete={(scenarioId) => {
+          const row = managedMethod?.scenarios.find((item) => item.scenario.id === scenarioId);
+          if (!row) return;
+          // Close the manager/focus trap before the native delete confirmation.
+          // This mirrors the request-panel flow and prevents Electron from
+          // leaving native selects unresponsive after a destructive action.
+          setManagedMethodKey("");
+          window.setTimeout(() => deleteScenario(row), 0);
+        }}
+        onAdd={() => {
+          if (managedMethod) createScenario(managedMethod);
+        }}
+      />
 
       <Dialog open={newOpen} onClose={() => setNewOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>New Scenario</DialogTitle>
@@ -1715,13 +2015,23 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
         onPageChange={setSettingsPage}
         mockServer={mockServer}
         running={Boolean(mockServerStatus.running)}
+        webRunning={Boolean(webAccessStatus?.running)}
         onClose={() => setSettingsOpen(false)}
         onSave={(next) => setMockServer({ ...next, updatedAt: new Date().toISOString() })}
         onSaveAndRestart={async (next) => {
-          if (mockServerStatus.running) await stopMockServer();
+          const grpcWasRunning = Boolean(mockServerStatus.running);
+          const webWasRunning = Boolean(webAccessStatus?.running);
+          if (webWasRunning) await stopWebAccess();
+          if (grpcWasRunning) await stopMockServer();
           const nextProject = { ...next, updatedAt: new Date().toISOString() };
           setMockServer(nextProject);
-          await startMockServer(nextProject);
+          if (grpcWasRunning) await startMockServer(nextProject);
+          if (webWasRunning) {
+            const profile =
+              nextProject.gatewayProfiles.find((item) => item.id === nextProject.activeGatewayProfileId) ??
+              nextProject.gatewayProfiles[0];
+            await startWebAccess(profile, nextProject);
+          }
         }}
       />
     </WorkspaceFrame>
@@ -2120,6 +2430,7 @@ function GrpcMockSettingsDialog({
   onPageChange,
   mockServer,
   running,
+  webRunning = false,
   onClose,
   onSave,
   onSaveAndRestart,
@@ -2129,11 +2440,13 @@ function GrpcMockSettingsDialog({
   onPageChange: (page: GrpcMockSettingsPage) => void;
   mockServer: MockServerProject;
   running: boolean;
+  webRunning?: boolean;
   onClose: () => void;
   onSave: (next: MockServerProject) => void;
   onSaveAndRestart: (next: MockServerProject) => void | Promise<void>;
 }) {
   const [draft, setDraft] = useState<MockServerProject>(() => structuredClone(mockServer));
+  const [nativeTlsBrowseBusy, setNativeTlsBrowseBusy] = useState(false);
   useEffect(() => {
     if (open) setDraft(structuredClone(mockServer));
   }, [open, mockServer]);
@@ -2142,8 +2455,57 @@ function GrpcMockSettingsDialog({
     draft.bindHost !== mockServer.bindHost ||
     draft.port !== mockServer.port ||
     JSON.stringify(draft.security) !== JSON.stringify(mockServer.security) ||
-    JSON.stringify(draft.limits) !== JSON.stringify(mockServer.limits);
+    JSON.stringify(draft.limits) !== JSON.stringify(mockServer.limits) ||
+    JSON.stringify(draft.gatewayProfiles) !== JSON.stringify(mockServer.gatewayProfiles) ||
+    draft.activeGatewayProfileId !== mockServer.activeGatewayProfileId;
   const patch = (next: Partial<MockServerProject>) => setDraft((current) => ({ ...current, ...next }));
+  const activeGatewayProfile =
+    draft.gatewayProfiles.find((profile) => profile.id === draft.activeGatewayProfileId) ??
+    draft.gatewayProfiles[0] ??
+    createDefaultGatewayProfile();
+  const web = activeGatewayProfile.web;
+
+  function patchActiveGatewayProfile(profilePatch: Partial<GrpcGatewayProfile>) {
+    setDraft((current) => {
+      const fallback = current.gatewayProfiles[0] ?? createDefaultGatewayProfile();
+      const profiles = current.gatewayProfiles.length ? current.gatewayProfiles : [fallback];
+      const active = profiles.find((profile) => profile.id === current.activeGatewayProfileId) ?? fallback;
+      const activeId = active.id;
+      return {
+        ...current,
+        activeGatewayProfileId: activeId,
+        gatewayProfiles: profiles.map((profile) =>
+          profile.id === activeId
+            ? { ...profile, ...profilePatch, updatedAt: new Date().toISOString() }
+            : profile,
+        ),
+      };
+    });
+  }
+
+  function patchWeb(webPatch: Partial<GrpcWebProxyConfig>) {
+    patchActiveGatewayProfile({ web: { ...web, ...webPatch } });
+  }
+
+  async function browseNativeTlsCertificate() {
+    if (nativeTlsBrowseBusy) return;
+    setNativeTlsBrowseBusy(true);
+    try {
+      const result = await chooseHttpsPemFiles();
+      if (!result?.ok || result.cancelled || !result.certificatePath || !result.privateKeyPath) return;
+      patch({
+        security: {
+          ...draft.security,
+          tls: true,
+          certificatePath: result.certificatePath,
+          privateKeyPath: result.privateKeyPath,
+          clientCaPath: result.caPath || draft.security.clientCaPath,
+        },
+      });
+    } finally {
+      setNativeTlsBrowseBusy(false);
+    }
+  }
 
   function save() {
     onSave(draft);
@@ -2158,7 +2520,7 @@ function GrpcMockSettingsDialog({
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
       <DialogTitle>gRPC Mock settings</DialogTitle>
-      <DialogContent sx={{ height: 430, overflow: "hidden" }}>
+      <DialogContent sx={{ height: "min(72vh, 620px)", overflow: "hidden" }}>
         <Stack direction="row" spacing={1.2} sx={{ height: "100%", minHeight: 0, pt: 0.25 }}>
           <Stack
             spacing={0.35}
@@ -2166,7 +2528,7 @@ function GrpcMockSettingsDialog({
             role="tablist"
             aria-label="gRPC Mock settings sections"
           >
-            {(["server", "security", "defaults", "advanced"] as const).map((value) => (
+            {(["server", "security", "web-server", "defaults", "advanced"] as const).map((value) => (
               <Button
                 key={value}
                 size="small"
@@ -2176,15 +2538,15 @@ function GrpcMockSettingsDialog({
                 onClick={() => onPageChange(value)}
                 sx={{ justifyContent: "flex-start" }}
               >
-                {value[0].toUpperCase() + value.slice(1)}
+                {value === "web-server" ? "Web server" : value[0].toUpperCase() + value.slice(1)}
               </Button>
             ))}
           </Stack>
           <Box aria-hidden="true" sx={{ width: 1, alignSelf: "stretch", bgcolor: "divider", flexShrink: 0 }} />
           <Box role="tabpanel" sx={{ minWidth: 0, flex: 1, height: "100%", overflowY: "auto", pr: 0.5 }}>
-            {running && dirty && restartRequired && (
+            {(running || webRunning) && dirty && restartRequired && (
               <Alert severity="info" sx={{ mb: 1 }}>
-                These changes require a restart.
+                These changes require a restart for any affected running mock or Web Access listener.
               </Alert>
             )}
             {page === "server" && (
@@ -2224,6 +2586,10 @@ function GrpcMockSettingsDialog({
                 </Stack>
                 {draft.security.tls && (
                   <>
+                    <Alert severity="info" variant="outlined">
+                      Use your own PEM certificate and private key for the native gRPC Mock listener. Layang will not
+                      install or replace OS trust when you use these files.
+                    </Alert>
                     <TextField
                       size="small"
                       label="Certificate"
@@ -2240,6 +2606,16 @@ function GrpcMockSettingsDialog({
                         patch({ security: { ...draft.security, privateKeyPath: event.target.value } })
                       }
                     />
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={<Folder />}
+                      disabled={nativeTlsBrowseBusy}
+                      onClick={() => void browseNativeTlsCertificate()}
+                      sx={{ alignSelf: "flex-start" }}
+                    >
+                      {nativeTlsBrowseBusy ? "Selecting…" : "Select own certificate & key"}
+                    </Button>
                     <Stack direction="row" alignItems="center" spacing={1}>
                       <Typography variant="body2" sx={{ flex: 1 }}>
                         Client certificate
@@ -2264,6 +2640,264 @@ function GrpcMockSettingsDialog({
                     )}
                   </>
                 )}
+              </Stack>
+            )}
+            {page === "web-server" && (
+              <Stack spacing={1.2} sx={{ width: "100%", maxWidth: 560 }}>
+                <Box>
+                  <Typography variant="h6">Web server</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Browser-facing gRPC-Web settings stay available here and in gRPC → Web access → Settings.
+                  </Typography>
+                </Box>
+
+                <Paper variant="outlined" sx={{ p: 1.1, borderRadius: 2 }}>
+                  <Stack spacing={1}>
+                    <Stack direction="row" alignItems="center" spacing={1}>
+                      <Box sx={{ minWidth: 0, flex: 1 }}>
+                        <Typography variant="body2" fontWeight={600}>
+                          Browser listener
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Exposes browser-compatible gRPC-Web over HTTP or HTTPS.
+                        </Typography>
+                      </Box>
+                      <Switch
+                        checked={web.enabled !== false}
+                        inputProps={{ "aria-label": "Enable Web server" }}
+                        onChange={(_event: any, checked: boolean) => patchWeb({ enabled: checked })}
+                      />
+                    </Stack>
+
+                    {web.enabled !== false ? (
+                      <>
+                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                          <TextField
+                            size="small"
+                            label="Host"
+                            value={web.host ?? "127.0.0.1"}
+                            onChange={(event: any) => patchWeb({ host: event.target.value })}
+                            sx={{ minWidth: 0, flex: 1 }}
+                          />
+                          <TextField
+                            size="small"
+                            type="number"
+                            label="Port"
+                            value={String(web.port ?? 8080)}
+                            onChange={(event: any) =>
+                              patchWeb({ port: Math.max(1, Math.min(65535, Number(event.target.value) || 8080)) })
+                            }
+                            sx={{ width: { xs: "100%", sm: 150 } }}
+                          />
+                        </Stack>
+                        <Stack spacing={0.35} sx={{ maxWidth: 240 }}>
+                          <Typography variant="caption" color="text.secondary">
+                            Protocol
+                          </Typography>
+                          <FormControl size="small" fullWidth>
+                            <Select
+                              value={web.security?.type ?? "insecure"}
+                              inputProps={{ "aria-label": "Web server protocol" }}
+                              onChange={(event: any) => {
+                                const nextType = String(event.target.value) === "tls" ? "tls" : "insecure";
+                                if (nextType === "tls") {
+                                  patchWeb({
+                                    port: Number(web.port) === 8080 ? 8443 : web.port,
+                                    security:
+                                      web.security?.type === "tls"
+                                        ? web.security
+                                        : {
+                                            type: "tls",
+                                            certificateMode: "local",
+                                            certificateId: "",
+                                            certificatePath: "",
+                                            privateKeyPath: "",
+                                            certificateChainPath: "",
+                                            clientCaPath: "",
+                                            pfxPath: "",
+                                            passphraseSecretId: "",
+                                            requireClientCertificate: false,
+                                          },
+                                  });
+                                } else {
+                                  patchWeb({
+                                    port: Number(web.port) === 8443 ? 8080 : web.port,
+                                    security: { type: "insecure" },
+                                  });
+                                }
+                              }}
+                            >
+                              <MenuItem value="insecure">HTTP</MenuItem>
+                              <MenuItem value="tls">HTTPS</MenuItem>
+                            </Select>
+                          </FormControl>
+                        </Stack>
+                      </>
+                    ) : null}
+                  </Stack>
+                </Paper>
+
+                {web.enabled !== false && web.security?.type === "tls" ? (
+                  <Paper variant="outlined" sx={{ p: 1.1, borderRadius: 2 }}>
+                    <Stack spacing={0.9}>
+                      <Box>
+                        <Typography variant="body2" fontWeight={600}>
+                          HTTPS certificate
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Generate local trust, or provide your own PEM/PFX certificate without removing Web Access
+                          configuration.
+                        </Typography>
+                      </Box>
+                      <WebAccessSecurityPanel
+                        host={web.host ?? "127.0.0.1"}
+                        security={web.security}
+                        onChange={(security) => patchWeb({ security })}
+                      />
+                    </Stack>
+                  </Paper>
+                ) : null}
+
+                {web.enabled !== false ? (
+                  <Paper variant="outlined" sx={{ p: 1.1, borderRadius: 2 }}>
+                    <Stack spacing={1}>
+                      <Box>
+                        <Typography variant="body2" fontWeight={600}>
+                          gRPC target
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Forward browser traffic to this local mock or to another native gRPC server.
+                        </Typography>
+                      </Box>
+                      <Stack spacing={0.35} sx={{ maxWidth: 320 }}>
+                        <Typography variant="caption" color="text.secondary">
+                          Target source
+                        </Typography>
+                        <FormControl size="small" fullWidth>
+                          <Select
+                            value={activeGatewayProfile.webUpstreamMode === "custom" ? "custom" : "local-mock"}
+                            inputProps={{ "aria-label": "Web server target source" }}
+                            onChange={(event: any) =>
+                              patchActiveGatewayProfile({
+                                webUpstreamMode: String(event.target.value) === "custom" ? "custom" : "local-mock",
+                              })
+                            }
+                          >
+                            <MenuItem value="local-mock">Local gRPC Mock</MenuItem>
+                            <MenuItem value="custom">Custom native gRPC server</MenuItem>
+                          </Select>
+                        </FormControl>
+                      </Stack>
+                      {activeGatewayProfile.webUpstreamMode === "custom" ? (
+                        <Stack spacing={1}>
+                          <TextField
+                            size="small"
+                            label="Target"
+                            placeholder="127.0.0.1:50051"
+                            value={activeGatewayProfile.upstreams?.[0]?.target ?? ""}
+                            onChange={(event: any) => {
+                              const currentUpstream = activeGatewayProfile.upstreams?.[0] ?? {
+                                target: "",
+                                weight: 1,
+                                security: { type: "insecure" as const },
+                              };
+                              patchActiveGatewayProfile({
+                                upstreams: [
+                                  {
+                                    ...currentUpstream,
+                                    target: String(event.target.value)
+                                      .replace(/^https?:\/\//i, "")
+                                      .replace(/^grpcs?:\/\//i, ""),
+                                  },
+                                  ...(activeGatewayProfile.upstreams?.slice(1) ?? []),
+                                ],
+                              });
+                            }}
+                          />
+                          <Stack spacing={0.35} sx={{ maxWidth: 220 }}>
+                            <Typography variant="caption" color="text.secondary">
+                              Upstream TLS
+                            </Typography>
+                            <FormControl size="small" fullWidth>
+                              <Select
+                                value={activeGatewayProfile.upstreams?.[0]?.security?.type ?? "insecure"}
+                                inputProps={{ "aria-label": "Web server upstream TLS" }}
+                                onChange={(event: any) => {
+                                  const currentUpstream = activeGatewayProfile.upstreams?.[0] ?? {
+                                    target: "",
+                                    weight: 1,
+                                    security: { type: "insecure" as const },
+                                  };
+                                  const nextSecurity =
+                                    String(event.target.value) === "tls"
+                                      ? { type: "tls" as const }
+                                      : { type: "insecure" as const };
+                                  patchActiveGatewayProfile({
+                                    upstreams: [
+                                      { ...currentUpstream, security: nextSecurity },
+                                      ...(activeGatewayProfile.upstreams?.slice(1) ?? []),
+                                    ],
+                                  });
+                                }}
+                              >
+                                <MenuItem value="insecure">Off</MenuItem>
+                                <MenuItem value="tls">On</MenuItem>
+                              </Select>
+                            </FormControl>
+                          </Stack>
+                        </Stack>
+                      ) : (
+                        <Alert severity="info" variant="outlined">
+                          Web Access uses the local gRPC Mock and follows the method enable/disable state from the gRPC
+                          dashboard.
+                        </Alert>
+                      )}
+                    </Stack>
+                  </Paper>
+                ) : null}
+
+                {web.enabled !== false ? (
+                  <Paper variant="outlined" sx={{ p: 1.1, borderRadius: 2 }}>
+                    <Stack spacing={1}>
+                      <Typography variant="body2" fontWeight={600}>
+                        Browser support
+                      </Typography>
+                      <TextField
+                        size="small"
+                        fullWidth
+                        label="CORS origins"
+                        value={(web.cors?.allowedOrigins ?? []).join(", ")}
+                        helperText="Separate multiple browser origins with commas."
+                        onChange={(event: any) =>
+                          patchWeb({
+                            cors: {
+                              ...(web.cors ?? {}),
+                              allowedOrigins: String(event.target.value)
+                                .split(",")
+                                .map((item) => item.trim())
+                                .filter(Boolean),
+                            },
+                          })
+                        }
+                      />
+                      <TextField
+                        size="small"
+                        type="number"
+                        label="Max concurrent streams"
+                        value={String(web.maxConcurrentStreams ?? 100)}
+                        onChange={(event: any) =>
+                          patchWeb({
+                            maxConcurrentStreams: Math.max(
+                              6,
+                              Math.min(1000, Math.floor(Number(event.target.value) || 100)),
+                            ),
+                          })
+                        }
+                        sx={{ maxWidth: 220 }}
+                      />
+                    </Stack>
+                  </Paper>
+                ) : null}
               </Stack>
             )}
             {page === "defaults" && (
@@ -2364,7 +2998,7 @@ function GrpcMockSettingsDialog({
         <Button variant="outlined" disabled={!dirty} onClick={save}>
           Save
         </Button>
-        {running && (
+        {(running || webRunning) && (
           <Button variant="contained" disabled={!dirty} onClick={() => void saveAndRestart()}>
             Save & restart
           </Button>

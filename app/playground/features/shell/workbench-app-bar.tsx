@@ -4,7 +4,6 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import { Download, Settings, Storage, UploadFile } from "@/components/shadcn/icons";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import type { ColorMode } from "../../design-system";
-import type { RequestSession } from "../../shared/workbench-types";
 
 type CompatTheme = { palette: { mode: ColorMode } };
 type ButtonClickEvent = ReactMouseEvent<HTMLButtonElement>;
@@ -19,27 +18,17 @@ export function WorkbenchAppBar({ ctx }: { ctx: WorkbenchViewContext }) {
     Divider,
     Menu,
     MenuItem,
-    RequestTabs,
     Stack,
     Tooltip,
     Typography,
     WindowControls,
-    activateRequestSession,
-    activeRequestId,
-    closeAllRequestSessions,
-    closeOtherRequestSessions,
-    closeRequestSession,
     colorTokens,
     createNewWorkspaceFolder,
     designSystem,
     openWorkspaceFolder,
     paletteMode,
-    requestRunner,
-    requestSessions,
-    reorderRequestSessions,
     saveWorkspaceFolder,
     saveWorkspaceFolderAs,
-    setProtoPreview,
     setSettingsSection,
     setSideSection,
     setSidebarOpen,
@@ -61,7 +50,7 @@ export function WorkbenchAppBar({ ctx }: { ctx: WorkbenchViewContext }) {
         height: designSystem.size.titlebarHeight,
         justifyContent: "center",
         borderBottom: "1px solid",
-        borderColor: (theme: CompatTheme) => colorTokens[paletteMode(theme.palette.mode)].border,
+        borderColor: (theme: CompatTheme) => colorTokens[paletteMode(theme.palette.mode)].borderStrong,
         bgcolor: (theme: CompatTheme) => colorTokens[paletteMode(theme.palette.mode)].titlebarBg,
         color: "text.primary",
         WebkitAppRegion: "drag",
@@ -147,24 +136,15 @@ export function WorkbenchAppBar({ ctx }: { ctx: WorkbenchViewContext }) {
 
         <SidebarTrigger className="shrink-0" style={{ WebkitAppRegion: "no-drag" } as any} />
 
-        <Box sx={{ WebkitAppRegion: "drag", minWidth: 0, flex: "1 1 auto", height: "100%", display: "flex" }}>
-          <RequestTabs
-            sessions={requestSessions}
-            activeRequestId={activeRequestId}
-            onActivate={(session: RequestSession) => {
-              setProtoPreview(null);
-              activateRequestSession(session);
-              setSideSection("collections");
-              setSidebarOpen(true);
-            }}
-            onClose={closeRequestSession}
-            onCancel={requestRunner.cancelRequest}
-            onCloseAll={closeAllRequestSessions}
-            onCloseOther={closeOtherRequestSessions}
-            onReorder={reorderRequestSessions}
-            placement="top"
-          />
-        </Box>
+        <Box
+          aria-hidden="true"
+          sx={{
+            WebkitAppRegion: "drag",
+            minWidth: 0,
+            flex: "1 1 auto",
+            height: "100%",
+          }}
+        />
 
         <WindowControls />
       </Stack>

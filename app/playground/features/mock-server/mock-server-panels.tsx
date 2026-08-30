@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type UIEvent } from "react";
 
-import { Edit, PlayArrow, StopCircle } from "@/components/shadcn/icons";
+import { PlayArrow, StopCircle } from "@/components/shadcn/icons";
 import {
   Alert,
   Box,
@@ -11,7 +11,6 @@ import {
   DialogContent,
   DialogTitle,
   FormControl,
-  IconButton,
   MenuItem,
   Paper,
   Select,
@@ -24,7 +23,6 @@ import {
   TableHead,
   TableRow,
   TextField,
-  Tooltip,
   Typography,
 } from "@/components/shadcn/compat";
 import { SearchHighlightedText } from "../../shared/components/search-highlight";
@@ -32,10 +30,11 @@ import type { RpcMethodInfo } from "@/lib/types";
 import { designSystem } from "../../design-system";
 import { CodeTextField as FeatureCodeTextField } from "../request-editor/request-editor-panels";
 import { MethodMockSwitch, SmallEmpty } from "../sidebar/sidebar-panels";
-import { createDefaultMockStreamDefaults, describeMockMatcher, safeMockFileBaseName } from "./mock-scenario-model";
+import { createDefaultMockStreamDefaults, safeMockFileBaseName } from "./mock-scenario-model";
 import { methodKey } from "../../shared/rpc-method-utils";
 import { uiCopy } from "../../shared/ui-copy";
-import { buttonSx, compactCardSx, iconButtonSx } from "../../shared/workbench-constants";
+import { buttonSx, compactCardSx } from "../../shared/workbench-constants";
+import { GrpcMockScenarioControls } from "./grpc-mock-scenario-controls";
 import type {
   MockMethodScenarioFile,
   MockMethodScenarioRow,
@@ -1034,45 +1033,15 @@ export function MockServerPanel({
             <SmallEmpty body="No scenario exists for this method yet. Click Add scenario." />
           ) : (
             <Stack spacing={0.8}>
-              <Stack direction="row" spacing={0.8} alignItems="center" flexWrap="wrap">
-                <MethodMockSwitch
-                  checked={Boolean(currentRow?.methodEnabled)}
-                  onChange={(checked) => onMethodEnabledChange(selectedMethod, checked)}
-                />
-                <Typography variant="body2" fontWeight={500}>
-                  {currentRow?.methodEnabled ? "Mock enabled" : "Mock disabled"}
-                </Typography>
-                <FormControl size="small" sx={{ minWidth: 240 }}>
-                  <Select
-                    value={selectedScenarioId}
-                    onChange={(event: SelectInputChangeEvent) =>
-                      onScenarioSelectChange(selectedMethod, String(event.target.value))
-                    }
-                  >
-                    {currentScenarios.map((scenario) => (
-                      <MenuItem key={`current-scenario-${scenario.id}`} value={scenario.id}>
-                        {scenario.id}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-                <Tooltip title="Edit scenario">
-                  <span>
-                    <IconButton
-                      size="small"
-                      aria-label={`Edit ${selectedScenarioId || "scenario"}`}
-                      onClick={() => onEditScenario(selectedMethod, selectedScenarioId)}
-                      disabled={!selectedScenarioId}
-                      sx={iconButtonSx}
-                    >
-                      <Edit sx={{ fontSize: 15 }} />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-                {currentRow?.activeScenario && (
-                  <Chip size="small" label={describeMockMatcher(currentRow.activeScenario.input)} />
-                )}
-              </Stack>
+              <GrpcMockScenarioControls
+                scenarios={currentScenarios}
+                selectedScenarioId={selectedScenarioId}
+                enabled={Boolean(currentRow?.methodEnabled)}
+                onEnabledChange={(checked) => onMethodEnabledChange(selectedMethod, checked)}
+                onScenarioSelect={(scenarioId) => onScenarioSelectChange(selectedMethod, scenarioId)}
+                onEditScenario={() => onEditScenario(selectedMethod, selectedScenarioId)}
+                activeScenario={currentRow?.activeScenario ?? null}
+              />
               {selectedMethod.responseStream && currentRow?.activeScenario ? (
                 <Stack direction="row" spacing={0.7} alignItems="center" flexWrap="wrap">
                   <TextField

@@ -45,12 +45,14 @@ export function WorkbenchTabs<T extends string>({
   onChange,
   idPrefix,
   ariaLabel = "Workbench sections",
+  variant = "stacked",
 }: {
   value: T;
   items: WorkbenchTabItem<T>[];
   onChange: (value: T) => void;
   idPrefix?: string;
   ariaLabel?: string;
+  variant?: "stacked" | "underline" | "mode";
 }) {
   const resolvedIdPrefix = idPrefix;
   function handleKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>, index: number) {
@@ -72,7 +74,12 @@ export function WorkbenchTabs<T extends string>({
   }
 
   return (
-    <div className="workbench-stacked-tabs" role="tablist" aria-label={ariaLabel}>
+    <div
+      className="workbench-stacked-tabs"
+      data-variant={variant}
+      role="tablist"
+      aria-label={ariaLabel}
+    >
       {items.map((item, index) => (
         <button
           key={item.value}

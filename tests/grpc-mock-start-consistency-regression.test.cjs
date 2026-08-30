@@ -16,7 +16,11 @@ test("gRPC mock starts only from the workspace and verifies runtime readiness", 
   assert.doesNotMatch(requestPanel, /prepareActiveRequestMockProject/);
   assert.doesNotMatch(requestPanel, /setNativeTarget\(localTarget\)/);
   assert.doesNotMatch(requestPanel, /setTargetDraft\(localTarget\)/);
-  assert.match(requestPanel, /This request only selects a scenario/);
+  assert.match(requestPanel, /Uses the same scenario controls and settings flow as Workspace Mock/);
+  assert.match(requestPanel, /setActiveRequestMockEnabled/);
+  assert.match(requestPanel, /<GrpcMockScenarioActionsMenu/);
+  assert.match(requestPanel, /<GrpcMockScenarioManagerDialog/);
+  assert.doesNotMatch(requestPanel, /requestMockEditorDraft/);
   assert.match(requestPanel, /Configure in workspace/);
   assert.match(actions, /async function startMockRuntime\(projectOverride\?: MockServerProject\)/);
   assert.match(actions, /const effectiveMockServer: MockServerProject = projectOverride \?\?/);
@@ -65,9 +69,12 @@ test("workspace scenario editor owns scenario content and folder opening flushes
   assert.match(actions, /saveMockScenarioForMethod\(/);
   assert.match(services, /const effectiveScenarioId = methodScenarios\.some/);
   assert.match(services, /setFocusedScenarioKey\(`\$\{methodKey\(row\.method\)\}:\$\{saved\.scenario\.id\}`\)/);
-  assert.doesNotMatch(requestPanel, /GrpcScenarioSourceDialog/);
-  assert.doesNotMatch(requestPanel, /saveMockScenarioForMethod\(/);
+  assert.match(requestPanel, /<GrpcScenarioSourceDialog/);
+  assert.match(requestPanel, /openActiveRequestScenarioEditor/);
   assert.match(requestPanel, /selectActiveRequestScenario/);
+  assert.match(requestPanel, /setActiveRequestMockEnabled/);
+  assert.match(requestPanel, /saveActiveRequestMockScenario/);
+  assert.doesNotMatch(requestPanel, /startActiveRequestMock/);
   assert.match(actions, /await persistProjectSnapshotNow\?\.\(project\)/);
   assert.match(actions, /openPath\(nextPath, "mocks\/grpc\/methods"/);
 });

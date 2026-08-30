@@ -11,12 +11,30 @@ import type {
 import { createPortal } from "react-dom";
 import type { MetadataPair } from "@/lib/types";
 import { copyTextWithAnnouncement } from "@/lib/accessibility";
+import { MoreHoriz, WarningIcon } from "@/components/shadcn/icons";
 import { methodKey } from "../../shared/rpc-method-utils";
 import { uiCopy } from "../../shared/ui-copy";
 import { MethodStatusIndicator } from "../../shared/components/method-status-indicator";
 import { mockScenarioDisplayName, rpcMethodKindLabel } from "../mock-server/mock-scenario-ui";
-import { getMockMethodScenarioFile, parseMockScenarioText } from "../mock-server/mock-scenario-model";
-import { ServicesWorkspace } from "../services/services-workspace";
+import {
+  GrpcMockScenarioActionsMenu,
+  GrpcMockScenarioControls,
+  GrpcMockScenarioManagerDialog,
+} from "../mock-server/grpc-mock-scenario-controls";
+import {
+  buildDefaultMockScenario,
+  ensureUniqueMockScenarioId,
+  formatMockScenarioBundle,
+  getMockMethodScenarioFile,
+  parseMockScenarioText,
+  saveMockScenarioForMethod,
+  updateMockMethodScenarioFile,
+} from "../mock-server/mock-scenario-model";
+import {
+  GrpcScenarioSourceDialog,
+  ServicesWorkspace,
+  type GrpcMockScenarioRow,
+} from "../services/services-workspace";
 import { SettingsWorkspace } from "../settings/settings-workspace";
 import { ProtoSchemaWorkspace } from "../proto-registry/proto-schema-workspace";
 import { GitSourceControlWorkspace } from "../git/git-source-control";
@@ -24,11 +42,11 @@ import { ExampleEditorDialog, type ExampleEditorTab } from "../examples/examples
 import type {
   EnvironmentConfig,
   MockScenario,
+  RequestSession,
   RequestTab,
   RestAuthConfig,
   RestBodyType,
   SavedExample,
-  TransportMode,
 } from "../../shared/workbench-types";
 
 type ButtonClickEvent = ReactMouseEvent<HTMLButtonElement>;
@@ -38,6 +56,32 @@ type SelectInputChangeEvent = ChangeEvent<HTMLSelectElement>;
 type TextInputKeyboardEvent = ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>;
 
 type WorkbenchViewContext = Record<string, any>;
+type RequestContextView = "request" | "mock" | "schema" | "settings" | "tool";
+
+type GrpcBindingIssue = {
+  title: string;
+  detail: string;
+  tone: "error" | "warning";
+};
+
+function grpcBindingIssue(status?: string | null): GrpcBindingIssue | null {
+  switch (status) {
+    case "library-missing":
+      return { title: "Proto unavailable", detail: "The schema referenced by this request is no longer available in the workspace.", tone: "error" };
+    case "version-missing":
+      return { title: "Schema revision unavailable", detail: "The revision pinned to this request no longer exists or is no longer attached.", tone: "error" };
+    case "method-missing":
+      return { title: "RPC method unavailable", detail: "The selected schema revision no longer contains the RPC method saved on this request.", tone: "error" };
+    case "method-signature-changed":
+      return { title: "RPC signature changed", detail: "The saved request binding no longer matches the input or output signature in this schema revision.", tone: "error" };
+    case "ambiguous-migration":
+      return { title: "RPC binding needs review", detail: "More than one compatible RPC method was found, so Layang cannot safely choose one automatically.", tone: "warning" };
+    case "body-review-required":
+      return { title: "Request body needs review", detail: "The RPC binding was updated, but the request body may need a manual adjustment before it can run.", tone: "warning" };
+    default:
+      return null;
+  }
+}
 
 export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
   const {
@@ -50,6 +94,10 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     ContentCopy,
     Delete,
     DesktopWindows,
+    Dialog,
+    DialogActions,
+    DialogContent,
+    DialogTitle,
     Divider,
     Edit,
     ExamplesPanel,
@@ -69,8 +117,11 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     ListItemText,
     Menu,
     MenuItem,
+    PanelBottom,
+    PanelRight,
     Paper,
     PlayArrow,
+    RequestTabs,
     ResponseToolbar,
     ResponseWorkbenchTabs,
     RestMockPanel,
@@ -78,15 +129,8 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     Select,
     Search,
     Stack,
-    StopCircle,
     Storage,
     Stream,
-    Table,
-    TableBody,
-    TableCell,
-    TableContainer,
-    TableHead,
-    TableRow,
     TextField,
     Tooltip,
     Typography,
@@ -94,7 +138,9 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     WebSocketBenchmarkPanel,
     WebSocketMockPanel,
     WorkbenchTabs,
+    activateRequestSession,
     activeCollectionRequest,
+    activeRequestId,
     activeDocumentationSource,
     activeRequestDocumentationPage,
     standaloneDocumentationPage,
@@ -121,6 +167,9 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     benchmark,
     chooseEnvironment,
     clearActiveResponseStable,
+    closeAllRequestSessions,
+    closeOtherRequestSessions,
+    closeRequestSession,
     clearResponseFilter,
     closeManualWebSocketClient,
     commitTargetDraft,
@@ -149,6 +198,8 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     generateRandomRequestJson,
     generateRequestJsonFromSelectedScenario,
     handleMockScenarioSelectChange,
+    fetchMockScenarioFilesFromWorkspace,
+    openMockScenarioFolder,
     handleRequestJsonChange,
     handleResponseBodyScroll,
     handleResponseFilterChange,
@@ -167,8 +218,8 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     messageEvents,
     metadata,
     methodTypeLabel,
-    minResponseHeight,
     minResponseWidth,
+    minResponseHeight,
     mockServer,
     mockServerStatus,
     setMockServer,
@@ -189,9 +240,11 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     requestFields,
     requestJson,
     requestResponseLayout,
+    effectiveRequestResponseLayout,
+    horizontalLayoutAvailable,
     requestRunner,
+    requestSessions,
     requestTab,
-    requestTabItems,
     responseBodyRef,
     responseFields,
     responseFilter,
@@ -200,8 +253,9 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     setPendingMessageCount,
     setAuthorizationMetadata,
     responseHeight,
-    responseTab,
     responseWidth,
+    responseTab,
+    reorderRequestSessions,
     restMethods,
     restMockServer,
     restMockStatus,
@@ -228,6 +282,8 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     sideSection,
     setWsBenchmarkIterations,
     shellLeft,
+    cliPanelOpen,
+    cliPanelHeight,
     showEmptyWorkbench,
     showMessageTopButton,
     startRestMockServer,
@@ -236,6 +292,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     stopWebSocketBenchmark,
     stopWebSocketMockServer,
     targetDraft,
+    toggleRequestResponseLayout,
     updateActiveRestAuth,
     updateActiveRestBodyType,
     updateActiveRestMethod,
@@ -263,6 +320,47 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
 
   const [exampleEditorState, setExampleEditorState] = useState<{ id: string; tab: ExampleEditorTab } | null>(null);
   const [responseFullscreen, setResponseFullscreen] = useState(false);
+  const [responseCollapsed, setResponseCollapsed] = useState(false);
+  const [requestMockSettingsAnchor, setRequestMockSettingsAnchor] = useState<HTMLElement | null>(null);
+  const [requestMockMenuAnchor, setRequestMockMenuAnchor] = useState<HTMLElement | null>(null);
+  const [requestToolsMenuAnchor, setRequestToolsMenuAnchor] = useState<HTMLElement | null>(null);
+  const [transportMenuAnchor, setTransportMenuAnchor] = useState<HTMLElement | null>(null);
+  const [requestUtilityDialog, setRequestUtilityDialog] = useState<"settings" | "examples" | "docs" | "benchmark" | null>(null);
+  const [requestMockManagerOpen, setRequestMockManagerOpen] = useState(false);
+  const [requestMockEditorScenarioId, setRequestMockEditorScenarioId] = useState("");
+  const [requestMockEditorDirty, setRequestMockEditorDirty] = useState(false);
+  const [lastRequestEditorTab, setLastRequestEditorTab] = useState<RequestTab>("body");
+  const metadataRowIdsRef = useRef<string[]>([]);
+  const metadataRowCounterRef = useRef(0);
+  const metadataRowOwnerRef = useRef<string | null>(activeRequestId ?? null);
+
+  if (metadataRowOwnerRef.current !== (activeRequestId ?? null)) {
+    metadataRowOwnerRef.current = activeRequestId ?? null;
+    metadataRowIdsRef.current = [];
+  }
+  while (metadataRowIdsRef.current.length < metadata.length) {
+    metadataRowCounterRef.current += 1;
+    metadataRowIdsRef.current.push(`metadata-row-${metadataRowCounterRef.current}`);
+  }
+  if (metadataRowIdsRef.current.length > metadata.length) {
+    metadataRowIdsRef.current.length = metadata.length;
+  }
+  const metadataRows: Array<{ item: MetadataPair; index: number; rowId: string | undefined }> = (
+    metadata as MetadataPair[]
+  ).map((item, index) => ({
+    item,
+    index,
+    rowId: metadataRowIdsRef.current[index],
+  }));
+  const handleAddMetadataRow = () => {
+    metadataRowCounterRef.current += 1;
+    metadataRowIdsRef.current.push(`metadata-row-${metadataRowCounterRef.current}`);
+    addMetadataRow();
+  };
+  const handleRemoveMetadataRow = (index: number) => {
+    metadataRowIdsRef.current.splice(index, 1);
+    removeMetadataRow(index);
+  };
 
   const allExamples: SavedExample[] = Array.isArray(examples) ? examples : currentExamples;
   const editingExample = exampleEditorState
@@ -342,6 +440,36 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
         : !selectedMethod && !activeCollectionRequest
           ? "Select or create a request first."
           : "";
+  const activeGrpcBinding = activeCollectionRequest?.kind === "grpc" ? activeCollectionRequest.grpc ?? null : null;
+  const activeGrpcLibrary = activeGrpcBinding
+    ? protoLibraries.find((library: any) => library.id === activeGrpcBinding.libraryId) ?? null
+    : null;
+  const activeGrpcVersion = activeGrpcBinding && activeGrpcLibrary
+    ? activeGrpcLibrary.versions.find((version: any) => version.id === activeGrpcBinding.versionId) ?? null
+    : null;
+  const explicitGrpcBindingIssue = grpcBindingIssue(activeGrpcBinding?.status);
+  const activeGrpcBindingIssue: GrpcBindingIssue | null =
+    activeCollectionRequest?.kind === "grpc" && !selectedMethod
+      ? explicitGrpcBindingIssue ??
+        (activeGrpcBinding
+          ? {
+              title: "Proto method unavailable",
+              detail: "The saved gRPC binding cannot be resolved from the selected schema revision. Review the schema and bind the request to a valid method.",
+              tone: "error",
+            }
+          : {
+              title: "Proto binding missing",
+              detail: "This gRPC request is not bound to a valid schema revision and RPC method yet.",
+              tone: "warning",
+            })
+      : explicitGrpcBindingIssue;
+  const openActiveGrpcSchema = () => {
+    setSideSection("proto-schemas");
+    setSidebarOpen(true);
+    if (activeGrpcLibrary && activeGrpcVersion) {
+      selectProtoLibraryVersion(activeGrpcLibrary.id, activeGrpcVersion.id);
+    }
+  };
   const authorizationValue =
     metadata.find((item: MetadataPair) => item.key.trim().toLowerCase() === "authorization")?.value ?? "";
   const responseSummary = activeRunning
@@ -349,10 +477,9 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
       ? `Connected · ${messageEvents.length} message${messageEvents.length === 1 ? "" : "s"}`
       : `Active · ${messageEvents.length} message${messageEvents.length === 1 ? "" : "s"}`
     : lastResult
-      ? `${lastResult.httpStatus ? `HTTP ${lastResult.httpStatus}` : lastResult.trailers?.["grpc-status"] === "0" ? "OK" : "Complete"} · ${Math.round(lastResult.durationMs ?? 0)} ms · ${(lastResult.messages ?? []).length} message${(lastResult.messages ?? []).length === 1 ? "" : "s"}`
-      : "No response yet";
+      ? `${lastResult.httpStatus ? `HTTP ${lastResult.httpStatus}` : lastResult.trailers?.["grpc-status"] === "0" ? "0 OK" : "Complete"} · ${Math.round(lastResult.durationMs ?? 0)} ms`
+      : "";
   const safeAssertionResults = Array.isArray(assertionResults) ? assertionResults : [];
-  const activeGrpcBinding = activeCollectionRequest?.kind === "grpc" ? activeCollectionRequest.grpc : undefined;
   const activeRequestMockMethod = (() => {
     if (!activeGrpcBinding) return null;
     if (selectedMethod && methodKey(selectedMethod) === activeGrpcBinding.methodFullName) return selectedMethod;
@@ -425,6 +552,260 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     };
   })();
 
+  const activeRequestMockData: any = activeRequestMockContext;
+
+  const activeRequestMockRows: GrpcMockScenarioRow[] =
+    activeRequestMockData.state === "available" || activeRequestMockData.state === "missing"
+      ? activeRequestMockData.scenarios.map((scenario: MockScenario) => ({
+          source: activeRequestMockData.source,
+          library: activeRequestMockData.library,
+          version: activeRequestMockData.version,
+          root: activeRequestMockData.root,
+          method: activeRequestMockData.method,
+          scenario,
+          enabled: activeRequestMockData.enabled,
+          selected: activeRequestMockData.selectedScenario?.id === scenario.id,
+        }))
+      : [];
+  const activeRequestMockEditorRow =
+    activeRequestMockRows.find((row) => row.scenario.id === requestMockEditorScenarioId) ?? null;
+  const activeRequestMockScenarioIdSignature = activeRequestMockRows.map((row) => row.scenario.id).join("\u0000");
+
+  // Keep the persisted selection canonical after add/delete/rename operations.
+  // The request panel intentionally falls back to the first scenario for display,
+  // but the persisted id must follow that fallback as well or the native select can
+  // be controlled by a value that no longer exists after a delete.
+  useEffect(() => {
+    if (activeRequestMockData.state !== "available" && activeRequestMockData.state !== "missing") return;
+    const key = activeRequestMockData.key;
+    const fallbackId = activeRequestMockData.selectedScenario?.id ?? "";
+    const validIds = new Set(activeRequestMockData.scenarios.map((scenario: MockScenario) => scenario.id));
+    setMockServer((current: any) => {
+      const currentSelectedId = current.selectedScenarioIds?.[key] ?? "";
+      if (fallbackId && currentSelectedId === fallbackId && validIds.has(currentSelectedId)) return current;
+      if (!fallbackId && !currentSelectedId) return current;
+      const selectedScenarioIds = { ...(current.selectedScenarioIds ?? {}) };
+      if (fallbackId) selectedScenarioIds[key] = fallbackId;
+      else delete selectedScenarioIds[key];
+      return {
+        ...current,
+        selectedScenarioIds,
+        enabledMethods: fallbackId
+          ? current.enabledMethods
+          : { ...(current.enabledMethods ?? {}), [key]: false },
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }, [
+    activeRequestMockData.state,
+    activeRequestMockData.key,
+    activeRequestMockData.selectedScenario?.id,
+    activeRequestMockScenarioIdSignature,
+    setMockServer,
+  ]);
+
+  // If deleting a scenario removes the settings anchor/editor target, clear the
+  // overlay state immediately so no invisible portal/backdrop can intercept clicks.
+  useEffect(() => {
+    const selectedId = activeRequestMockData.state === "available" ? activeRequestMockData.selectedScenario?.id ?? "" : "";
+    if (!selectedId) setRequestMockSettingsAnchor(null);
+    if (requestMockEditorScenarioId && !activeRequestMockRows.some((row) => row.scenario.id === requestMockEditorScenarioId)) {
+      setRequestMockEditorDirty(false);
+      setRequestMockEditorScenarioId("");
+    }
+  }, [
+    activeRequestMockData.state,
+    activeRequestMockData.selectedScenario?.id,
+    activeRequestMockScenarioIdSignature,
+    requestMockEditorScenarioId,
+  ]);
+
+  function hasActiveRequestMockMethod() {
+    return activeRequestMockData.state === "available" || activeRequestMockData.state === "missing";
+  }
+
+  function attachActiveRequestMockBinding(current: any) {
+    if (!hasActiveRequestMockMethod() || !activeGrpcBinding) return current;
+    const source = activeRequestMockData.source;
+    const protoSources = [...(current.protoSources ?? [])];
+    if (!protoSources.some((item: any) => item.libraryId === source.libraryId && item.versionId === source.versionId)) {
+      protoSources.push(source);
+    }
+    return {
+      ...current,
+      protoSources,
+      methodBindings: {
+        ...(current.methodBindings ?? {}),
+        [activeRequestMockData.key]: activeGrpcBinding,
+      },
+    };
+  }
+
+  function setActiveRequestMockEnabled(enabled: boolean) {
+    if (!hasActiveRequestMockMethod()) return;
+    setMockServer((current: any) => {
+      const bound = attachActiveRequestMockBinding(current);
+      return {
+        ...bound,
+        enabledMethods: { ...(bound.enabledMethods ?? {}), [activeRequestMockData.key]: enabled },
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }
+
+  function openActiveRequestScenarioEditor(scenarioId: string) {
+    if (!hasActiveRequestMockMethod() || !scenarioId) return;
+    selectActiveRequestMockContext();
+    setRequestMockManagerOpen(false);
+    setRequestMockEditorDirty(false);
+    setRequestMockEditorScenarioId(scenarioId);
+  }
+
+  function closeActiveRequestScenarioEditor() {
+    if (requestMockEditorDirty && !window.confirm("Discard unsaved scenario changes?")) return;
+    setRequestMockEditorDirty(false);
+    setRequestMockEditorScenarioId("");
+  }
+
+  function addActiveRequestMockScenario() {
+    if (!hasActiveRequestMockMethod()) return;
+    selectActiveRequestMockContext();
+    setMockServer((current: any) => {
+      const bound = attachActiveRequestMockBinding(current);
+      const file = getMockMethodScenarioFile(bound, activeRequestMockData.method);
+      const parsed = parseMockScenarioText(file.scenarioText, file.format, bound.port);
+      if (!parsed.ok) return bound;
+      const methodScenarios = parsed.bundle.scenarios.filter(
+        (scenario: MockScenario) =>
+          scenario.service === activeRequestMockData.method.serviceName &&
+          scenario.method === activeRequestMockData.method.methodName,
+      );
+      const scenario = ensureUniqueMockScenarioId(
+        buildDefaultMockScenario(
+          activeRequestMockData.method,
+          activeRequestMockData.root,
+          methodScenarios.length,
+          undefined,
+          bound.streamDefaults,
+        ),
+        methodScenarios,
+      );
+      const next = updateMockMethodScenarioFile(bound, activeRequestMockData.method, {
+        scenarioText: formatMockScenarioBundle(
+          { ...parsed.bundle, scenarios: [scenario, ...methodScenarios] },
+          file.format,
+        ),
+      });
+      return {
+        ...next,
+        selectedScenarioIds: { ...(next.selectedScenarioIds ?? {}), [activeRequestMockData.key]: scenario.id },
+        enabledMethods: { ...(next.enabledMethods ?? {}), [activeRequestMockData.key]: true },
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }
+
+  function duplicateActiveRequestMockScenario(scenarioId: string) {
+    if (!hasActiveRequestMockMethod() || !scenarioId) return;
+    selectActiveRequestMockContext();
+    setMockServer((current: any) => {
+      const bound = attachActiveRequestMockBinding(current);
+      const file = getMockMethodScenarioFile(bound, activeRequestMockData.method);
+      const parsed = parseMockScenarioText(file.scenarioText, file.format, bound.port);
+      if (!parsed.ok) return bound;
+      const scenarios = parsed.bundle.scenarios.filter(
+        (scenario: MockScenario) =>
+          scenario.service === activeRequestMockData.method.serviceName &&
+          scenario.method === activeRequestMockData.method.methodName,
+      );
+      const original = scenarios.find((scenario: MockScenario) => scenario.id === scenarioId);
+      if (!original) return bound;
+      const used = new Set(scenarios.map((scenario: MockScenario) => scenario.id));
+      let id = `${scenarioId}-copy`;
+      let index = 2;
+      while (used.has(id)) id = `${scenarioId}-copy-${index++}`;
+      const clone: MockScenario = {
+        ...original,
+        id,
+        description: original.description ? `${original.description} (copy)` : "Copied scenario",
+      };
+      const next = updateMockMethodScenarioFile(bound, activeRequestMockData.method, {
+        scenarioText: formatMockScenarioBundle({ ...parsed.bundle, scenarios: [clone, ...scenarios] }, file.format),
+      });
+      return {
+        ...next,
+        selectedScenarioIds: { ...(next.selectedScenarioIds ?? {}), [activeRequestMockData.key]: id },
+        enabledMethods: { ...(next.enabledMethods ?? {}), [activeRequestMockData.key]: true },
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }
+
+  function deleteActiveRequestMockScenario(scenarioId: string) {
+    if (!hasActiveRequestMockMethod() || !scenarioId) return false;
+    // Close the anchored settings menu before invoking the native confirm. This
+    // prevents the menu's transparent portal backdrop from surviving a delete.
+    setRequestMockSettingsAnchor(null);
+    if (!window.confirm(`Delete scenario “${scenarioId}”?`)) return false;
+    setMockServer((current: any) => {
+      const bound = attachActiveRequestMockBinding(current);
+      const file = getMockMethodScenarioFile(bound, activeRequestMockData.method);
+      const parsed = parseMockScenarioText(file.scenarioText, file.format, bound.port);
+      if (!parsed.ok) return bound;
+      const remaining = parsed.bundle.scenarios.filter(
+        (scenario: MockScenario) =>
+          !(
+            scenario.service === activeRequestMockData.method.serviceName &&
+            scenario.method === activeRequestMockData.method.methodName &&
+            scenario.id === scenarioId
+          ),
+      );
+      const methodRemaining = remaining.filter(
+        (scenario: MockScenario) =>
+          scenario.service === activeRequestMockData.method.serviceName &&
+          scenario.method === activeRequestMockData.method.methodName,
+      );
+      const next = updateMockMethodScenarioFile(bound, activeRequestMockData.method, {
+        scenarioText: formatMockScenarioBundle({ ...parsed.bundle, scenarios: remaining }, file.format),
+      });
+      const selectedScenarioIds = { ...(next.selectedScenarioIds ?? {}) };
+      if (selectedScenarioIds[activeRequestMockData.key] === scenarioId) {
+        if (methodRemaining[0]) selectedScenarioIds[activeRequestMockData.key] = methodRemaining[0].id;
+        else delete selectedScenarioIds[activeRequestMockData.key];
+      }
+      return {
+        ...next,
+        selectedScenarioIds,
+        enabledMethods: {
+          ...(next.enabledMethods ?? {}),
+          [activeRequestMockData.key]: methodRemaining.length > 0 && next.enabledMethods?.[activeRequestMockData.key] !== false,
+        },
+        updatedAt: new Date().toISOString(),
+      };
+    });
+    if (requestMockEditorScenarioId === scenarioId) {
+      setRequestMockEditorDirty(false);
+      setRequestMockEditorScenarioId("");
+    }
+    return true;
+  }
+
+  function saveActiveRequestMockScenario(scenario: MockScenario, format: any) {
+    if (!hasActiveRequestMockMethod() || !activeRequestMockEditorRow) return;
+    const bound = attachActiveRequestMockBinding(mockServer);
+    const saved = saveMockScenarioForMethod(
+      bound,
+      activeRequestMockData.method,
+      activeRequestMockEditorRow.scenario.id,
+      scenario,
+      format,
+    );
+    if (!saved) return;
+    setMockServer({ ...saved.project, updatedAt: new Date().toISOString() });
+    setRequestMockEditorScenarioId(saved.scenario.id);
+    setRequestMockEditorDirty(false);
+  }
+
   async function copyLatestResponseJson() {
     if (latestResponsePayload === undefined) return;
     const text =
@@ -435,21 +816,29 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
   }
 
   function selectActiveRequestMockContext() {
-    if (activeRequestMockContext.state === "not-grpc" || activeRequestMockContext.state === "broken") return;
+    if (
+      activeRequestMockContext.state !== "available" &&
+      activeRequestMockContext.state !== "missing" &&
+      activeRequestMockContext.state !== "invalid-source"
+    )
+      return;
     selectProtoLibraryVersion(activeRequestMockContext.library.id, activeRequestMockContext.version.id);
     setMockSelectedMethodKey(methodKey(activeRequestMockContext.method));
   }
 
   function selectActiveRequestScenario(scenarioId: string) {
     if (activeRequestMockContext.state !== "available") return;
-    setMockServer((current: any) => ({
-      ...current,
-      selectedScenarioIds: {
-        ...current.selectedScenarioIds,
-        [activeRequestMockContext.key]: scenarioId,
-      },
-      updatedAt: new Date().toISOString(),
-    }));
+    setMockServer((current: any) => {
+      const bound = attachActiveRequestMockBinding(current);
+      return {
+        ...bound,
+        selectedScenarioIds: {
+          ...(bound.selectedScenarioIds ?? {}),
+          [activeRequestMockContext.key]: scenarioId,
+        },
+        updatedAt: new Date().toISOString(),
+      };
+    });
   }
 
   function openActiveRequestMockWorkspace() {
@@ -472,40 +861,195 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
   }, [responseFullscreen]);
 
   useEffect(() => {
-    if (sideSection !== "collections" || showEmptyWorkbench || protoPreview) setResponseFullscreen(false);
-  }, [sideSection, showEmptyWorkbench, protoPreview]);
+    if (sideSection === "collections") return;
+    setResponseFullscreen(false);
+  }, [sideSection]);
 
-  function handleRequestTabChange(nextTab: RequestTab) {
-    // Request tabs must be navigation-only. Opening Mock must not attach Proto,
-    // create a scenario, or move the user to Services without an explicit action.
+  useEffect(() => {
+    const handleResponsePanelShortcut = (event: KeyboardEvent) => {
+      if (sideSection !== "collections") return;
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== "j") return;
+      event.preventDefault();
+      setResponseCollapsed((current) => !current);
+    };
+    window.addEventListener("keydown", handleResponsePanelShortcut);
+    return () => window.removeEventListener("keydown", handleResponsePanelShortcut);
+  }, [sideSection]);
+
+  const requestContextView: RequestContextView =
+    requestTab === "mock"
+      ? "mock"
+      : requestTab === "schema" && !activeIsRest && !activeIsWebSocket
+        ? "schema"
+        : requestTab === "more"
+          ? "settings"
+          : requestTab === "docs" || requestTab === "examples" || requestTab === "benchmark"
+            ? "tool"
+            : "request";
+
+  const requestEditorItems: Array<{ value: RequestTab; label: string }> = activeIsRest
+    ? [
+        { value: "schema", label: "Params" },
+        { value: "body", label: "Body" },
+        { value: "metadata", label: "Headers" },
+        { value: "auth", label: "Auth" },
+      ]
+    : activeIsWebSocket
+      ? [
+          { value: "body", label: "Message" },
+          { value: "metadata", label: "Headers" },
+          { value: "auth", label: "Auth" },
+        ]
+      : [
+          { value: "body", label: "Message" },
+          { value: "metadata", label: "Metadata" },
+          { value: "auth", label: "Auth" },
+        ];
+
+  const requestEditorTab: RequestTab =
+    requestContextView === "request" && requestEditorItems.some((item) => item.value === requestTab)
+      ? requestTab
+      : requestEditorItems.some((item) => item.value === lastRequestEditorTab)
+        ? lastRequestEditorTab
+        : activeIsRest
+          ? "schema"
+          : "body";
+
+  useEffect(() => {
+    const isGrpcSchemaMode = requestTab === "schema" && !activeIsRest && !activeIsWebSocket;
+    if (requestTab === "mock" || isGrpcSchemaMode || requestTab === "more") return;
+    if (requestTab === "body" || requestTab === "auth" || requestTab === "metadata") {
+      setLastRequestEditorTab(requestTab);
+      return;
+    }
+    if (activeIsRest && requestTab === "schema") setLastRequestEditorTab("schema");
+  }, [activeIsRest, activeIsWebSocket, requestTab]);
+
+  function handleRequestEditorTabChange(nextTab: RequestTab) {
+    setLastRequestEditorTab(nextTab);
     setRequestTab(nextTab);
   }
 
-  // Side/stack controls belong to the request + response editor only. Applying
-  // that flex direction to Settings, Schemas, Services, Docs, or Git made those
-  // single-pane pages shrink to their content width when Side mode was active.
-  const requestSplitLayoutActive =
-    sideSection === "collections" &&
-    !showEmptyWorkbench &&
-    !protoPreview &&
-    Boolean(activeCollectionRequest || selectedMethod);
-  const mainPanelDirection = requestSplitLayoutActive && requestResponseLayout === "horizontal" ? "row" : "column";
+  function returnToRequestEditor() {
+    const nextTab = requestEditorItems.some((item) => item.value === lastRequestEditorTab)
+      ? lastRequestEditorTab
+      : activeIsRest
+        ? "schema"
+        : "body";
+    setRequestTab(nextTab);
+  }
+
+  useEffect(() => {
+    const legacyOverlayTabs: RequestTab[] = ["mock", "more", "docs", "examples", "benchmark"];
+    if (legacyOverlayTabs.includes(requestTab) || (!activeIsRest && requestTab === "schema")) {
+      returnToRequestEditor();
+    }
+  // Intentionally normalize persisted pre-redesign request tabs when request context changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCollectionRequest?.id]);
+
+  // Collection requests use editor tabs plus a VS Code-style docked Response panel.
+  // Other rail workspaces are single-view surfaces and intentionally omit both.
   const requestHeaderTitle =
     activeCollectionRequest?.name ?? selectedMethod?.methodName ?? "Select a collection request";
+  const activeRequestProtoLibrary = activeGrpcBinding
+    ? protoLibraries.find((library: any) => library.id === activeGrpcBinding.libraryId)
+    : null;
+  const activeRequestProtoVersion = activeRequestProtoLibrary?.versions?.find(
+    (version: any) => version.id === activeGrpcBinding?.versionId,
+  );
   const requestHeaderContext = selectedMethod
-    ? `${selectedMethod.serviceName} / ${selectedMethod.methodName} · ${methodTypeLabel(selectedMethod)}`
+    ? [
+        `${activeCollectionRequest?.collectionName ?? activeRequestProtoLibrary?.name ?? "gRPC"} / ${selectedMethod.serviceName}`,
+        methodTypeLabel(selectedMethod),
+      ]
+        .filter(Boolean)
+        .join(" · ")
     : activeCollectionRequest?.kind === "rest"
       ? `${activeCollectionRequest.collectionName ?? "REST"} · ${activeCollectionRequest.url}`
       : activeCollectionRequest?.kind === "websocket"
         ? `${activeCollectionRequest.collectionName ?? "WebSocket"} · ${activeCollectionRequest.url}`
         : (activeCollectionRequest?.collectionName ?? "Import or add a collection request.");
+  const requestIsGrpcStreaming = Boolean(selectedMethod?.requestStream || selectedMethod?.responseStream);
   const requestHeaderBadge = activeIsRest
     ? (activeCollectionRequest?.method ?? "GET")
     : activeIsWebSocket
-      ? "WebSocket"
+      ? "WS"
       : selectedMethod || activeCollectionRequest?.kind === "grpc"
-        ? "gRPC"
+        ? requestIsGrpcStreaming ? "RPCS" : "RPCU"
         : "";
+  const requestSchemaLabel = activeRequestProtoLibrary
+    ? `${activeRequestProtoLibrary.name}${activeRequestProtoVersion?.version ? ` ${activeRequestProtoVersion.version}` : ""}`
+    : "Schema";
+  const requestMockLabel =
+    activeRequestMockContext.state === "available" && activeRequestMockContext.selectedScenario && selectedMethod
+      ? mockScenarioDisplayName(activeRequestMockContext.selectedScenario, selectedMethod)
+      : activeRequestMockContext.state === "missing"
+        ? "No scenario"
+        : "Select scenario";
+  const connectionSelectSx = {
+    minHeight: 30,
+    height: 30,
+    minWidth: 112,
+    px: 0.8,
+    border: "1px solid",
+    borderColor: "divider",
+    bgcolor: "background.paper",
+    borderRadius: 1,
+    color: "text.primary",
+    textTransform: "none",
+    justifyContent: "space-between",
+    fontWeight: 400,
+    "&:hover": { bgcolor: "action.hover", borderColor: "text.secondary" },
+    "&:focus-visible": { outline: "1px solid", outlineColor: "primary.main" },
+  } as const;
+
+  const renderPrimaryRequestAction = () => {
+    if (activeIsWebSocket) {
+      return wsClientState.readyState === "open" ? (
+        <Button size="small" variant="contained" color="error" onClick={() => closeManualWebSocketClient()}>
+          Disconnect
+        </Button>
+      ) : (
+        <Button
+          size="small"
+          variant="contained"
+          disabled={requestActionDisabled || wsClientState.readyState === "connecting"}
+          onClick={() => {
+            commitTargetDraft();
+            handleConnectWebSocket();
+          }}
+        >
+          Connect
+        </Button>
+      );
+    }
+    if (activeRunning) {
+      return (
+        <Button
+          size="small"
+          variant="contained"
+          color="error"
+          onClick={() => requestRunner.cancelRequest()}
+        >
+          Cancel
+        </Button>
+      );
+    }
+    return (
+      <Button
+        size="small"
+        variant="contained"
+        disabled={requestActionDisabled}
+        onClick={() => {
+          commitTargetDraft();
+          void requestRunner.runRequest();
+        }}
+      >
+        {requestIsGrpcStreaming ? "Stream" : "Send"}
+      </Button>
+    );
+  };
 
   const renderResponseLayer = (children: ReactNode) =>
     responseFullscreen && typeof document !== "undefined"
@@ -534,17 +1078,49 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
         top: designSystem.size.titlebarHeight,
         left: shellLeft,
         right: 0,
-        bottom: 24,
-        px: "var(--workbench-page-padding-x)",
-        py: "var(--workbench-page-padding-y)",
+        bottom: designSystem.size.statusbarHeight + (cliPanelOpen ? cliPanelHeight : 0),
+        p: 0,
         overflow: "hidden",
         zIndex: "auto",
+        display: "flex",
+        flexDirection: "column",
+        bgcolor: "background.default",
       }}
     >
+      {sideSection === "collections" ? (
+        <Box
+          data-slot="workspace-tabs"
+          sx={{
+            height: designSystem.size.workspaceTabHeight,
+            minHeight: designSystem.size.workspaceTabHeight,
+            borderBottom: "1px solid",
+            borderColor: "var(--border-strong)",
+            bgcolor: "background.default",
+            overflow: "hidden",
+          }}
+        >
+          <RequestTabs
+            sessions={requestSessions}
+            activeRequestId={activeRequestId}
+            onActivate={(session: RequestSession) => {
+              setProtoPreview(null);
+              activateRequestSession(session);
+              setSideSection("collections");
+              setSidebarOpen(true);
+            }}
+            onClose={closeRequestSession}
+            onCancel={requestRunner.cancelRequest}
+            onCloseAll={closeAllRequestSessions}
+            onCloseOther={closeOtherRequestSessions}
+            onReorder={reorderRequestSessions}
+            placement="panel"
+          />
+        </Box>
+      ) : null}
       <Stack
-        direction={mainPanelDirection}
-        spacing={requestSplitLayoutActive ? 0 : "var(--workbench-panel-gap)"}
-        sx={{ height: "100%", width: "100%", minHeight: 0, minWidth: 0, overflow: "hidden" }}
+        direction={sideSection === "collections" && effectiveRequestResponseLayout === "horizontal" ? "row" : "column"}
+        spacing={0}
+        sx={{ flex: 1, height: "auto", width: "100%", minHeight: 0, minWidth: 0, overflow: "hidden" }}
       >
         {sideSection === "source-control" ? (
           <GitSourceControlWorkspace
@@ -577,39 +1153,29 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
               display: "flex",
               flexDirection: "column",
               overflow: "auto",
-              p: 1.6,
+              borderRadius: 0,
             }}
           >
-            <Stack spacing={1.2}>
-              <Box>
-                <Typography variant="h6">Published Docs</Typography>
+            <Stack direction="row" alignItems="center" sx={{ minHeight: 50, px: 1.5, borderBottom: "1px solid var(--border-strong)" }}>
+              <Box sx={{ minWidth: 0, flex: 1 }}>
+                <Typography variant="subtitle1" fontWeight={600}>Documentation</Typography>
+                <Typography variant="caption" color="text.secondary">Select a page from the Docs sidebar to edit or preview it.</Typography>
               </Box>
-              <Stack direction={{ xs: "column", md: "row" }} spacing={1}>
-                <Paper variant="outlined" sx={{ p: 1.4, flex: 1 }}>
-                  <Typography variant="caption" color="text.secondary">
-                    Pages
-                  </Typography>
-                  <Typography variant="h5">{documentationPages.length}</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    {documentationPages.filter((page: any) => page.status === "published").length} published
-                  </Typography>
-                </Paper>
-                <Paper variant="outlined" sx={{ p: 1.4, flex: 1 }}>
-                  <Typography variant="caption" color="text.secondary">
-                    Needs attention
-                  </Typography>
-                  <Typography variant="h5">
-                    {
-                      documentationPages.filter((page: any) => page.status === "outdated" || page.status === "error")
-                        .length
-                    }
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Need update
-                  </Typography>
-                </Paper>
-              </Stack>
             </Stack>
+            <Box sx={{ p: 1.5, maxWidth: 760 }}>
+              <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
+                {[
+                  ["Pages", documentationPages.length],
+                  ["Published", documentationPages.filter((page: any) => page.status === "published").length],
+                  ["Needs update", documentationPages.filter((page: any) => page.status === "outdated" || page.status === "error").length],
+                ].map(([label, value]) => (
+                  <Stack key={String(label)} direction="row" alignItems="center" sx={{ minHeight: 38, borderBottom: "1px solid", borderColor: "divider" }}>
+                    <Typography variant="body2" sx={{ minWidth: 0, flex: 1 }}>{label}</Typography>
+                    <Typography variant="body2" color="text.secondary">{value}</Typography>
+                  </Stack>
+                ))}
+              </Box>
+            </Box>
           </Paper>
         ) : standaloneDocumentationPage && sideSection === "docs" ? (
           <Paper
@@ -715,14 +1281,13 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
             </Stack>
           </Paper>
         ) : (
-          <>
-            <Paper
+          <Paper
               elevation={0}
               sx={{
                 ...panelSx,
                 flex: "1 1 auto",
-                minHeight: requestResponseLayout === "horizontal" ? 0 : 220,
-                minWidth: requestResponseLayout === "horizontal" ? 360 : 0,
+                minHeight: 0,
+                minWidth: 0,
                 display: "flex",
                 flexDirection: "column",
               }}
@@ -730,65 +1295,187 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
               <Stack
                 direction="row"
                 alignItems="center"
-                spacing={1}
-                sx={{ px: 1.4, py: 0.8, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+                spacing={0.75}
+                flexWrap="wrap"
+                useFlexGap
+                sx={{
+                  px: 1.25,
+                  py: 0.55,
+                  minHeight: 54,
+                  rowGap: 0.5,
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                  flexShrink: 0,
+                }}
               >
-                <Box sx={{ minWidth: 0, flex: 1 }}>
+                <Box sx={{ minWidth: 0, flex: "1 1 180px" }}>
                   <Stack direction="row" spacing={0.55} alignItems="center" sx={{ minWidth: 0 }}>
-                    <Typography variant="subtitle1" noWrap title={requestHeaderTitle} sx={{ minWidth: 0 }}>
+                    {requestHeaderBadge ? (
+                      <Typography
+                        component="span"
+                        variant="caption"
+                        sx={{ color: "primary.main", fontWeight: 700, flexShrink: 0, fontSize: 10.5 }}
+                      >
+                        {requestHeaderBadge}
+                      </Typography>
+                    ) : null}
+                    <Typography variant="subtitle1" noWrap title={requestHeaderTitle} sx={{ minWidth: 0, fontWeight: 600 }}>
                       {requestHeaderTitle}
                     </Typography>
-                    {requestHeaderBadge ? (
-                      <Chip
-                        size="small"
-                        variant="outlined"
-                        color={activeIsWebSocket ? "secondary" : "primary"}
-                        label={requestHeaderBadge}
-                      />
-                    ) : null}
                   </Stack>
                   <Typography variant="caption" color="text.secondary" noWrap title={requestHeaderContext}>
                     {requestHeaderContext}
                   </Typography>
                 </Box>
-                {activeIsWebSocket && (
-                  <Chip
+
+                {!activeIsRest && !activeIsWebSocket ? (
+                  <Stack
+                    direction="row"
+                    spacing={0.55}
+                    alignItems="center"
+                    className="request-mock-controls"
+                    sx={{ flexShrink: 0, minWidth: 0, minHeight: 32 }}
+                  >
+                    <Typography
+                      component="span"
+                      variant="caption"
+                      sx={{
+                        color: "text.secondary",
+                        fontSize: 11,
+                        minHeight: 20,
+                        lineHeight: "20px",
+                        fontWeight: 700,
+                        letterSpacing: "0.05em",
+                        textTransform: "uppercase",
+                        flexShrink: 0,
+                        display: "inline-flex",
+                        alignItems: "center",
+                      }}
+                    >
+                      Mock
+                    </Typography>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      aria-label="Select mock scenario"
+                      aria-haspopup="menu"
+                      aria-expanded={Boolean(requestMockMenuAnchor)}
+                      disabled={activeRequestMockContext.state !== "available"}
+                      onClick={(event: ButtonClickEvent) => setRequestMockMenuAnchor(event.currentTarget)}
+                      title={requestMockLabel}
+                      sx={{
+                        minHeight: 32,
+                        height: 32,
+                        width: "clamp(132px, 18vw, 190px)",
+                        maxWidth: 190,
+                        px: 0.8,
+                        justifyContent: "space-between",
+                        textTransform: "none",
+                        fontSize: 12.5,
+                        lineHeight: "20px",
+                        fontWeight: 400,
+                        borderColor: "divider",
+                        bgcolor: "background.paper",
+                        color: "text.primary",
+                      }}
+                    >
+                      <Box
+                        component="span"
+                        sx={{
+                          minWidth: 0,
+                          minHeight: 20,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          lineHeight: "20px",
+                        }}
+                      >
+                        {requestMockLabel}
+                      </Box>
+                      <Box component="span" aria-hidden="true" sx={{ ml: 0.65, fontSize: 10, flexShrink: 0 }}>▾</Box>
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      aria-label="Mock settings"
+                      disabled={activeRequestMockContext.state !== "available" && activeRequestMockContext.state !== "missing"}
+                      onClick={(event: ButtonClickEvent) => setRequestMockSettingsAnchor(event.currentTarget)}
+                      sx={{ minHeight: 32, height: 32, px: 0.9, fontSize: 12.5, lineHeight: "20px", textTransform: "none", borderColor: "divider", color: "text.secondary" }}
+                    >
+                      Settings
+                    </Button>
+                  </Stack>
+                ) : null}
+
+                <Tooltip title="Request options">
+                  <IconButton
                     size="small"
-                    color={
-                      wsClientState.readyState === "open"
-                        ? "success"
-                        : wsClientState.readyState === "connecting"
-                          ? "warning"
-                          : "default"
+                    aria-label="Request options"
+                    onClick={(event: ElementClickEvent) => setRequestToolsMenuAnchor(event.currentTarget)}
+                    sx={{ ml: 0.25, width: 32, height: 32, alignSelf: "center" }}
+                  >
+                    <MoreHoriz sx={{ fontSize: 17 }} />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip
+                  title={
+                    requestResponseLayout === "horizontal" && !horizontalLayoutAvailable
+                      ? "Side by side resumes when the window is wider; click to use stacked layout"
+                      : requestResponseLayout === "horizontal"
+                        ? "Stack request and response"
+                        : "Show request and response side by side"
+                  }
+                >
+                  <IconButton
+                    size="small"
+                    aria-label={
+                      requestResponseLayout === "horizontal"
+                        ? "Use stacked request and response layout"
+                        : "Use side by side request and response layout"
                     }
-                    variant="outlined"
-                    label={
-                      wsClientState.readyState === "open"
-                        ? "Connected"
-                        : wsClientState.readyState === "connecting"
-                          ? "Connecting"
-                          : "Disconnected"
-                    }
-                  />
-                )}
+                    onClick={toggleRequestResponseLayout}
+                    sx={{ width: 32, height: 32, alignSelf: "center" }}
+                  >
+                    {requestResponseLayout === "horizontal" ? (
+                      <PanelBottom sx={{ fontSize: 16 }} />
+                    ) : (
+                      <PanelRight sx={{ fontSize: 16 }} />
+                    )}
+                  </IconButton>
+                </Tooltip>
               </Stack>
 
+              {requestContextView === "request" ? (
               <Stack
                 direction="row"
-                spacing={1}
+                spacing={0}
                 alignItems="center"
-                sx={{ px: 1.4, py: 0.8, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+                flexWrap="wrap"
+                useFlexGap
+                sx={{
+                  px: 1.2,
+                  py: 0.5,
+                  rowGap: 0.5,
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                  flexShrink: 0,
+                }}
               >
                 <Button
                   size="small"
-                  variant="outlined"
+                  variant="text"
+                  aria-haspopup="menu"
+                  aria-expanded={Boolean(envMenuAnchor)}
                   onClick={(event: ButtonClickEvent) => setEnvMenuAnchor(event.currentTarget)}
                   title={featureEnvironmentLabel(environments, activeEnvironmentKey)}
-                  sx={{ width: 88, minWidth: 88, px: 0.5, justifyContent: "center", flexShrink: 0 }}
+                  sx={{ ...connectionSelectSx, maxWidth: 150, flexShrink: 0 }}
                 >
-                  <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
                     {featureEnvironmentShortLabel(environments, activeEnvironmentKey)}
                   </Box>
+                  <Box component="span" aria-hidden="true" sx={{ ml: 0.65, fontSize: 10, flexShrink: 0 }}>▾</Box>
                 </Button>
                 <Menu anchorEl={envMenuAnchor} open={Boolean(envMenuAnchor)} onClose={() => setEnvMenuAnchor(null)}>
                   <MenuItem selected={activeEnvironmentKey === "default"} onClick={() => chooseEnvironment("default")}>
@@ -835,20 +1522,38 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                   </MenuItem>
                 </Menu>
                 {!activeIsWebSocket && !activeIsRest && (
-                  <FormControl size="small" sx={{ width: 145 }}>
-                    <Select
-                      value={activeTransportMode}
-                      onChange={(event: SelectInputChangeEvent) =>
-                        handleTransportModeChange(event.target.value as TransportMode)
-                      }
+                  <>
+                    <Button
+                      size="small"
+                      variant="text"
+                      aria-haspopup="menu"
+                      aria-expanded={Boolean(transportMenuAnchor)}
+                      onClick={(event: ButtonClickEvent) => setTransportMenuAnchor(event.currentTarget)}
+                      sx={{ ...connectionSelectSx, ml: 0.5, minWidth: 118 }}
                     >
-                      <MenuItem value="grpc-web">gRPC-Web</MenuItem>
-                      <MenuItem value="native-grpc">Native gRPC</MenuItem>
-                    </Select>
-                  </FormControl>
+                      <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+                        {activeTransportMode === "native-grpc" ? "Native gRPC" : "gRPC-Web"}
+                      </Box>
+                      <Box component="span" aria-hidden="true" sx={{ ml: 0.65, fontSize: 10, flexShrink: 0 }}>▾</Box>
+                    </Button>
+                    <Menu anchorEl={transportMenuAnchor} open={Boolean(transportMenuAnchor)} onClose={() => setTransportMenuAnchor(null)}>
+                      <MenuItem
+                        selected={activeTransportMode === "grpc-web"}
+                        onClick={() => { setTransportMenuAnchor(null); handleTransportModeChange("grpc-web"); }}
+                      >
+                        gRPC-Web
+                      </MenuItem>
+                      <MenuItem
+                        selected={activeTransportMode === "native-grpc"}
+                        onClick={() => { setTransportMenuAnchor(null); handleTransportModeChange("native-grpc"); }}
+                      >
+                        Native gRPC
+                      </MenuItem>
+                    </Menu>
+                  </>
                 )}
                 {activeIsRest && (
-                  <FormControl size="small" sx={{ width: 108, flexShrink: 0 }}>
+                  <FormControl size="small" sx={{ width: 92, ml: 0.5, flexShrink: 0 }}>
                     <Select
                       value={activeCollectionRequest?.method ?? activeSession?.httpMethod ?? "GET"}
                       onChange={(event: SelectInputChangeEvent) => updateActiveRestMethod(event.target.value)}
@@ -865,6 +1570,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                   size="small"
                   fullWidth
                   className="workbench-url-input"
+                  sx={{ ml: 0.5, flex: "1 1 220px", minWidth: 160 }}
                   value={targetDraft}
                   onChange={(event: TextInputChangeEvent) => handleTargetDraftChange(event.target.value)}
                   onBlur={() => commitTargetDraft()}
@@ -906,74 +1612,77 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                     <ContentCopy sx={{ fontSize: 16 }} />
                   </IconButton>
                 </Tooltip>
-                {activeIsWebSocket ? (
-                  wsClientState.readyState === "open" ? (
-                    <Button size="small" variant="contained" color="error" onClick={() => closeManualWebSocketClient()}>
-                      Disconnect
-                    </Button>
-                  ) : (
-                    <Button
-                      size="small"
-                      variant="contained"
-                      startIcon={<PlayArrow />}
-                      disabled={requestActionDisabled || wsClientState.readyState === "connecting"}
-                      onClick={() => {
-                        commitTargetDraft();
-                        handleConnectWebSocket();
-                      }}
-                    >
-                      Connect
-                    </Button>
-                  )
-                ) : activeRunning ? (
-                  <Button
-                    size="small"
-                    variant="contained"
-                    color="error"
-                    startIcon={<StopCircle />}
-                    onClick={() => requestRunner.cancelRequest()}
-                  >
-                    Cancel
-                  </Button>
-                ) : (
-                  <Button
-                    size="small"
-                    variant="contained"
-                    startIcon={<PlayArrow />}
-                    disabled={requestActionDisabled}
-                    onClick={() => {
-                      commitTargetDraft();
-                      void requestRunner.runRequest();
-                    }}
-                  >
-                    {activeIsRest ? "Send" : "Invoke"}
-                  </Button>
-                )}
+                <Box sx={{ ml: 0.5, flexShrink: 0 }}>
+                  {renderPrimaryRequestAction()}
+                </Box>
               </Stack>
-              {requestActionDisabledReason && (
+              ) : null}
+              {requestContextView === "request" && activeGrpcBindingIssue ? (
+                <Paper
+                  variant="outlined"
+                  role={activeGrpcBindingIssue.tone === "error" ? "alert" : "status"}
+                  sx={{
+                    mx: 1.2,
+                    mt: 0.8,
+                    p: 1,
+                    borderColor: activeGrpcBindingIssue.tone === "error" ? "error.main" : "warning.main",
+                    bgcolor: "background.paper",
+                  }}
+                >
+                  <Stack direction="row" spacing={0.9} alignItems="flex-start">
+                    <Box sx={{ pt: 0.15, color: activeGrpcBindingIssue.tone === "error" ? "error.main" : "warning.main" }}>
+                      <WarningIcon color={activeGrpcBindingIssue.tone === "error" ? "error" : "warning"} sx={{ fontSize: 17 }} />
+                    </Box>
+                    <Box sx={{ minWidth: 0, flex: 1 }}>
+                      <Typography variant="body2" fontWeight={600}>
+                        {activeGrpcBindingIssue.title}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.15 }}>
+                        {activeGrpcBindingIssue.detail}
+                      </Typography>
+                      <Stack direction="row" spacing={1.5} useFlexGap flexWrap="wrap" sx={{ mt: 0.65 }}>
+                        <Typography variant="caption" color="text.secondary">
+                          Schema: <Box component="span" sx={{ color: "text.primary" }}>{activeGrpcLibrary?.name ?? activeGrpcBinding?.libraryId ?? "Not bound"}</Box>
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Revision: <Box component="span" sx={{ color: "text.primary" }}>{activeGrpcVersion?.version ?? activeGrpcBinding?.versionId ?? "Not bound"}</Box>
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ minWidth: 0 }}>
+                          RPC: <Box component="span" sx={{ color: "text.primary", wordBreak: "break-all" }}>{activeGrpcBinding?.methodFullName ?? activeCollectionRequest?.grpcMethodKey ?? "Not selected"}</Box>
+                        </Typography>
+                      </Stack>
+                    </Box>
+                    <Button size="small" variant="outlined" onClick={openActiveGrpcSchema} sx={{ flexShrink: 0 }}>
+                      Open schema
+                    </Button>
+                  </Stack>
+                </Paper>
+              ) : requestContextView === "request" && requestActionDisabledReason ? (
                 <Alert severity="info" variant="outlined" sx={{ mx: 1.4, mt: 0.8, py: 0.2 }}>
                   {requestActionDisabledReason}
                 </Alert>
-              )}
+              ) : null}
 
-              <WorkbenchTabs<RequestTab>
-                value={requestTab}
-                onChange={handleRequestTabChange}
-                items={requestTabItems}
-                idPrefix="request-editor"
-                ariaLabel="Request editor sections"
-              />
+              {requestContextView === "request" ? (
+                <WorkbenchTabs<RequestTab>
+                  value={requestEditorTab}
+                  onChange={handleRequestEditorTabChange}
+                  items={requestEditorItems}
+                  idPrefix="request-editor"
+                  ariaLabel="Request editor sections"
+                  variant="underline"
+                />
+              ) : null}
               <Box
                 role="tabpanel"
-                id={`request-editor-panel-${requestTab}`}
-                aria-labelledby={`request-editor-tab-${requestTab}`}
+                id={`request-workspace-panel-${requestContextView}`}
                 tabIndex={0}
                 sx={{
                   p: designSystem.space.panelPadding,
                   minHeight: 0,
                   flex: 1,
-                  overflow: requestResponseLayout === "horizontal" && requestTab === "body" ? "hidden" : "auto",
-                  display: requestResponseLayout === "horizontal" && requestTab === "body" ? "flex" : "block",
+                  overflow: effectiveRequestResponseLayout === "horizontal" && requestTab === "body" ? "hidden" : "auto",
+                  display: effectiveRequestResponseLayout === "horizontal" && requestTab === "body" ? "flex" : "block",
                   flexDirection: "column",
                 }}
               >
@@ -984,7 +1693,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                       sx={{
                         minHeight: 0,
                         flex: 1,
-                        height: requestResponseLayout === "horizontal" ? "100%" : "auto",
+                        height: effectiveRequestResponseLayout === "horizontal" ? "100%" : "auto",
                       }}
                     >
                       <Stack
@@ -1034,7 +1743,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                         formatDisabled={!requestJson.trim()}
                         formatAriaLabel="Prettier JSON"
                         fullscreenTitle="WebSocket send data editor"
-                        fullHeight={requestResponseLayout === "horizontal"}
+                        fullHeight={effectiveRequestResponseLayout === "horizontal"}
                       />
                     </Stack>
                   ) : activeIsRest ? (
@@ -1043,7 +1752,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                       sx={{
                         minHeight: 0,
                         flex: 1,
-                        height: requestResponseLayout === "horizontal" ? "100%" : "auto",
+                        height: effectiveRequestResponseLayout === "horizontal" ? "100%" : "auto",
                       }}
                     >
                       <Stack spacing={0.25}>
@@ -1085,7 +1794,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                               : "Format body"
                           }
                           fullscreenTitle="REST request body editor"
-                          fullHeight={requestResponseLayout === "horizontal"}
+                          fullHeight={effectiveRequestResponseLayout === "horizontal"}
                         />
                       )}
                     </Stack>
@@ -1095,7 +1804,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                       sx={{
                         minHeight: 0,
                         flex: 1,
-                        height: requestResponseLayout === "horizontal" ? "100%" : "auto",
+                        height: effectiveRequestResponseLayout === "horizontal" ? "100%" : "auto",
                       }}
                     >
                       <Stack
@@ -1153,7 +1862,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                         formatDisabled={!requestJson.trim()}
                         formatAriaLabel="Prettier JSON"
                         fullscreenTitle="Request body editor"
-                        fullHeight={requestResponseLayout === "horizontal"}
+                        fullHeight={effectiveRequestResponseLayout === "horizontal"}
                       />
                     </Stack>
                   ))}
@@ -1177,62 +1886,47 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                       />
                     </Stack>
                   ) : (
-                    <Stack spacing={1}>
+                    <Stack spacing={0.6} sx={{ maxWidth: 920 }}>
                       <Stack direction="row" justifyContent="space-between" alignItems="center">
-                        <Typography variant="subtitle1">{activeIsRest ? "Headers" : "Metadata"}</Typography>
-                        <Button size="small" startIcon={<Add />} onClick={addMetadataRow}>
-                          Add row
+                        <Typography variant="caption" color="text.secondary">
+                          {activeIsRest ? "Headers" : "Metadata"}
+                        </Typography>
+                        <Button size="small" variant="text" startIcon={<Add />} onClick={handleAddMetadataRow}>
+                          Add
                         </Button>
                       </Stack>
-                      <TableContainer component={Paper} variant="outlined">
-                        <Table size="small">
-                          <TableHead>
-                            <TableRow>
-                              <TableCell>Key</TableCell>
-                              <TableCell>Value</TableCell>
-                              <TableCell width={56}>Action</TableCell>
-                            </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            {metadata.map((item: MetadataPair, index: number) => (
-                              <TableRow key={`${item.key}-${item.value}`}>
-                                <TableCell>
-                                  <TextField
-                                    size="small"
-                                    fullWidth
-                                    value={item.key}
-                                    inputProps={{ "aria-label": `Metadata key ${index + 1}` }}
-                                    onChange={(event: TextInputChangeEvent) =>
-                                      updateMetadataRow(index, "key", event.target.value)
-                                    }
-                                  />
-                                </TableCell>
-                                <TableCell>
-                                  <TextField
-                                    size="small"
-                                    fullWidth
-                                    value={item.value}
-                                    inputProps={{ "aria-label": `Metadata value ${index + 1}` }}
-                                    onChange={(event: TextInputChangeEvent) =>
-                                      updateMetadataRow(index, "value", event.target.value)
-                                    }
-                                  />
-                                </TableCell>
-                                <TableCell>
-                                  <IconButton
-                                    size="small"
-                                    color="error"
-                                    aria-label={`Remove metadata row ${index + 1}`}
-                                    onClick={() => removeMetadataRow(index)}
-                                  >
-                                    <Delete sx={{ fontSize: 16 }} />
-                                  </IconButton>
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </TableContainer>
+                      {metadataRows.map(({ item, index, rowId }) => (
+                        <Stack key={rowId} direction="row" spacing={0.5} alignItems="center">
+                          <TextField
+                            size="small"
+                            value={item.key}
+                            placeholder="key"
+                            inputProps={{ "aria-label": `Metadata key ${index + 1}` }}
+                            onChange={(event: TextInputChangeEvent) =>
+                              updateMetadataRow(index, "key", event.target.value)
+                            }
+                            sx={{ width: "34%", minWidth: 150 }}
+                          />
+                          <TextField
+                            size="small"
+                            value={item.value}
+                            placeholder="value"
+                            inputProps={{ "aria-label": `Metadata value ${index + 1}` }}
+                            onChange={(event: TextInputChangeEvent) =>
+                              updateMetadataRow(index, "value", event.target.value)
+                            }
+                            sx={{ flex: 1, minWidth: 180 }}
+                          />
+                          <IconButton
+                            size="small"
+                            aria-label={`Remove metadata row ${index + 1}`}
+                            onClick={() => handleRemoveMetadataRow(index)}
+                            sx={{ opacity: 0.62, "&:hover": { opacity: 1 } }}
+                          >
+                            <Delete sx={{ fontSize: 15 }} />
+                          </IconButton>
+                        </Stack>
+                      ))}
                     </Stack>
                   ))}
                 {requestTab === "auth" &&
@@ -1386,27 +2080,17 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                       </Stack>
                     </Stack>
                   ) : (
-                    <Stack spacing={1}>
-                      <Stack spacing={0.25}>
-                        <Typography variant="subtitle1">Authorization</Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          The value is stored as Authorization metadata and can still be inspected from the Metadata or
-                          Headers tab.
-                        </Typography>
-                      </Stack>
+                    <Stack spacing={0.8} sx={{ maxWidth: 720 }}>
+                      <Typography variant="caption" color="text.secondary">
+                        Authorization
+                      </Typography>
                       <TextField
                         size="small"
                         fullWidth
-                        label="Authorization"
                         type="password"
                         value={authorizationValue}
                         onChange={(event: TextInputChangeEvent) => setAuthorizationMetadata(event.target.value)}
-                        placeholder="Bearer token"
-                        helperText={
-                          activeIsWebSocket
-                            ? "Sent during the WebSocket handshake when supported by the runtime."
-                            : "Sent as gRPC authorization metadata."
-                        }
+                        placeholder="Bearer {{access_token}}"
                       />
                     </Stack>
                   ))}
@@ -1439,89 +2123,23 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                       />
                     </Stack>
                   ) : (
-                    <Stack spacing={1}>
-                      <Stack direction={{ xs: "column", md: "row" }} spacing={1}>
-                        <Paper variant="outlined" sx={{ p: 1, flex: 1, minWidth: 0 }}>
-                          <Typography variant="caption" color="text.secondary">
-                            Schema
-                          </Typography>
-                          <Typography
-                            variant="subtitle1"
-                            sx={{ fontSize: 13 }}
-                            noWrap
-                            title={activeCollectionRequest?.grpc?.libraryId ?? "Proto schema"}
-                          >
-                            {activeCollectionRequest?.grpc?.libraryId ?? "Proto schema"}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            Revision {activeCollectionRequest?.grpc?.versionId ?? "—"}
-                          </Typography>
-                        </Paper>
-                        <Paper variant="outlined" sx={{ p: 1, flex: 1, minWidth: 0 }}>
-                          <Stack direction="row" spacing={0.75} alignItems="center">
-                            <Box sx={{ minWidth: 0, flex: 1 }}>
-                              <Typography variant="caption" color="text.secondary">
-                                Method
-                              </Typography>
-                              <Typography
-                                variant="subtitle1"
-                                sx={{ fontSize: 13 }}
-                                noWrap
-                                title={
-                                  selectedMethod?.methodName ??
-                                  activeCollectionRequest?.grpc?.methodFullName?.split("/").at(-1) ??
-                                  "Method"
-                                }
-                              >
-                                {selectedMethod?.methodName ??
-                                  activeCollectionRequest?.grpc?.methodFullName?.split("/").at(-1) ??
-                                  "Method"}
-                              </Typography>
-                              {selectedMethod ? (
-                                <Typography variant="caption" color="text.secondary">
-                                  {methodTypeLabel(selectedMethod)}
-                                </Typography>
-                              ) : null}
-                            </Box>
-                            {!selectedMethod ? (
-                              <MethodStatusIndicator
-                                tone="error"
-                                title="Method unavailable"
-                                detail="The selected Proto revision could not resolve this request method. Change the schema, revision, or method binding."
-                                context={activeCollectionRequest?.grpc?.methodFullName}
-                              />
-                            ) : null}
-                          </Stack>
-                        </Paper>
-                      </Stack>
-                      <Paper variant="outlined" sx={{ p: 1 }}>
+                    <Stack spacing={1.2} sx={{ maxWidth: 920 }}>
+                      <Stack spacing={0.2}>
+                        <Typography variant="subtitle1">{requestSchemaLabel}</Typography>
                         <Typography variant="caption" color="text.secondary">
-                          Full name
-                        </Typography>
-                        <Typography
-                          variant="body2"
-                          sx={{ fontFamily: "monospace", fontSize: 11.5, wordBreak: "break-all", mt: 0.3 }}
-                        >
                           {selectedMethod
-                            ? `${selectedMethod.serviceName}/${selectedMethod.methodName}`
-                            : (activeCollectionRequest?.grpc?.methodFullName ?? "—")}
+                            ? `${selectedMethod.serviceName} · ${selectedMethod.methodName} · ${methodTypeLabel(selectedMethod)}`
+                            : (activeCollectionRequest?.grpc?.methodFullName ?? "Method unavailable")}
                         </Typography>
-                        <Stack direction="row" spacing={0.7} sx={{ mt: 1 }}>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            onClick={() => {
-                              setSideSection("proto-schemas");
-                              setSidebarOpen(true);
-                            }}
-                          >
-                            Schema
-                          </Button>
-                          <Button size="small" variant="text" onClick={() => setRequestTab("body")}>
-                            Body
-                          </Button>
-                        </Stack>
-                      </Paper>
+                      </Stack>
+                      {!selectedMethod ? (
+                        <MethodStatusIndicator
+                          tone="error"
+                          title="Method unavailable"
+                          detail="The selected Proto revision could not resolve this request method. Change the schema, revision, or method binding."
+                          context={activeCollectionRequest?.grpc?.methodFullName}
+                        />
+                      ) : null}
                       <FeatureSchemaTable
                         title="Request"
                         typeName={selectedMethod?.requestType}
@@ -1532,6 +2150,17 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                         typeName={selectedMethod?.responseType}
                         fields={responseFields}
                       />
+                      <Button
+                        size="small"
+                        variant="text"
+                        sx={{ alignSelf: "flex-start" }}
+                        onClick={() => {
+                          setSideSection("proto-schemas");
+                          setSidebarOpen(true);
+                        }}
+                      >
+                        Open in Schemas
+                      </Button>
                     </Stack>
                   ))}
                 {requestTab === "mock" &&
@@ -1671,13 +2300,17 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                                 </Box>
                               </Stack>
 
-                              {activeRequestMockContext.state === "available" && !activeRequestMockContext.attached ? (
+                              {(activeRequestMockContext.state === "available" ||
+                                activeRequestMockContext.state === "missing") &&
+                              !activeRequestMockContext.attached ? (
                                 <Alert severity="info" variant="outlined">
-                                  This method is not attached to gRPC Mock. Configure its Proto in the Mock workspace.
+                                  This method is not attached yet. Enabling the mock, selecting a scenario, or adding a
+                                  scenario here will attach this request's pinned Proto revision automatically.
                                 </Alert>
                               ) : null}
 
-                              {activeRequestMockContext.state === "available" ? (
+                              {activeRequestMockContext.state === "available" ||
+                              activeRequestMockContext.state === "missing" ? (
                                 <Paper variant="outlined" sx={{ p: 1.2, bgcolor: "action.hover" }}>
                                   <Stack spacing={1}>
                                     <Box>
@@ -1685,57 +2318,31 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                                         {uiCopy.sections.scenario}
                                       </Typography>
                                       <Typography variant="caption" color="text.secondary">
-                                        This request only selects a scenario. Configure and start mocking from the Mock
-                                        workspace.
+                                        Uses the same scenario controls and settings flow as Workspace Mock.
                                       </Typography>
                                     </Box>
-                                    <Stack
-                                      direction={{ xs: "column", sm: "row" }}
-                                      spacing={0.8}
-                                      alignItems={{ sm: "center" }}
-                                    >
-                                      <FormControl size="small" sx={{ flex: 1, minWidth: 220 }}>
-                                        <Select
-                                          value={
-                                            activeRequestMockContext.selectedScenario?.id ??
-                                            activeRequestMockContext.scenarios[0]?.id ??
-                                            ""
-                                          }
-                                          inputProps={{ "aria-label": "Active gRPC mock scenario" }}
-                                          onChange={(event: SelectInputChangeEvent) =>
-                                            selectActiveRequestScenario(String(event.target.value))
-                                          }
-                                        >
-                                          {activeRequestMockContext.scenarios.map((scenario: MockScenario) => (
-                                            <MenuItem key={scenario.id} value={scenario.id}>
-                                              {mockScenarioDisplayName(scenario, activeRequestMockContext.method)}
-                                            </MenuItem>
-                                          ))}
-                                        </Select>
-                                      </FormControl>
-                                      <Chip
-                                        size="small"
-                                        color={activeRequestMockContext.enabled ? "success" : "warning"}
-                                        variant="outlined"
-                                        label={
-                                          activeRequestMockContext.enabled
-                                            ? uiCopy.status.active
-                                            : uiCopy.status.inactive
-                                        }
+                                    {activeRequestMockContext.scenarios.length > 0 ? (
+                                      <GrpcMockScenarioControls
+                                        scenarios={activeRequestMockContext.scenarios}
+                                        selectedScenarioId={activeRequestMockContext.selectedScenario?.id ?? ""}
+                                        enabled={activeRequestMockContext.enabled}
+                                        onEnabledChange={setActiveRequestMockEnabled}
+                                        onScenarioSelect={selectActiveRequestScenario}
+                                        onOpenSettings={setRequestMockSettingsAnchor}
                                       />
-                                    </Stack>
-                                    <Typography variant="caption" color="text.secondary">
-                                      {activeRequestMockContext.selectedScenario?.stream?.loop
-                                        ? "Loop enabled."
-                                        : "Runs once per match."}
-                                    </Typography>
+                                    ) : (
+                                      <Stack direction="row" spacing={0.7} alignItems="center">
+                                        <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
+                                          No scenario for this method yet.
+                                        </Typography>
+                                        <Button size="small" variant="outlined" onClick={addActiveRequestMockScenario}>
+                                          Add scenario
+                                        </Button>
+                                      </Stack>
+                                    )}
                                   </Stack>
                                 </Paper>
-                              ) : (
-                                <Alert severity="info" variant="outlined">
-                                  No scenario for this method.
-                                </Alert>
-                              )}
+                              ) : null}
                               <Stack direction="row" spacing={0.7} flexWrap="wrap" useFlexGap>
                                 <Button size="small" variant="outlined" onClick={openActiveRequestMockWorkspace}>
                                   Configure in workspace
@@ -1760,60 +2367,68 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                   />
                 )}
                 {requestTab === "more" && (
-                  <Stack spacing={1.2}>
-                    <Stack spacing={0.25}>
-                      <Typography variant="subtitle1">Additional tools</Typography>
+                  <Stack spacing={1.2} sx={{ maxWidth: 920 }}>
+                    <Stack spacing={0.2}>
+                      <Typography variant="subtitle1">Request settings</Typography>
                       <Typography variant="caption" color="text.secondary">
-                        Advanced tools stay available without competing with the core request workflow.
+                        Transport details and less-frequent tools live here so Message, Auth, and Metadata stay focused.
                       </Typography>
                     </Stack>
-                    <Stack direction={{ xs: "column", md: "row" }} spacing={1}>
-                      {!activeIsRest && (
-                        <Paper variant="outlined" sx={{ p: 1.2, flex: 1 }}>
-                          <Typography variant="subtitle1">Benchmark</Typography>
-                          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-                            Measure request duration and streaming throughput for the active operation.
-                          </Typography>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            sx={{ mt: 1 }}
-                            onClick={() => setRequestTab("benchmark")}
-                          >
-                            Open benchmark
-                          </Button>
-                        </Paper>
-                      )}
-                      {!activeIsRest && !activeIsWebSocket && (
-                        <Paper variant="outlined" sx={{ p: 1.2, flex: 1 }}>
-                          <Typography variant="subtitle1">Definition</Typography>
-                          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-                            Inspect the selected Proto service, method, request, and response types.
-                          </Typography>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            sx={{ mt: 1 }}
-                            onClick={() => setRequestTab("schema")}
-                          >
-                            Open definition
-                          </Button>
-                        </Paper>
-                      )}
-                      <Paper variant="outlined" sx={{ p: 1.2, flex: 1 }}>
-                        <Typography variant="subtitle1">Technical details</Typography>
-                        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-                          Inspect the resolved endpoint, transport, request identity, and schema binding.
-                        </Typography>
-                        <Stack spacing={0.35} sx={{ mt: 1 }}>
-                          <Typography variant="caption" sx={{ fontFamily: "monospace", wordBreak: "break-all" }}>
+
+                    <Stack spacing={0} sx={{ borderTop: "1px solid", borderColor: "divider" }}>
+                      <Stack
+                        direction={{ xs: "column", md: "row" }}
+                        spacing={1}
+                        alignItems={{ xs: "stretch", md: "center" }}
+                        sx={{ py: 1, borderBottom: "1px solid", borderColor: "divider" }}
+                      >
+                        <Box sx={{ width: { md: 180 }, flexShrink: 0 }}>
+                          <Typography variant="body2" fontWeight={500}>Environment</Typography>
+                          <Typography variant="caption" color="text.secondary">Active request environment</Typography>
+                        </Box>
+                        <Typography variant="body2">{featureEnvironmentLabel(environments, activeEnvironmentKey)}</Typography>
+                      </Stack>
+                      <Stack
+                        direction={{ xs: "column", md: "row" }}
+                        spacing={1}
+                        alignItems={{ xs: "stretch", md: "center" }}
+                        sx={{ py: 1, borderBottom: "1px solid", borderColor: "divider" }}
+                      >
+                        <Box sx={{ width: { md: 180 }, flexShrink: 0 }}>
+                          <Typography variant="body2" fontWeight={500}>Transport</Typography>
+                          <Typography variant="caption" color="text.secondary">Resolved transport and target</Typography>
+                        </Box>
+                        <Stack spacing={0.2} sx={{ minWidth: 0 }}>
+                          <Typography variant="body2">{activeTransportMode}</Typography>
+                          <Typography variant="caption" color="text.secondary" sx={{ fontFamily: "monospace", wordBreak: "break-all" }}>
                             {previewUrl}
                           </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            Transport: {activeTransportMode}
-                          </Typography>
                         </Stack>
-                      </Paper>
+                      </Stack>
+                    </Stack>
+
+                    <Stack spacing={0.65}>
+                      <Typography variant="caption" color="text.secondary" sx={{ textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                        Tools
+                      </Typography>
+                      <Stack direction="row" spacing={0.7} flexWrap="wrap" useFlexGap>
+                        <Button size="small" variant="outlined" onClick={() => setRequestTab("examples")}>
+                          Examples{currentExamples.length ? ` (${currentExamples.length})` : ""}
+                        </Button>
+                        <Button size="small" variant="outlined" onClick={() => setRequestTab("docs")}>
+                          Documentation
+                        </Button>
+                        {!activeIsRest ? (
+                          <Button size="small" variant="outlined" onClick={() => setRequestTab("benchmark")}>
+                            Benchmark
+                          </Button>
+                        ) : null}
+                        {!activeIsRest && !activeIsWebSocket ? (
+                          <Button size="small" variant="outlined" onClick={() => setRequestTab("schema")}>
+                            Open schema
+                          </Button>
+                        ) : null}
+                      </Stack>
                     </Stack>
                   </Stack>
                 )}
@@ -1862,35 +2477,42 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                   />
                 )}
               </Box>
-            </Paper>
-
+          </Paper>
+        )}
+            {sideSection === "collections" ? (
+              <>
             <Box
               role="separator"
               tabIndex={0}
-              aria-orientation={requestResponseLayout === "horizontal" ? "vertical" : "horizontal"}
+              aria-orientation={effectiveRequestResponseLayout === "horizontal" ? "vertical" : "horizontal"}
               aria-label="Resize request and response panels"
-              aria-valuenow={requestResponseLayout === "horizontal" ? responseWidth : responseHeight}
-              aria-valuetext={`${requestResponseLayout === "horizontal" ? responseWidth : responseHeight} pixels`}
+              aria-valuenow={effectiveRequestResponseLayout === "horizontal" ? responseWidth : responseHeight}
+              aria-valuetext={`${effectiveRequestResponseLayout === "horizontal" ? responseWidth : responseHeight} pixels`}
               onMouseDown={beginResponseResize}
               onKeyDown={resizeResponseByKeyboard}
               sx={{
-                width: requestResponseLayout === "horizontal" ? 2 : "auto",
-                height: requestResponseLayout === "horizontal" ? "auto" : 2,
+                width: effectiveRequestResponseLayout === "horizontal" ? 8 : "100%",
+                height: effectiveRequestResponseLayout === "horizontal" ? "100%" : 8,
                 flexShrink: 0,
-                cursor: requestResponseLayout === "horizontal" ? "col-resize" : "row-resize",
-                display: responseFullscreen ? "none" : "flex",
+                cursor: effectiveRequestResponseLayout === "horizontal" ? "col-resize" : "row-resize",
+                display: responseFullscreen || responseCollapsed ? "none" : "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 bgcolor: "transparent",
                 opacity: 1,
+                outline: "none",
                 "&::after": {
                   content: '""',
-                  width: requestResponseLayout === "horizontal" ? 1 : 34,
-                  height: requestResponseLayout === "horizontal" ? 34 : 1,
-                  borderRadius: 999,
-                  bgcolor: "divider",
+                  width: effectiveRequestResponseLayout === "horizontal" ? 1 : "100%",
+                  height: effectiveRequestResponseLayout === "horizontal" ? "100%" : 1,
+                  bgcolor: "transparent",
                 },
-                "&:hover::after, &:focus-visible::after": { bgcolor: "primary.main" },
+                "&:hover::after, &:focus-visible::after": {
+                  bgcolor: "var(--border-strong)",
+                },
+                "&:active::after": {
+                  bgcolor: "primary.main",
+                },
               }}
             />
 
@@ -1917,11 +2539,31 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                   aria-label={responseFullscreen ? "Full screen response" : undefined}
                   sx={{
                     ...panelSx,
-                    flex: requestResponseLayout === "horizontal" ? `0 0 ${responseWidth}px` : `0 0 ${responseHeight}px`,
-                    minHeight: requestResponseLayout === "horizontal" ? 0 : minResponseHeight,
-                    minWidth: requestResponseLayout === "horizontal" ? minResponseWidth : 0,
+                    flex:
+                      effectiveRequestResponseLayout === "horizontal"
+                        ? responseCollapsed
+                          ? "0 0 30px"
+                          : `0 0 ${responseWidth}px`
+                        : responseCollapsed
+                          ? "0 0 30px"
+                          : `0 0 ${responseHeight}px`,
+                    minHeight:
+                      effectiveRequestResponseLayout === "horizontal" ? 0 : responseCollapsed ? 30 : minResponseHeight,
+                    minWidth:
+                      effectiveRequestResponseLayout === "horizontal" ? (responseCollapsed ? 30 : minResponseWidth) : 0,
+                    maxWidth:
+                      effectiveRequestResponseLayout === "horizontal" && !responseFullscreen
+                        ? "calc(100% - 360px)"
+                        : undefined,
                     display: "flex",
                     flexDirection: "column",
+                    borderRadius: 0,
+                    borderLeft: 0,
+                    borderRight: 0,
+                    borderBottom: 0,
+                    borderTop: 0,
+                    boxShadow: "none",
+                    bgcolor: "background.paper",
                     ...(responseFullscreen
                       ? {
                           position: "absolute",
@@ -1935,7 +2577,9 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                           minWidth: 0,
                           minHeight: 0,
                           flex: "none",
-                          borderColor: "rgba(96,165,250,0.45)",
+                          border: "1px solid",
+                          borderRadius: 1,
+                          borderColor: "primary.main",
                           boxShadow: "0 28px 90px rgba(0,0,0,0.5)",
                         }
                       : {}),
@@ -1955,19 +2599,25 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                     onExport={exportResponseStable}
                     onSaveDocs={() => {
                       saveCurrentResultForDocsStable();
-                      setRequestTab("docs");
+                      setRequestUtilityDialog("docs");
                     }}
                     onClearResponse={clearActiveResponseStable}
                     fullscreen={responseFullscreen}
                     onToggleFullscreen={() => setResponseFullscreen((current) => !current)}
+                    collapsed={responseCollapsed}
+                    onToggleCollapsed={() => setResponseCollapsed((current) => !current)}
+                    layout={effectiveRequestResponseLayout}
                   />
-                  <ResponseWorkbenchTabs
-                    value={responseTab}
-                    onChange={handleResponseTabChange}
-                    kind={activeIsRest ? "rest" : activeIsWebSocket ? "websocket" : "grpc"}
-                    streaming={Boolean(selectedMethod?.responseStream || activeIsWebSocket)}
-                  />
-                  <Box
+                  {!responseCollapsed ? (
+                    <ResponseWorkbenchTabs
+                      value={responseTab}
+                      onChange={handleResponseTabChange}
+                      kind={activeIsRest ? "rest" : activeIsWebSocket ? "websocket" : "grpc"}
+                      streaming={Boolean(selectedMethod?.responseStream || activeIsWebSocket)}
+                    />
+                  ) : null}
+                  {!responseCollapsed ? (
+                    <Box
                     ref={responseBodyRef}
                     role="tabpanel"
                     id={`response-viewer-panel-${responseTab}`}
@@ -1986,7 +2636,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                       flexDirection: responseTab === "latest" ? "column" : undefined,
                     }}
                   >
-                    {responseTab === "messages" && (
+                    {responseTab === "messages" && (events.length > 0 || Boolean(lastResult)) && (
                       <FeatureMessageTable
                         empty={
                           activeIsWebSocket
@@ -2074,6 +2724,33 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                         fullHeight={responseFullscreen}
                       />
                     )}
+                    {responseTab === "timeline" && (
+                      <Stack spacing={0} sx={{ minWidth: 0 }}>
+                        {events.map((event: any, index: number) => (
+                          <Stack
+                            key={event.id ?? `${event.timestamp}-${index}`}
+                            direction="row"
+                            spacing={1}
+                            alignItems="baseline"
+                            sx={{ minHeight: 24, py: 0.35, borderBottom: "1px solid", borderColor: "divider" }}
+                          >
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                              sx={{ width: 92, flexShrink: 0, fontFamily: "monospace" }}
+                            >
+                              {event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : ""}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary" sx={{ width: 62, flexShrink: 0 }}>
+                              {event.kind}
+                            </Typography>
+                            <Typography variant="body2" sx={{ minWidth: 0, wordBreak: "break-word" }}>
+                              {event.title}
+                            </Typography>
+                          </Stack>
+                        ))}
+                      </Stack>
+                    )}
                     {responseTab === "trailers" && (
                       <FeatureJsonBlock
                         value={events
@@ -2095,13 +2772,251 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                           No test assertions have been evaluated for this response.
                         </Alert>
                       ))}
-                  </Box>
+                    </Box>
+                  ) : null}
                 </Paper>
               </>,
             )}
-          </>
-        )}
-      </Stack>
+              </>
+            ) : null}
+          </Stack>
+
+      <Dialog
+        open={Boolean(requestUtilityDialog)}
+        onClose={() => setRequestUtilityDialog(null)}
+        fullWidth
+        maxWidth={requestUtilityDialog === "settings" ? "sm" : "lg"}
+      >
+        <DialogTitle>
+          {requestUtilityDialog === "examples"
+            ? "Examples"
+            : requestUtilityDialog === "docs"
+              ? "Documentation"
+              : requestUtilityDialog === "benchmark"
+                ? "Benchmark"
+                : "Request settings"}
+        </DialogTitle>
+        <DialogContent sx={{ pt: 1, maxHeight: "76vh", overflow: "auto" }}>
+          {requestUtilityDialog === "examples" ? (
+            <ExamplesPanel
+              examples={currentExamples}
+              selectedMethod={selectedMethod}
+              canSave={Boolean(selectedMethod || activeCollectionRequest)}
+              onSave={saveCurrentExample}
+              onImport={() => exampleInputRef.current?.click()}
+              onExport={exportCurrentMethodExamples}
+              onLoad={loadExample}
+              onRun={(example: SavedExample) => void runExample(example)}
+              onEdit={(example: SavedExample, tab?: ExampleEditorTab) => openExampleEditor(example, tab)}
+              onDuplicate={duplicateExample}
+              onDelete={(id: string) =>
+                setExamples((current: SavedExample[]) => current.filter((item) => item.id !== id))
+              }
+            />
+          ) : requestUtilityDialog === "docs" ? (
+            <UnifiedDocumentationPanel
+              page={activeRequestDocumentationPage}
+              source={activeDocumentationSource}
+              settings={documentation.settings}
+              onSaveSource={saveDocumentationSource}
+              onOpenRequest={() => setRequestUtilityDialog(null)}
+              onPublish={() => void publishDocumentationPage(activeRequestDocumentationPage?.id ?? "")}
+              onEditExample={(id: string, tab?: ExampleEditorTab) => openExampleEditor(id, tab)}
+              defaultTab="content"
+            />
+          ) : requestUtilityDialog === "benchmark" ? (
+            activeIsWebSocket ? (
+              <WebSocketBenchmarkPanel
+                request={activeCollectionRequest}
+                iterations={wsBenchmarkIterations}
+                onIterationsChange={setWsBenchmarkIterations}
+                running={wsBenchmarkRunning}
+                results={wsBenchmarkResults}
+                lastResult={lastResult}
+                onRun={() => void runWebSocketBenchmark()}
+                onStop={stopWebSocketBenchmark}
+                onExport={exportWebSocketBenchmark}
+              />
+            ) : (
+              <FeatureBenchmarkPanel
+                selectedMethod={selectedMethod}
+                iterations={benchmark.iterations}
+                onIterationsChange={benchmark.setIterations}
+                periodMs={benchmark.periodMs}
+                onPeriodMsChange={benchmark.setPeriodMs}
+                running={benchmark.running}
+                results={benchmark.results}
+                onRun={() => void benchmark.runBenchmark()}
+                onStop={benchmark.stopBenchmark}
+                onExportBenchmark={exportCurrentBenchmark}
+              />
+            )
+          ) : requestUtilityDialog === "settings" ? (
+            <Stack spacing={0}>
+              <Stack direction="row" spacing={1.5} sx={{ py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
+                <Typography variant="body2" color="text.secondary" sx={{ width: 120, flexShrink: 0 }}>Environment</Typography>
+                <Typography variant="body2">{featureEnvironmentLabel(environments, activeEnvironmentKey)}</Typography>
+              </Stack>
+              <Stack direction="row" spacing={1.5} sx={{ py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
+                <Typography variant="body2" color="text.secondary" sx={{ width: 120, flexShrink: 0 }}>Transport</Typography>
+                <Typography variant="body2">{activeTransportMode}</Typography>
+              </Stack>
+              <Stack direction="row" spacing={1.5} sx={{ py: 1 }}>
+                <Typography variant="body2" color="text.secondary" sx={{ width: 120, flexShrink: 0 }}>Endpoint</Typography>
+                <Typography variant="body2" sx={{ fontFamily: "monospace", wordBreak: "break-all" }}>{previewUrl}</Typography>
+              </Stack>
+            </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRequestUtilityDialog(null)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Menu
+        anchorEl={requestMockMenuAnchor}
+        open={Boolean(requestMockMenuAnchor)}
+        onClose={() => setRequestMockMenuAnchor(null)}
+      >
+        {activeRequestMockContext.state === "available"
+          ? activeRequestMockContext.scenarios.map((scenario: MockScenario) => (
+              <MenuItem
+                key={scenario.id}
+                selected={activeRequestMockContext.selectedScenario?.id === scenario.id}
+                onClick={() => {
+                  setRequestMockMenuAnchor(null);
+                  selectActiveRequestScenario(scenario.id);
+                }}
+              >
+                {selectedMethod ? mockScenarioDisplayName(scenario, selectedMethod) : scenario.id}
+              </MenuItem>
+            ))
+          : null}
+      </Menu>
+
+      <Menu
+        anchorEl={requestToolsMenuAnchor}
+        open={Boolean(requestToolsMenuAnchor)}
+        onClose={() => setRequestToolsMenuAnchor(null)}
+      >
+        <MenuItem
+          onClick={() => {
+            setRequestToolsMenuAnchor(null);
+            setRequestUtilityDialog("examples");
+          }}
+        >
+          Examples{currentExamples.length ? ` (${currentExamples.length})` : ""}
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setRequestToolsMenuAnchor(null);
+            setRequestUtilityDialog("docs");
+          }}
+        >
+          Documentation
+        </MenuItem>
+        {!activeIsRest ? (
+          <MenuItem
+            onClick={() => {
+              setRequestToolsMenuAnchor(null);
+              setRequestUtilityDialog("benchmark");
+            }}
+          >
+            Benchmark
+          </MenuItem>
+        ) : null}
+        <Divider />
+        <MenuItem
+          onClick={() => {
+            setRequestToolsMenuAnchor(null);
+            setRequestUtilityDialog("settings");
+          }}
+        >
+          Request settings
+        </MenuItem>
+      </Menu>
+
+      <GrpcMockScenarioActionsMenu
+        anchor={requestMockSettingsAnchor}
+        scenarioId={
+          activeRequestMockContext.state === "available" ? activeRequestMockContext.selectedScenario?.id ?? "" : ""
+        }
+        enabled={
+          activeRequestMockContext.state === "available" || activeRequestMockContext.state === "missing"
+            ? activeRequestMockContext.enabled
+            : false
+        }
+        onClose={() => setRequestMockSettingsAnchor(null)}
+        onEditSource={() => {
+          if (activeRequestMockContext.state === "available" && activeRequestMockContext.selectedScenario) {
+            openActiveRequestScenarioEditor(activeRequestMockContext.selectedScenario.id);
+          }
+        }}
+        onManageScenarios={() => setRequestMockManagerOpen(true)}
+        onAddScenario={addActiveRequestMockScenario}
+        onToggleEnabled={() => {
+          if (activeRequestMockContext.state === "available" || activeRequestMockContext.state === "missing") {
+            setActiveRequestMockEnabled(!activeRequestMockContext.enabled);
+          }
+        }}
+        onDuplicateActive={() => {
+          if (activeRequestMockContext.state === "available" && activeRequestMockContext.selectedScenario) {
+            duplicateActiveRequestMockScenario(activeRequestMockContext.selectedScenario.id);
+          }
+        }}
+        onDeleteActive={() => {
+          if (activeRequestMockContext.state === "available" && activeRequestMockContext.selectedScenario) {
+            deleteActiveRequestMockScenario(activeRequestMockContext.selectedScenario.id);
+          }
+        }}
+        showAddScenario
+      />
+
+      <GrpcMockScenarioManagerDialog
+        open={requestMockManagerOpen}
+        method={
+          activeRequestMockContext.state === "available" || activeRequestMockContext.state === "missing"
+            ? activeRequestMockContext.method
+            : null
+        }
+        scenarios={activeRequestMockRows.map((row) => row.scenario)}
+        activeScenarioId={
+          activeRequestMockContext.state === "available" ? activeRequestMockContext.selectedScenario?.id ?? "" : ""
+        }
+        enabled={
+          activeRequestMockContext.state === "available" || activeRequestMockContext.state === "missing"
+            ? activeRequestMockContext.enabled
+            : false
+        }
+        onClose={() => setRequestMockManagerOpen(false)}
+        onSelect={(scenarioId) => {
+          selectActiveRequestScenario(scenarioId);
+          setActiveRequestMockEnabled(true);
+        }}
+        onEdit={openActiveRequestScenarioEditor}
+        onDuplicate={duplicateActiveRequestMockScenario}
+        onDelete={(scenarioId) => {
+          // Tear down the modal/focus trap before opening the native confirm.
+          // Electron can otherwise leave the native scenario <select> unable to
+          // receive pointer input after the confirm closes.
+          setRequestMockManagerOpen(false);
+          window.setTimeout(() => {
+            deleteActiveRequestMockScenario(scenarioId);
+          }, 0);
+        }}
+        onAdd={addActiveRequestMockScenario}
+      />
+
+      <GrpcScenarioSourceDialog
+        open={Boolean(activeRequestMockEditorRow)}
+        row={activeRequestMockEditorRow}
+        mockServer={mockServer}
+        onClose={closeActiveRequestScenarioEditor}
+        onSaveScenario={saveActiveRequestMockScenario}
+        onDirtyChange={setRequestMockEditorDirty}
+        onFetchFile={async () => (await fetchMockScenarioFilesFromWorkspace?.()) ?? null}
+        onOpenFolder={(relativePath) => openMockScenarioFolder?.(relativePath)}
+      />
 
       <ExampleEditorDialog
         open={Boolean(exampleEditorState && editingExample)}

@@ -26,12 +26,12 @@ export function WorkbenchShell({
           bgcolor: "background.default",
           color: "text.primary",
           overflow: "hidden",
-          "--workbench-page-padding-x": comfortable ? "14px" : "9px",
-          "--workbench-page-padding-y": comfortable ? "12px" : "8px",
-          "--workbench-panel-gap": comfortable ? "10px" : "6px",
-          "--workbench-section-padding": comfortable ? "16px" : "11px",
-          "--workbench-card-gap": comfortable ? "12px" : "8px",
-          "--workbench-sidebar-row-height": comfortable ? "38px" : "32px",
+          "--workbench-page-padding-x": comfortable ? "8px" : "0px",
+          "--workbench-page-padding-y": comfortable ? "8px" : "0px",
+          "--workbench-panel-gap": comfortable ? "6px" : "0px",
+          "--workbench-section-padding": comfortable ? "16px" : "12px",
+          "--workbench-card-gap": comfortable ? "10px" : "8px",
+          "--workbench-sidebar-row-height": comfortable ? "28px" : "24px",
         }}
       >
         {children}

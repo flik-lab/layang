@@ -35,7 +35,7 @@ This evaluation covers the P0-P5 copy and layout cleanup, gRPC mock scenario sel
 
 ## Recommended release check
 
-Before publishing a desktop release, run `pnpm run check` on the normal development machine and perform one visual smoke pass at 100%, 125%, and 150% app zoom on Windows, plus the supported Linux desktop environment.
+Before publishing a desktop release, run `pnpm run typecheck`, `pnpm lint`, `pnpm test`, and `pnpm run build` on the normal development machine, then perform one visual smoke pass at 100%, 125%, and 150% app zoom on Windows plus the supported Linux desktop environment.
 
 ## Typography normalization
 

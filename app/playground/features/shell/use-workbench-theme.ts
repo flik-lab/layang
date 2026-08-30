@@ -26,7 +26,7 @@ export function useWorkbenchTheme(themeMode: ColorMode) {
           selected: modeColors.selected,
         },
       },
-      shape: { borderRadius: 8 },
+      shape: { borderRadius: 4 },
     });
   }, [themeMode]);
 }

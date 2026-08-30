@@ -11,7 +11,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
   ref,
 ) {
   return (
-    <span data-slot="select-wrapper" className={cn("relative inline-flex w-full", containerClassName)}>
+    <span data-slot="select-wrapper" className={cn("relative m-[2px] inline-flex w-[calc(100%_-_4px)]", containerClassName)}>
       <select
         ref={ref}
         data-slot="select"

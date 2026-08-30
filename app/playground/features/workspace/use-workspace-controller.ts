@@ -114,19 +114,25 @@ export function useWorkspaceController({
       const workspacePreference = window.electronWorkspace?.getPreference
         ? await window.electronWorkspace.getPreference().catch(() => null)
         : null;
+      const startupWorkspacePath =
+        workspacePreference?.ok && workspacePreference.hasCustomPreference && workspacePreference.directoryPath
+          ? workspacePreference.directoryPath
+          : storedWorkspacePath;
+      if (startupWorkspacePath !== storedWorkspacePath) setWorkspaceFolderPath(startupWorkspacePath);
 
-      if (storedWorkspacePath && window.electronWorkspace?.openFolder) {
+      if (startupWorkspacePath && window.electronWorkspace?.openFolder) {
         try {
-          const result = await window.electronWorkspace.openFolder(storedWorkspacePath);
+          const result = await window.electronWorkspace.openFolder(startupWorkspacePath);
           if (!cancelled && result.ok && result.bundle) {
             const bundleRecord = result.bundle as { project?: { updatedAt?: string }; updatedAt?: string };
             const folderUpdatedAt = Date.parse(bundleRecord.project?.updatedAt ?? bundleRecord.updatedAt ?? "");
             const cachedUpdatedAt = Date.parse(cachedProject.updatedAt ?? "");
             const localDraftIsNewer =
+              startupWorkspacePath === storedWorkspacePath &&
               Number.isFinite(cachedUpdatedAt) && Number.isFinite(folderUpdatedAt) && cachedUpdatedAt > folderUpdatedAt;
 
             if (localDraftIsNewer) {
-              const nextPath = result.directoryPath ?? storedWorkspacePath;
+              const nextPath = result.directoryPath ?? startupWorkspacePath;
               rememberWorkspaceFolder(nextPath);
               applyProject(cachedProject);
               setHydrated(true);
@@ -135,7 +141,7 @@ export function useWorkspaceController({
 
             const imported = applyWorkspaceBundle(result.bundle);
             if (imported) {
-              const nextPath = result.directoryPath ?? storedWorkspacePath;
+              const nextPath = result.directoryPath ?? startupWorkspacePath;
               rememberWorkspaceFolder(nextPath);
               setHydrated(true);
               return;
@@ -246,6 +252,46 @@ export function useWorkspaceController({
       cancelled = true;
     };
   }, [prefersDark]);
+
+  useEffect(() => {
+    if (!window.electronWorkspace?.onOpenRequest || !window.electronWorkspace?.openFolder) return;
+    let switching = false;
+
+    const unsubscribe = window.electronWorkspace.onOpenRequest(async (directoryPath) => {
+      const nextPath = typeof directoryPath === "string" ? directoryPath.trim() : "";
+      if (!nextPath || switching) return;
+      switching = true;
+      try {
+        const autosave = workspaceAutosaveRef.current;
+        if (autosave.flushPromise) await autosave.flushPromise.catch(() => undefined);
+
+        const result = await window.electronWorkspace?.openFolder?.(nextPath);
+        if (!result?.ok || !result.bundle) {
+          showToast(result?.error || "The requested Layang workspace could not be opened.", "warning");
+          return;
+        }
+        if (!applyWorkspaceBundle(result.bundle)) {
+          showToast("The requested folder does not contain supported Layang workspace data.", "warning");
+          return;
+        }
+
+        const resolvedPath = result.directoryPath || nextPath;
+        setWorkspaceFolderPath(resolvedPath);
+        window.localStorage.setItem(workspaceFolderStorageKey, resolvedPath);
+        await window.electronWorkspace?.setPreference?.(resolvedPath).catch(() => undefined);
+        setWorkspaceSetupOpen(false);
+        externalRevisionRef.current = "";
+        pendingExternalRevisionRef.current = { fingerprint: "", seen: 0 };
+        showToast("Workspace opened from Layang CLI.", "success");
+      } catch (error) {
+        showToast(`Open workspace from CLI failed: ${toErrorMessage(error)}`, "error");
+      } finally {
+        switching = false;
+      }
+    });
+
+    return unsubscribe;
+  }, [applyWorkspaceBundle, showToast]);
 
   useEffect(() => {
     if (!workspaceFolderPath || !window.electronWorkspace?.getRevision || !window.electronWorkspace?.openFolder) return;

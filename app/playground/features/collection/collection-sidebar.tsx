@@ -15,7 +15,6 @@ import {
 import {
   Box,
   Button,
-  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -23,24 +22,23 @@ import {
   FormControl,
   IconButton,
   ListItemButton,
-  ListItemText,
   Menu,
   MenuItem,
   Paper,
   Select,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from "@/components/shadcn/compat";
 import { loadProtoFiles } from "@/lib/proto-loader";
-import { Add, Api, Folder, MoreHoriz, Stream, Terminal } from "@/components/shadcn/icons";
-import { MethodStatusIndicator } from "../../shared/components/method-status-indicator";
+import { Add, Api, Folder, Stream, Terminal, WarningIcon } from "@/components/shadcn/icons";
 import { SearchHighlightedText } from "../../shared/components/search-highlight";
+import { WorkbenchTree, workbenchTreeGroupSx, workbenchTreeMetrics } from "@/components/workbench-ui/tree";
 import type {
   ApiCollection,
   ApiCollectionRequest,
   CollectionFolder,
-  RequestSession,
 } from "../../shared/workbench-types";
 import type { ProtoLibrary } from "../proto-library/proto-library-types";
 import { findProtoRepairCandidates, type ProtoRepairCandidate } from "../proto-library/proto-version-management";
@@ -70,17 +68,30 @@ type FilteredCollection = {
   tree: CollectionTreeNode[];
 };
 
-const labelSx = { fontSize: 12, lineHeight: "16px" } as const;
+const labelSx = { fontSize: 12, lineHeight: "17px" } as const;
 const rowSx = {
-  minHeight: 28,
-  px: 0.55,
-  py: 0.25,
-  borderRadius: 1,
+  minHeight: workbenchTreeMetrics.rowHeight,
+  height: workbenchTreeMetrics.rowHeight,
+  my: "1px",
+  px: "2px",
+  py: 0,
+  borderRadius: "2px",
   "&:hover": { bgcolor: "action.hover" },
 } as const;
-const TREE_BASE_PADDING_PX = 4;
-const TREE_INDENT_PX = 8;
-const MAX_VISUAL_DEPTH = 4;
+
+
+function requestKindColor(label: string): string {
+  const normalized = label.toUpperCase();
+  if (normalized === "RPCU") return "#7aa2f7";
+  if (normalized === "RPCS") return "#69b7ff";
+  if (normalized === "WS") return "#2ac3de";
+  if (normalized === "GET") return "#9ece6a";
+  if (normalized === "POST") return "#e0af68";
+  if (normalized === "PUT") return "#ff9e64";
+  if (normalized === "PATCH") return "#7dcfff";
+  if (normalized === "DELETE") return "#f7768e";
+  return "#8b91aa";
+}
 
 const brokenGrpcReferenceStatuses = new Set([
   "method-signature-changed",
@@ -89,6 +100,19 @@ const brokenGrpcReferenceStatuses = new Set([
   "library-missing",
   "ambiguous-migration",
 ]);
+
+function requestHasBrokenGrpcReference(request: ApiCollectionRequest): boolean {
+  return (
+    request.kind === "grpc" &&
+    Boolean(request.grpc?.status) &&
+    brokenGrpcReferenceStatuses.has(request.grpc?.status ?? "valid")
+  );
+}
+
+function treeNodeHasBrokenGrpcReference(node: CollectionTreeNode): boolean {
+  if (node.type === "request") return requestHasBrokenGrpcReference(node.request);
+  return node.children.some(treeNodeHasBrokenGrpcReference);
+}
 
 function grpcRequestStatusCopy(status: string): { title: string; detail: string; error: boolean; actionable: boolean } {
   switch (status) {
@@ -158,16 +182,15 @@ function grpcRequestStatusCopy(status: string): { title: string; detail: string;
   }
 }
 
-function treeOffset(depth: number): string {
-  return `${TREE_BASE_PADDING_PX + Math.min(depth + 1, MAX_VISUAL_DEPTH) * TREE_INDENT_PX}px`;
-}
 
 const itemButtonSx = {
-  minHeight: 28,
-  borderRadius: 1,
-  mb: "4px",
-  px: 0.45,
-  py: 0.2,
+  minHeight: workbenchTreeMetrics.rowHeight,
+  height: workbenchTreeMetrics.rowHeight,
+  borderRadius: "2px",
+  my: "1px",
+  mb: 0,
+  px: "2px",
+  py: 0,
   gap: "4px",
   "&.Mui-selected": { bgcolor: "action.selected" },
 } as const;
@@ -247,7 +270,6 @@ export function CollectionSidebar({
   protoLibraries,
   filterQuery,
   selectedCollectionRequestId,
-  requestSessions = [],
   onSelectCollectionRequest,
   onAddCollectionRequest,
   onCreateFolder,
@@ -264,7 +286,6 @@ export function CollectionSidebar({
   protoLibraries: ProtoLibrary[];
   filterQuery: string;
   selectedCollectionRequestId?: string;
-  requestSessions?: RequestSession[];
   onSelectCollectionRequest: (collection: ApiCollection, request: ApiCollectionRequest) => void;
   onAddCollectionRequest: (
     collectionId: string,
@@ -282,16 +303,6 @@ export function CollectionSidebar({
   onRepairGrpcRequest: (collectionId: string, requestId: string, candidate: ProtoRepairCandidate) => void;
 }) {
   const filteredCollections = useMemo(() => filterCollections(collections, filterQuery), [collections, filterQuery]);
-  const requestTabState = useMemo(() => {
-    const state = new Map<string, { open: boolean; running: boolean }>();
-    for (const session of requestSessions) {
-      const requestId = session.sourceRequestId ?? (session.requestKind ? session.methodKey : "");
-      if (!requestId) continue;
-      const current = state.get(requestId) ?? { open: false, running: false };
-      state.set(requestId, { open: true, running: current.running || session.running });
-    }
-    return state;
-  }, [requestSessions]);
 
   const grpcMethodPresentation = useMemo(() => {
     const result = new Map<string, "Unary" | "Stream">();
@@ -306,7 +317,7 @@ export function CollectionSidebar({
             );
           }
         } catch {
-          // Invalid or incomplete revisions are surfaced through the request status chip.
+          // Invalid or incomplete revisions are surfaced through the delayed request-row tooltip.
         }
       }
     }
@@ -589,6 +600,7 @@ export function CollectionSidebar({
       const expanded = queryActive || expandedNodeIds.has(`folder:${node.folder.id}`);
       const renaming = renameTarget?.type === "folder" && renameTarget.nodeId === node.folder.id;
       const key = `folder:${node.folder.id}`;
+      const folderHasWarning = node.children.some(treeNodeHasBrokenGrpcReference);
       return (
         <Box key={key} sx={{ position: "relative" }}>
           <Stack
@@ -604,7 +616,7 @@ export function CollectionSidebar({
               }
             }}
             direction="row"
-            spacing={0.35}
+            spacing={0}
             alignItems="center"
             draggable={!renaming}
             onDragStart={(event: ReactDragEvent<HTMLElement>) =>
@@ -638,7 +650,6 @@ export function CollectionSidebar({
             }}
             sx={{
               ...rowSx,
-              ml: treeOffset(depth),
               "&:hover .tree-row-action, &:focus-within .tree-row-action": { opacity: 1, pointerEvents: "auto" },
               outlineWidth: dropKey === key ? 1 : 0,
               outlineStyle: "solid",
@@ -650,7 +661,7 @@ export function CollectionSidebar({
               aria-label={`${expanded ? "Collapse" : "Expand"} ${node.folder.name}`}
               aria-expanded={expanded}
               onClick={() => toggleExpanded(`folder:${node.folder.id}`)}
-              sx={{ p: 0.05, fontSize: 12, lineHeight: 1 }}
+              sx={{ width: 16, minWidth: 16, height: 20, p: 0, fontSize: 11, lineHeight: 1 }}
             >
               <Box
                 component="span"
@@ -664,6 +675,17 @@ export function CollectionSidebar({
                 ›
               </Box>
             </IconButton>
+            {folderHasWarning ? (
+              <Tooltip title="Folder contains a gRPC request that needs attention" placement="right" enterDelay={500}>
+                <Box
+                  component="span"
+                  aria-label="Folder contains a request warning"
+                  sx={{ display: "inline-flex", alignItems: "center", flexShrink: 0, color: "warning.main" }}
+                >
+                  <WarningIcon color="warning" sx={{ fontSize: 13 }} />
+                </Box>
+              </Tooltip>
+            ) : null}
             {renaming ? (
               <TextField
                 autoFocus
@@ -682,29 +704,34 @@ export function CollectionSidebar({
                 noWrap
                 title={node.folder.name}
                 onDoubleClick={() => beginRename({ type: "folder", collection, folder: node.folder })}
-                sx={{ ...labelSx, flex: 1, minWidth: 0, fontWeight: 500 }}
+                sx={{ ...labelSx, flex: 1, minWidth: 0, fontWeight: 600 }}
               >
                 <SearchHighlightedText text={node.folder.name} query={filterQuery} />
               </Typography>
             )}
             <IconButton
+              className="tree-row-action"
               size="small"
               title="Add inside folder"
               aria-label={`Add request to ${node.folder.name}`}
               onClick={(event: ReactMouseEvent<HTMLElement>) => openQuickAdd(event, collection, node.folder.id)}
               sx={{
-                width: 24,
-                height: 24,
+                width: 20,
+                minWidth: 20,
+                height: 20,
+                ml: "auto",
                 p: 0,
-                color: "primary.main",
-                "&:hover, &:focus-visible": { bgcolor: "action.hover" },
+                opacity: 1,
+                pointerEvents: "auto",
+                color: "text.secondary",
+                "&:hover, &:focus-visible": { bgcolor: "action.hover", color: "text.primary" },
               }}
             >
-              <Add sx={{ fontSize: 15 }} />
+              <Add sx={{ fontSize: 14 }} />
             </IconButton>
           </Stack>
           {expanded && (
-            <Box role="group">
+            <Box role="group" sx={workbenchTreeGroupSx}>
               {node.children.map((child, childIndex) =>
                 renderNode(collection, child, node.folder.id, childIndex, depth + 1, queryActive),
               )}
@@ -716,9 +743,6 @@ export function CollectionSidebar({
 
     const request = node.request;
     const active = selectedCollectionRequestId === request.id;
-    const tabState = requestTabState.get(request.id);
-    const requestOpen = Boolean(tabState?.open);
-    const requestRunning = Boolean(tabState?.running);
     const renaming = renameTarget?.type === "request" && renameTarget.nodeId === request.id;
     const key = `request:${request.id}`;
     const grpcMethodFullName = request.grpc?.methodFullName ?? request.grpcMethodKey ?? "";
@@ -726,19 +750,27 @@ export function CollectionSidebar({
       ? grpcMethodPresentation.get(`${request.grpc.libraryId}:${request.grpc.versionId}:${grpcMethodFullName}`)
       : undefined;
     const grpcMode = request.kind === "grpc" ? (grpcPresentation ?? "Unary") : undefined;
+    const requestKindLabel =
+      request.kind === "rest"
+        ? (request.method?.toUpperCase() || "HTTP")
+        : request.kind === "websocket"
+          ? "WS"
+          : grpcMode === "Unary"
+            ? "RPCU"
+            : "RPCS";
     const grpcStatus =
       request.kind === "grpc" && request.grpc?.status && request.grpc.status !== "valid" ? request.grpc.status : null;
     const grpcStatusPresentation = grpcStatus ? grpcRequestStatusCopy(grpcStatus) : null;
-    return (
+    const requestRow = (
       <ListItemButton
         key={key}
         component="div"
         tabIndex={0}
         selected={active}
         role="treeitem"
+        aria-label={`${requestKindLabel} ${request.name}${grpcMode ? `, ${grpcMode}` : ""}${grpcStatusPresentation ? `, ${grpcStatusPresentation.title}` : ""}`}
         aria-level={depth + 2}
         draggable={!renaming}
-        title={`${request.kind.toUpperCase()} ${request.url}${requestRunning ? " · Running" : requestOpen ? " · Open in tab" : ""}`}
         onDragStart={(event: ReactDragEvent<HTMLElement>) =>
           dragPayload(event, { type: "request", collectionId: collection.id, nodeId: request.id })
         }
@@ -757,6 +789,12 @@ export function CollectionSidebar({
         onClick={() => !renaming && onSelectCollectionRequest(collection, request)}
         onKeyDown={(event: ReactKeyboardEvent<HTMLElement>) => {
           if (renaming) return;
+          if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+            event.preventDefault();
+            setContextAnchor(event.currentTarget);
+            setContextTarget({ type: "request", collection, request });
+            return;
+          }
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
             onSelectCollectionRequest(collection, request);
@@ -770,27 +808,40 @@ export function CollectionSidebar({
         }}
         sx={{
           ...itemButtonSx,
-          ml: treeOffset(depth),
-          width: `calc(100% - ${treeOffset(depth)})`,
+          width: "100%",
           overflow: "visible",
           outlineWidth: dropKey === key ? 1 : 0,
           outlineStyle: "solid",
           outlineColor: "primary.main",
-          "&:hover .request-row-action, &:focus-within .request-row-action": { opacity: 1, pointerEvents: "auto" },
         }}
       >
-        <Chip
-          size="small"
-          label={request.kind === "rest" ? "API" : request.kind === "websocket" ? "WS" : "RPC"}
-          title={
-            request.kind === "rest"
-              ? `${request.method ?? "REST"} request`
-              : request.kind === "websocket"
-                ? "WebSocket request"
-                : "gRPC request"
-          }
-          sx={{ height: 20, minWidth: 36, flexShrink: 0, "& .MuiChip-label": { px: 0.45, fontSize: 11 } }}
-        />
+        <Typography
+          component="span"
+          aria-hidden="true"
+          sx={{
+            width: 32,
+            flexShrink: 0,
+            fontSize: 10.5,
+            lineHeight: "15px",
+            fontWeight: 600,
+            letterSpacing: "0.01em",
+            color: requestKindColor(requestKindLabel),
+            textAlign: "left",
+          }}
+        >
+          {requestKindLabel}
+        </Typography>
+        {grpcStatusPresentation?.error ? (
+          <Tooltip title={grpcStatusPresentation.title} placement="right" enterDelay={500}>
+            <Box
+              component="span"
+              aria-label={grpcStatusPresentation.title}
+              sx={{ display: "inline-flex", alignItems: "center", flexShrink: 0, color: "warning.main" }}
+            >
+              <WarningIcon color="warning" sx={{ fontSize: 13 }} />
+            </Box>
+          </Tooltip>
+        ) : null}
         {renaming ? (
           <TextField
             autoFocus
@@ -806,70 +857,16 @@ export function CollectionSidebar({
             sx={{ flex: 1, minWidth: 0 }}
           />
         ) : (
-          <ListItemText
-            primary={<SearchHighlightedText text={request.name} query={filterQuery} />}
-            secondary={request.kind === "grpc" ? grpcMode : undefined}
-            primaryTypographyProps={{
-              noWrap: true,
-              title: `${request.name} - ${request.url}`,
-              sx: { ...labelSx, fontWeight: 400 },
-            }}
-            secondaryTypographyProps={{ noWrap: true, sx: { fontSize: 11, lineHeight: "14px" } }}
-          />
+          <Typography
+            noWrap
+            sx={{ ...labelSx, flex: 1, minWidth: 0, fontWeight: 400 }}
+          >
+            <SearchHighlightedText text={request.name} query={filterQuery} />
+          </Typography>
         )}
-        {grpcStatus && grpcStatusPresentation ? (
-          <MethodStatusIndicator
-            tone={grpcStatusPresentation.error ? "error" : "warning"}
-            title={grpcStatusPresentation.title}
-            detail={grpcStatusPresentation.detail}
-            context={grpcMethodFullName || undefined}
-            placement="right"
-            onActivate={
-              grpcStatusPresentation.actionable ? () => openChangeReference({ collection, request }, true) : undefined
-            }
-          />
-        ) : null}
-        {requestOpen && (
-          <Box
-            component="span"
-            role="img"
-            aria-label={requestRunning ? `${request.name} is running` : `${request.name} is open in a tab`}
-            title={requestRunning ? "Running" : active ? "Active tab" : "Open tab"}
-            sx={{
-              width: 8,
-              height: 8,
-              flexShrink: 0,
-              borderRadius: "50%",
-              bgcolor: requestRunning ? "success.main" : active ? "primary.main" : "transparent",
-              border: "1.5px solid",
-              borderColor: requestRunning ? "success.main" : "primary.main",
-              outline: requestRunning ? "2px solid var(--background)" : "none",
-            }}
-          />
-        )}
-        <IconButton
-          className="request-row-action"
-          size="small"
-          aria-label={`Actions for ${request.name}`}
-          onClick={(event: ReactMouseEvent<HTMLElement>) => {
-            event.preventDefault();
-            event.stopPropagation();
-            setContextAnchor(event.currentTarget);
-            setContextTarget({ type: "request", collection, request });
-          }}
-          sx={{
-            width: 24,
-            height: 24,
-            flexShrink: 0,
-            ml: "auto",
-            opacity: active ? 1 : 0,
-            pointerEvents: active ? "auto" : "none",
-          }}
-        >
-          <MoreHoriz sx={{ fontSize: 15 }} />
-        </IconButton>
       </ListItemButton>
     );
+    return requestRow;
   };
 
   if (collections.length === 0) return <SmallEmpty body="No collection yet. Use the + menu to create one." />;
@@ -878,11 +875,12 @@ export function CollectionSidebar({
   const queryActive = Boolean(filterQuery.trim());
   return (
     <>
-      <Stack spacing={0.25} role="tree" aria-label="Requests">
+      <WorkbenchTree aria-label="Requests">
         {filteredCollections.map(({ collection, tree }) => {
           const collectionKey = `collection:${collection.id}`;
           const expanded = queryActive || expandedNodeIds.has(collectionKey);
           const renaming = renameTarget?.type === "collection" && renameTarget.nodeId === collection.id;
+          const collectionHasWarning = collection.requests.some(requestHasBrokenGrpcReference);
           return (
             <Box
               key={collection.id}
@@ -901,7 +899,7 @@ export function CollectionSidebar({
                   }
                 }}
                 direction="row"
-                spacing={0.45}
+                spacing={0}
                 alignItems="center"
                 onDragOver={(event: ReactDragEvent<HTMLElement>) => {
                   event.preventDefault();
@@ -920,7 +918,8 @@ export function CollectionSidebar({
                 }}
                 sx={{
                   ...rowSx,
-                  ml: `${TREE_BASE_PADDING_PX}px`,
+                  minHeight: workbenchTreeMetrics.rootRowHeight,
+                  height: workbenchTreeMetrics.rootRowHeight,
                   "&:hover .tree-row-action, &:focus-within .tree-row-action": { opacity: 1, pointerEvents: "auto" },
                   outlineWidth: dropKey === collectionKey ? 1 : 0,
                   outlineStyle: "solid",
@@ -932,7 +931,7 @@ export function CollectionSidebar({
                   aria-label={`${expanded ? "Collapse" : "Expand"} ${collection.name}`}
                   aria-expanded={expanded}
                   onClick={() => toggleExpanded(collectionKey)}
-                  sx={{ p: 0.1, fontSize: 12, lineHeight: 1 }}
+                  sx={{ width: 16, minWidth: 16, height: 20, p: 0, fontSize: 11, lineHeight: 1 }}
                 >
                   <Box
                     component="span"
@@ -946,6 +945,17 @@ export function CollectionSidebar({
                     ›
                   </Box>
                 </IconButton>
+                {collectionHasWarning ? (
+                  <Tooltip title="Collection contains a gRPC request that needs attention" placement="right" enterDelay={500}>
+                    <Box
+                      component="span"
+                      aria-label="Collection contains a request warning"
+                      sx={{ display: "inline-flex", alignItems: "center", flexShrink: 0, color: "warning.main" }}
+                    >
+                      <WarningIcon color="warning" sx={{ fontSize: 13 }} />
+                    </Box>
+                  </Tooltip>
+                ) : null}
                 {renaming ? (
                   <TextField
                     autoFocus
@@ -965,36 +975,41 @@ export function CollectionSidebar({
                     noWrap
                     title={collection.name}
                     onDoubleClick={() => beginRename({ type: "collection", collection })}
-                    sx={{ ...labelSx, flex: 1, minWidth: 0 }}
+                    sx={{ ...labelSx, flex: 1, minWidth: 0, fontWeight: 600 }}
                   >
                     <SearchHighlightedText text={collection.name} query={filterQuery} />
                   </Typography>
                 )}
                 <IconButton
+                  className="tree-row-action"
                   size="small"
                   title="Add to collection"
                   aria-label={`Add request to ${collection.name}`}
                   onClick={(event: ReactMouseEvent<HTMLElement>) => openQuickAdd(event, collection, null)}
                   sx={{
-                    width: 24,
-                    height: 24,
+                    width: 20,
+                    minWidth: 20,
+                    height: 20,
+                    ml: "auto",
                     p: 0,
-                    color: "primary.main",
-                    "&:hover, &:focus-visible": { bgcolor: "action.hover" },
+                    opacity: 1,
+                    pointerEvents: "auto",
+                    color: "text.secondary",
+                    "&:hover, &:focus-visible": { bgcolor: "action.hover", color: "text.primary" },
                   }}
                 >
-                  <Add sx={{ fontSize: 15 }} />
+                  <Add sx={{ fontSize: 14 }} />
                 </IconButton>
               </Stack>
               {expanded && (
-                <Box role="group">
+                <Box role="group" sx={workbenchTreeGroupSx}>
                   {tree.length ? (
                     tree.map((node, index) => renderNode(collection, node, null, index, 0, queryActive))
                   ) : (
                     <Typography
                       variant="caption"
                       color="text.secondary"
-                      sx={{ pl: `${TREE_BASE_PADDING_PX + TREE_INDENT_PX}px`, py: 0.35 }}
+                      sx={{ pl: 0.4, py: 0.15 }}
                     >
                       {queryActive ? "No matching folder or request." : "No folder or request yet."}
                     </Typography>
@@ -1004,7 +1019,7 @@ export function CollectionSidebar({
             </Box>
           );
         })}
-      </Stack>
+      </WorkbenchTree>
 
       <Menu anchorEl={quickAddAnchor} open={Boolean(quickAddAnchor)} onClose={closeQuickAdd}>
         <MenuItem onClick={() => createQuickRequest("rest")}>

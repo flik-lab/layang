@@ -6,7 +6,7 @@ import type { DocumentationState } from "@/lib/docs-core.mjs";
 export type TransportMode = "grpc-web" | "native-grpc" | "websocket" | "rest";
 export type EnvironmentKey = string;
 export type RequestTab = "body" | "auth" | "metadata" | "schema" | "docs" | "benchmark" | "examples" | "mock" | "more";
-export type ResponseTab = "messages" | "latest" | "headers" | "trailers" | "tests";
+export type ResponseTab = "messages" | "latest" | "headers" | "trailers" | "tests" | "timeline";
 export type ApiRequestKind = "rest" | "grpc" | "websocket";
 export type SideSection = "collections" | "proto-schemas" | "services" | "docs" | "source-control" | "settings";
 export type ServicesSection = "mock-servers" | "traffic";
@@ -60,6 +60,7 @@ export type RestMockRequestLog = {
 
 export type RestMockStatus = {
   running: boolean;
+  runtimeSource?: "gui" | "cli";
   port?: number;
   bindHost?: string;
   url?: string;
@@ -435,6 +436,7 @@ export type MockReachableTarget = {
 
 export type MockServerStatus = {
   running: boolean;
+  runtimeSource?: "gui" | "cli";
   port?: number;
   url?: string;
   bindHost?: string;
@@ -495,6 +497,7 @@ export type WebSocketMockLog = {
 
 export type WebSocketMockStatus = {
   running: boolean;
+  runtimeSource?: "gui" | "cli";
   port?: number;
   path?: string;
   url?: string;

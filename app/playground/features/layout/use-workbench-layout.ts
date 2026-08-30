@@ -14,7 +14,10 @@ import {
   layoutStorageKey,
   legacyLayoutStorageKey,
   maxSidebarWidth,
+  maxStoredResponseHeight,
+  maxStoredResponseWidth,
   minResponseHeight,
+  minResponseWidth,
   minSidebarWidth,
   railWidth,
   sidebarWidth,
@@ -22,17 +25,40 @@ import {
 import type { RequestResponseLayoutMode, WorkspaceLayoutSnapshot } from "../../shared/workbench-types";
 
 const defaultResponseWidth = 420;
-const minResponseWidth = 300;
+const minRequestWidth = 360;
+const responseSeparatorSize = 8;
+const minHorizontalWorkspaceWidth = minRequestWidth + minResponseWidth + responseSeparatorSize;
+
+function availableWorkspaceWidth(viewportWidth: number, sidebarOpen: boolean, sidebarWidthPx: number) {
+  return Math.max(0, viewportWidth - railWidth - (sidebarOpen ? sidebarWidthPx : collapsedSidebarWidth));
+}
+
+function maxResponseWidthForViewport(viewportWidth: number, sidebarOpen: boolean, sidebarWidthPx: number) {
+  const available = availableWorkspaceWidth(viewportWidth, sidebarOpen, sidebarWidthPx);
+  return Math.max(minResponseWidth, available - minRequestWidth - responseSeparatorSize);
+}
+
+function maxResponseHeightForViewport(viewportHeight: number) {
+  const reservedTop = 260;
+  return Math.max(minResponseHeight, viewportHeight - designSystem.size.titlebarHeight - reservedTop);
+}
 
 export function useWorkbenchLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarWidthPx, setSidebarWidthPx] = useState(sidebarWidth);
+  const [sidebarWidthPx, setSidebarWidthPx] = useState<number>(sidebarWidth);
   const [responseHeight, setResponseHeight] = useState(defaultResponseHeight);
   const [responseWidth, setResponseWidth] = useState(defaultResponseWidth);
-  const [requestResponseLayout, setRequestResponseLayout] = useState<RequestResponseLayoutMode>("horizontal");
+  const [requestResponseLayout, setRequestResponseLayout] = useState<RequestResponseLayoutMode>("vertical");
   const [_requestCollapsed, setRequestCollapsed] = useState(false);
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const sidebarResizeRef = useRef(false);
   const responseResizeRef = useRef(false);
+
+  const horizontalLayoutAvailable =
+    viewportSize.width === 0 ||
+    availableWorkspaceWidth(viewportSize.width, sidebarOpen, sidebarWidthPx) >= minHorizontalWorkspaceWidth;
+  const effectiveRequestResponseLayout: RequestResponseLayoutMode =
+    requestResponseLayout === "horizontal" && horizontalLayoutAvailable ? "horizontal" : "vertical";
 
   const snapshot = useCallback(
     (): WorkspaceLayoutSnapshot => ({
@@ -58,14 +84,14 @@ export function useWorkbenchLayout() {
         setSidebarWidthPx(next.sidebarWidthPx);
       }
       if (typeof layout.responseHeight === "number") {
-        next.responseHeight = Math.max(minResponseHeight, layout.responseHeight);
+        next.responseHeight = clamp(layout.responseHeight, minResponseHeight, maxStoredResponseHeight);
         setResponseHeight(next.responseHeight);
       }
       if (typeof layout.responseWidth === "number") {
-        next.responseWidth = Math.max(minResponseWidth, layout.responseWidth);
+        next.responseWidth = clamp(layout.responseWidth, minResponseWidth, maxStoredResponseWidth);
         setResponseWidth(next.responseWidth);
       }
-      if (layout.requestResponseLayout === "vertical" || layout.requestResponseLayout === "horizontal") {
+      if (layout.requestResponseLayout === "horizontal" || layout.requestResponseLayout === "vertical") {
         next.requestResponseLayout = layout.requestResponseLayout;
         setRequestResponseLayout(layout.requestResponseLayout);
       }
@@ -97,24 +123,21 @@ export function useWorkbenchLayout() {
     (event: ReactMouseEvent<HTMLDivElement>) => {
       event.preventDefault();
       responseResizeRef.current = true;
-      document.body.style.cursor = requestResponseLayout === "horizontal" ? "col-resize" : "row-resize";
+      document.body.style.cursor = effectiveRequestResponseLayout === "horizontal" ? "col-resize" : "row-resize";
       document.body.style.userSelect = "none";
     },
-    [requestResponseLayout],
+    [effectiveRequestResponseLayout],
   );
 
   const toggleRequestResponseLayout = useCallback(() => {
-    setRequestResponseLayout((current: RequestResponseLayoutMode) =>
-      current === "vertical" ? "horizontal" : "vertical",
-    );
+    setRequestResponseLayout((current) => (current === "horizontal" ? "vertical" : "horizontal"));
   }, []);
 
   const resizeResponseByKeyboard = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
       const step = event.shiftKey ? 40 : 10;
-      if (requestResponseLayout === "horizontal") {
-        const activeShellLeft = railWidth + (sidebarOpen ? sidebarWidthPx : collapsedSidebarWidth);
-        const maxWidth = Math.max(minResponseWidth, window.innerWidth - activeShellLeft - 420);
+      if (effectiveRequestResponseLayout === "horizontal") {
+        const maxWidth = maxResponseWidthForViewport(window.innerWidth, sidebarOpen, sidebarWidthPx);
         if (event.key === "ArrowLeft") {
           event.preventDefault();
           setResponseWidth((current) => clamp(current + step, minResponseWidth, maxWidth));
@@ -130,7 +153,7 @@ export function useWorkbenchLayout() {
         }
         return;
       }
-      const maxHeight = Math.max(minResponseHeight, window.innerHeight - designSystem.size.titlebarHeight - 260);
+      const maxHeight = maxResponseHeightForViewport(window.innerHeight);
       if (event.key === "ArrowUp") {
         event.preventDefault();
         setResponseHeight((current) => clamp(current + step, minResponseHeight, maxHeight));
@@ -145,8 +168,37 @@ export function useWorkbenchLayout() {
         setResponseHeight(maxHeight);
       }
     },
-    [requestResponseLayout, sidebarOpen, sidebarWidthPx],
+    [effectiveRequestResponseLayout, sidebarOpen, sidebarWidthPx],
   );
+
+  useEffect(() => {
+    const syncViewport = () => {
+      setViewportSize({ width: window.innerWidth, height: window.innerHeight });
+    };
+    syncViewport();
+    window.addEventListener("resize", syncViewport);
+    return () => window.removeEventListener("resize", syncViewport);
+  }, []);
+
+  useEffect(() => {
+    if (viewportSize.height > 0) {
+      const maxHeight = maxResponseHeightForViewport(viewportSize.height);
+      setResponseHeight((current) => clamp(current, minResponseHeight, maxHeight));
+    }
+    if (viewportSize.width > 0 && requestResponseLayout === "horizontal" && horizontalLayoutAvailable) {
+      const maxWidth = maxResponseWidthForViewport(viewportSize.width, sidebarOpen, sidebarWidthPx);
+      setResponseWidth((current) => clamp(current, minResponseWidth, maxWidth));
+    }
+  }, [
+    horizontalLayoutAvailable,
+    requestResponseLayout,
+    responseHeight,
+    responseWidth,
+    sidebarOpen,
+    sidebarWidthPx,
+    viewportSize.height,
+    viewportSize.width,
+  ]);
 
   useEffect(() => {
     function stopResize() {
@@ -170,16 +222,11 @@ export function useWorkbenchLayout() {
       }
 
       if (responseResizeRef.current) {
-        if (requestResponseLayout === "horizontal") {
-          const activeShellLeft = railWidth + (sidebarOpen ? sidebarWidthPx : collapsedSidebarWidth);
-          const maxWidth = Math.max(minResponseWidth, window.innerWidth - activeShellLeft - 420);
+        if (effectiveRequestResponseLayout === "horizontal") {
+          const maxWidth = maxResponseWidthForViewport(window.innerWidth, sidebarOpen, sidebarWidthPx);
           setResponseWidth(clamp(window.innerWidth - event.clientX - 10, minResponseWidth, maxWidth));
         } else {
-          const reservedTop = 260;
-          const maxHeight = Math.max(
-            minResponseHeight,
-            window.innerHeight - designSystem.size.titlebarHeight - reservedTop,
-          );
+          const maxHeight = maxResponseHeightForViewport(window.innerHeight);
           setResponseHeight(clamp(window.innerHeight - event.clientY - 10, minResponseHeight, maxHeight));
         }
       }
@@ -191,7 +238,7 @@ export function useWorkbenchLayout() {
       window.removeEventListener("mousemove", handleResizeMove);
       window.removeEventListener("mouseup", stopResize);
     };
-  }, [requestResponseLayout, sidebarOpen, sidebarWidthPx]);
+  }, [effectiveRequestResponseLayout, sidebarOpen, sidebarWidthPx]);
 
   return {
     sidebarOpen,
@@ -203,6 +250,8 @@ export function useWorkbenchLayout() {
     responseWidth,
     setResponseWidth,
     requestResponseLayout,
+    effectiveRequestResponseLayout,
+    horizontalLayoutAvailable,
     setRequestResponseLayout,
     setRequestCollapsed,
     beginSidebarResize,
@@ -215,4 +264,4 @@ export function useWorkbenchLayout() {
   };
 }
 
-export { defaultResponseWidth, minResponseWidth };
+export { defaultResponseWidth, minHorizontalWorkspaceWidth, minResponseWidth };

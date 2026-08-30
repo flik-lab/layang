@@ -37,10 +37,13 @@ import {
   maxMessagesPerRequest,
   maxPayloadPreviewChars,
   maxSidebarWidth,
+  maxStoredResponseHeight,
+  maxStoredResponseWidth,
   maxStoredEventsPerSession,
   maxStoredMessagesPerResult,
   maxUiEventsPerSession,
   minResponseHeight,
+  minResponseWidth,
   minSidebarWidth,
   projectStorageKey,
 } from "../../shared/workbench-constants";
@@ -537,9 +540,9 @@ export function applyWorkspaceLayoutSnapshot(
   if (typeof snapshot.sidebarWidthPx === "number")
     setters.setSidebarWidthPx(clamp(snapshot.sidebarWidthPx, minSidebarWidth, maxSidebarWidth));
   if (typeof snapshot.responseHeight === "number")
-    setters.setResponseHeight(Math.max(minResponseHeight, snapshot.responseHeight));
+    setters.setResponseHeight(clamp(snapshot.responseHeight, minResponseHeight, maxStoredResponseHeight));
   if (typeof snapshot.responseWidth === "number" && setters.setResponseWidth)
-    setters.setResponseWidth(Math.max(280, snapshot.responseWidth));
+    setters.setResponseWidth(clamp(snapshot.responseWidth, minResponseWidth, maxStoredResponseWidth));
   if (
     (snapshot.requestResponseLayout === "vertical" || snapshot.requestResponseLayout === "horizontal") &&
     setters.setRequestResponseLayout

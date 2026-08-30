@@ -9,28 +9,28 @@
   --card-foreground: #e8ecf7;
   --popover: #151922;
   --popover-foreground: #e8ecf7;
-  --primary: #3b82f6;
+  --primary: #3b70b5;
   --primary-foreground: #ffffff;
-  --secondary: #21283a;
+  --secondary: #191f2b;
   --secondary-foreground: #e8ecf7;
-  --muted: #191f2b;
+  --muted: #171b25;
   --muted-foreground: #9aa4b8;
-  --accent: rgba(59, 130, 246, 0.18);
+  --accent: rgba(63, 133, 244, 0.16);
   --accent-foreground: #e8ecf7;
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
-  --success: #10b981;
-  --success-foreground: #86efac;
+  --success: #0d9c72;
+  --success-foreground: #c5ecd3;
   --warning: #f59e0b;
   --warning-foreground: #fcd34d;
   --info: #3b82f6;
   --info-foreground: #ffffff;
   --border: #252b3a;
   --input: #252b3a;
-  --ring: #3b82f6;
-  --radius: 0.5rem;
-  --control-height: 32px;
-  --control-height-sm: 28px;
+  --ring: #3f85f4;
+  --radius: 0.375rem;
+  --control-height: 30px;
+  --control-height-sm: 26px;
   --control-font-size: 12px;
   --font-size-caption: 11px;
   --font-size-body: 12px;
@@ -46,6 +46,15 @@
   --font-weight-medium: 500;
   --font-weight-semibold: 600;
   --font-weight-bold: 700;
+  --workbench-titlebar-height: 36px;
+  --workbench-rail-width: 48px;
+  --workbench-sidebar-width: 260px;
+  --workbench-tabbar-height: 35px;
+  --workbench-statusbar-height: 22px;
+  --workbench-tree-root-row: 24px;
+  --workbench-tree-row: 22px;
+  --workbench-tree-indent: 10px;
+  --workbench-tree-guide: rgba(126, 134, 166, 0.30);
 }
 
 * {
@@ -172,16 +181,38 @@ button:disabled {
   font-weight: var(--font-weight-regular);
 }
 
-.shadcn-button,
+.shadcn-button {
+  line-height: 20px;
+}
+
 .shadcn-tab {
-  line-height: 1;
+  line-height: 18px;
 }
 
 .shadcn-select,
-.shadcn-input,
+.shadcn-input {
+  line-height: 20px;
+}
+
 .shadcn-menu-item,
 .shadcn-list-button {
-  line-height: 1.35;
+  line-height: 18px;
+}
+
+.shadcn-select > span:first-of-type {
+  min-height: 20px;
+  line-height: 20px;
+}
+
+.shadcn-chip {
+  min-height: 22px;
+  line-height: 16px;
+  overflow: visible;
+}
+
+.shadcn-chip > span {
+  min-height: 16px;
+  line-height: 16px;
 }
 
 .shadcn-textarea {
@@ -252,16 +283,18 @@ button:disabled {
 
 [data-theme="dark"] {
   color-scheme: dark;
+  --workbench-tree-guide: rgba(111, 127, 155, 0.28);
   --scrollbar-track: #0f1117;
-  --scrollbar-thumb: #333b4f;
-  --scrollbar-thumb-hover: #4d5872;
+  --scrollbar-thumb: #2f3748;
+  --scrollbar-thumb-hover: #46536a;
 }
 
 [data-theme="light"] {
   color-scheme: light;
-  --scrollbar-track: #f4f6fb;
-  --scrollbar-thumb: #c4ccdc;
-  --scrollbar-thumb-hover: #9da8bc;
+  --workbench-tree-guide: rgba(0, 0, 0, 0.12);
+  --scrollbar-track: #f7f8fa;
+  --scrollbar-thumb: #c8cfda;
+  --scrollbar-thumb-hover: #aeb8c7;
 }
 
 /* Workbench-specific shadcn refinements. Keep these class-based so the UI stays
@@ -323,13 +356,46 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
+/* Collection Response panel follows the compact VS Code bottom-panel treatment. */
+.response-toolbar + .workbench-stacked-tabs {
+  min-height: 28px;
+  height: 28px;
+  gap: 14px;
+  padding: 0 8px;
+  background: var(--card);
+}
+
+.response-toolbar + .workbench-stacked-tabs .workbench-stacked-tab {
+  min-width: 0;
+  height: 28px;
+  padding: 0 1px;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-weight: var(--font-weight-regular);
+}
+
+.response-toolbar + .workbench-stacked-tabs .workbench-stacked-tab:hover {
+  background: transparent;
+  color: var(--foreground);
+}
+
+.response-toolbar + .workbench-stacked-tabs .workbench-stacked-tab[data-active="true"] {
+  background: transparent;
+  border-bottom-color: var(--primary);
+  color: var(--foreground);
+  box-shadow: none;
+}
+
 .request-tab-strip {
   display: flex;
-  align-items: flex-end;
-  gap: 3px;
+  align-items: stretch;
+  gap: 0;
   min-width: max-content;
   height: 100%;
-  padding-top: 4px;
+  padding-top: 0;
   -webkit-app-region: drag;
 }
 
@@ -341,27 +407,28 @@ button:disabled {
 .request-tab {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 34px;
-  min-width: 156px;
-  max-width: 200px;
-  width: 172px;
-  padding: 0 7px 0 9px;
-  border: 1px solid var(--tab-border);
-  border-bottom-color: var(--tab-border);
-  border-radius: 9px 9px 0 0;
+  gap: 5px;
+  height: var(--workbench-tabbar-height);
+  min-width: 120px;
+  max-width: 220px;
+  width: 168px;
+  padding: 0 7px 0 10px;
+  border: 0;
+  border-right: 1px solid var(--tab-border);
+  border-bottom: 1px solid var(--tab-border);
+  border-radius: 0;
   background: var(--tab-bg);
   color: var(--tab-text);
   font-size: var(--font-size-control);
   font-weight: var(--font-weight-medium);
   line-height: 1;
   overflow: hidden;
-  cursor: grab;
+  cursor: default;
   -webkit-app-region: no-drag;
 }
 
 .request-tab:active {
-  cursor: grabbing;
+  cursor: default;
 }
 
 .request-tab[data-dragging="true"] {
@@ -375,16 +442,14 @@ button:disabled {
 
 .request-tab:hover {
   background: var(--tab-hover-bg);
-  border-color: var(--border-strong);
   color: var(--foreground);
 }
 
 .request-tab[data-active="true"] {
   background: var(--tab-active-bg);
-  border-color: var(--tab-active-border);
   border-bottom-color: var(--tab-active-bg);
   color: var(--tab-active-text);
-  box-shadow: 0 2px 0 var(--primary) inset;
+  box-shadow: 0 1px 0 var(--primary) inset;
 }
 
 .request-tab[data-drop-position="before"] {
@@ -894,12 +959,12 @@ button:disabled {
 /* Global workbench density. These rules intentionally target every workspace
    area; request side/stack layout is handled separately by the request editor. */
 .workbench-root {
-  --workbench-page-padding-x: 9px;
-  --workbench-page-padding-y: 8px;
-  --workbench-panel-gap: 6px;
-  --workbench-section-padding: 11px;
+  --workbench-page-padding-x: 0px;
+  --workbench-page-padding-y: 0px;
+  --workbench-panel-gap: 0px;
+  --workbench-section-padding: 12px;
   --workbench-card-gap: 8px;
-  --workbench-sidebar-row-height: 32px;
+  --workbench-sidebar-row-height: 24px;
 }
 
 [data-density="comfortable"] .workbench-stacked-tab,
@@ -989,4 +1054,225 @@ button:disabled {
 .search-highlight.search-highlight--active {
   background: #fb923c;
   box-shadow: 0 0 0 2px rgba(234, 88, 12, 0.72);
+}
+
+/* Request workspace navigation follows the compact VS Code editor treatment. */
+.workbench-stacked-tabs[data-variant="underline"] {
+  min-height: 27px;
+  height: 27px;
+  gap: 12px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+}
+
+.workbench-stacked-tabs[data-variant="underline"] .workbench-stacked-tab {
+  min-width: 0;
+  height: 27px;
+  padding: 0 1px;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 11.5px;
+  font-weight: 400;
+  box-shadow: none;
+}
+
+.workbench-stacked-tabs[data-variant="underline"] .workbench-stacked-tab:hover {
+  background: transparent;
+  color: var(--foreground);
+}
+
+.workbench-stacked-tabs[data-variant="underline"] .workbench-stacked-tab[data-active="true"] {
+  background: transparent;
+  border-bottom-color: var(--primary);
+  color: var(--foreground);
+  box-shadow: none;
+}
+
+.workbench-stacked-tabs[data-variant="mode"] {
+  min-height: 32px;
+  height: 32px;
+  gap: 2px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+}
+
+.workbench-stacked-tabs[data-variant="mode"] .workbench-stacked-tab {
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: none;
+}
+
+.workbench-stacked-tabs[data-variant="mode"] .workbench-stacked-tab:hover {
+  background: var(--hover);
+  color: var(--foreground);
+}
+
+.workbench-stacked-tabs[data-variant="mode"] .workbench-stacked-tab[data-active="true"] {
+  background: var(--surface-selected);
+  color: var(--foreground);
+  box-shadow: inset 0 -1px 0 var(--primary);
+}
+
+
+/* Keep the VS Code-style activity rail vertical at every zoom level.
+   Effective viewport height shrinks under Electron/browser zoom, so buttons compact
+   before the rail scrolls instead of migrating into a horizontal top strip. */
+.workbench-activity-rail {
+  --rail-button-size: 48px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.workbench-activity-rail::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+@media (max-height: 520px) {
+  .workbench-activity-rail { --rail-button-size: 42px; }
+}
+
+@media (max-height: 430px) {
+  .workbench-activity-rail { --rail-button-size: 36px; }
+}
+
+@media (max-height: 360px) {
+  .workbench-activity-rail { --rail-button-size: 32px; }
+}
+
+.quick-create-field {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  overflow: visible;
+}
+
+.quick-create-field > label,
+.quick-create-field > .quick-create-field-label {
+  display: block;
+  min-height: 16px;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.quick-create-field .shadcn-input,
+.quick-create-field .shadcn-select {
+  min-height: 38px;
+  height: 38px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* gRPC Mock method manager uses stable column metrics and explicit line boxes so
+   browser/Electron zoom cannot clip method labels or collapse adjacent headers. */
+.grpc-mock-manager-header {
+  display: grid;
+  grid-template-columns: minmax(250px, 1.05fr) minmax(280px, 1.65fr) 76px 78px 36px;
+  column-gap: 10px;
+}
+
+.grpc-mock-manager-row {
+  display: grid;
+  grid-template-columns: minmax(250px, 1.05fr) minmax(280px, 1.65fr) 76px 78px 36px;
+  grid-template-areas: "method scenario status enabled actions";
+  column-gap: 10px;
+  row-gap: 4px;
+  overflow: visible;
+}
+
+.grpc-mock-manager-row [data-cell="method"] {
+  min-height: 22px;
+  overflow: visible;
+}
+
+.grpc-mock-method-name {
+  display: block;
+  min-width: 0;
+  flex: 1 1 auto;
+  min-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.grpc-mock-method-kind {
+  display: block;
+  flex: 0 0 auto;
+  max-width: 92px;
+  min-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+@media (max-width: 980px) {
+  .grpc-mock-manager-header {
+    display: none;
+  }
+
+  .grpc-mock-manager-row {
+    grid-template-columns: minmax(0, 1fr) 76px 36px;
+    grid-template-areas:
+      "method status actions"
+      "scenario enabled actions";
+    min-height: 62px;
+    padding-block: 6px !important;
+  }
+
+  .grpc-mock-method-kind {
+    max-width: 80px;
+  }
+}
+
+@media (max-width: 620px) {
+  .grpc-mock-method-kind {
+    display: none;
+  }
+}
+
+
+/* Batch 3.14: Windows/zoom-safe compact control rendering. */
+.grpc-mock-scenario-select {
+  min-height: 34px;
+  height: 34px;
+  line-height: 20px;
+}
+
+.grpc-mock-scenario-select > span:first-of-type {
+  min-height: 20px;
+  line-height: 20px;
+}
+
+.grpc-mock-status-chip {
+  min-height: 24px;
+  height: 24px;
+  line-height: 16px;
+}
+
+.grpc-mock-status-chip > span {
+  min-height: 16px;
+  line-height: 16px;
 }

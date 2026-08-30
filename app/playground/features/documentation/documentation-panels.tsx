@@ -13,11 +13,7 @@ import {
   CheckCircle,
   ContentCopy,
   Description,
-  DocsIcon,
-  Folder,
   FolderOpen,
-  KeyboardArrowDown,
-  KeyboardArrowRight,
   MoreHoriz,
   OpenInNew,
   Search,
@@ -64,6 +60,7 @@ import { SearchHighlightedText } from "../../shared/components/search-highlight"
 import { uiCopy } from "../../shared/ui-copy";
 import { MarkdownPreview } from "../docs-publisher/docs-publisher-panel";
 import { WorkbenchTabs } from "../shell/shell-components";
+import { WorkbenchTree, workbenchTreeGroupSx, workbenchTreeMetrics } from "@/components/workbench-ui/tree";
 
 export type DocumentationPanelTab = "content" | "preview";
 
@@ -757,20 +754,33 @@ export function UnifiedDocsSidebar({
   const renderTreeNode = (page: UnifiedDocsPage, depth: number): ReactNode => {
     const childPages = page.children.map((childId) => pageById.get(childId)).filter(Boolean) as UnifiedDocsPage[];
     const isExpanded = expanded.has(page.id);
+    const active = page.id === activePageId;
     return (
-      <Box key={page.id}>
-        <Stack direction="row" alignItems="stretch" spacing={0.2} sx={{ pl: depth * 0.8 }}>
+      <Box key={page.id} role="treeitem" aria-level={depth + 1} aria-expanded={childPages.length ? isExpanded : undefined}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0}
+          sx={{
+            minHeight: depth === 0 ? workbenchTreeMetrics.rootRowHeight : workbenchTreeMetrics.rowHeight,
+            height: depth === 0 ? workbenchTreeMetrics.rootRowHeight : workbenchTreeMetrics.rowHeight,
+            my: "1px",
+            borderRadius: "2px",
+            bgcolor: active ? "action.selected" : "transparent",
+            "&:hover": { bgcolor: active ? "action.selected" : "action.hover" },
+          }}
+        >
           {childPages.length ? (
             <IconButton
               size="small"
               aria-label={`${isExpanded ? "Collapse" : "Expand"} ${page.title}`}
               onClick={() => toggleExpanded(page.id)}
-              sx={{ width: 26, minWidth: 26 }}
+              sx={{ width: 14, minWidth: 14, height: 18, p: 0, color: "text.secondary" }}
             >
-              {isExpanded ? <KeyboardArrowDown sx={{ fontSize: 14 }} /> : <KeyboardArrowRight sx={{ fontSize: 14 }} />}
+              <Box component="span" aria-hidden="true" sx={{ display: "inline-block", fontSize: 10, transform: isExpanded ? "rotate(90deg)" : "none" }}>›</Box>
             </IconButton>
           ) : (
-            <Box sx={{ width: 26, minWidth: 26 }} />
+            <Box sx={{ width: 14, minWidth: 14 }} />
           )}
           <Button
             variant="text"
@@ -778,33 +788,28 @@ export function UnifiedDocsSidebar({
             sx={{
               flex: 1,
               minWidth: 0,
+              height: "100%",
               justifyContent: "flex-start",
               textAlign: "left",
-              px: 0.7,
-              py: 0.45,
-              fontWeight: 400,
-              border: "1px solid",
-              borderColor: page.id === activePageId ? "rgba(59,130,246,0.42)" : "transparent",
-              bgcolor: page.id === activePageId ? "rgba(59,130,246,0.11)" : "transparent",
+              px: 0.35,
+              py: 0,
+              fontWeight: depth === 0 ? 600 : page.kind === "collection" ? 500 : 400,
+              color: "text.primary",
+              borderRadius: 0,
             }}
           >
-            <Stack direction="row" alignItems="center" spacing={0.6} sx={{ width: "100%", minWidth: 0 }}>
-              {documentationPageIcon(page, isExpanded)}
-              <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Typography variant="body2" noWrap>
-                  {page.title}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" noWrap>
-                  {page.kind === "request"
-                    ? `${String(page.protocol ?? "request").toUpperCase()} · ${documentationStatusLabel(page.status)}`
-                    : page.kind}
-                </Typography>
-              </Box>
-            </Stack>
+            <Typography variant="body2" noWrap title={page.title} sx={{ minWidth: 0, flex: 1, textAlign: "left", fontWeight: "inherit" }}>
+              {page.title}
+            </Typography>
+            {page.kind === "request" ? (
+              <Typography variant="caption" color="text.secondary" sx={{ ml: 0.5, flexShrink: 0 }}>
+                {String(page.protocol ?? "request").toUpperCase()}
+              </Typography>
+            ) : null}
           </Button>
         </Stack>
         {childPages.length && isExpanded ? (
-          <Stack spacing={0.15}>{childPages.map((child) => renderTreeNode(child, depth + 1))}</Stack>
+          <Box role="group" sx={workbenchTreeGroupSx}>{childPages.map((child) => renderTreeNode(child, depth + 1))}</Box>
         ) : null}
       </Box>
     );
@@ -813,7 +818,7 @@ export function UnifiedDocsSidebar({
   const root = pageById.get("workspace:overview") ?? pages.find((page) => page.kind === "workspace") ?? null;
 
   return (
-    <Stack spacing={1} sx={{ height: "100%", minHeight: 0, p: 1 }}>
+    <Stack spacing={0.55} sx={{ height: "100%", minHeight: 0, p: 0.55 }}>
       <TextField
         size="small"
         placeholder="Search documentation"
@@ -868,7 +873,7 @@ export function UnifiedDocsSidebar({
             )}
           </Stack>
         ) : root ? (
-          renderTreeNode(root, 0)
+          <WorkbenchTree aria-label="Documentation tree">{renderTreeNode(root, 0)}</WorkbenchTree>
         ) : (
           <Typography variant="body2" color="text.secondary" sx={{ p: 1 }}>
             No documentation pages are available.
@@ -1057,12 +1062,6 @@ function DocumentationSettingsDialog({
       </DialogActions>
     </Dialog>
   );
-}
-
-function documentationPageIcon(page: UnifiedDocsPage, expanded: boolean) {
-  if (page.kind === "workspace") return <DocsIcon sx={{ fontSize: 15 }} />;
-  if (page.kind === "request") return <Description sx={{ fontSize: 15 }} />;
-  return expanded ? <FolderOpen sx={{ fontSize: 15 }} /> : <Folder sx={{ fontSize: 15 }} />;
 }
 
 function preferredCodeSample(samples: DocsCodeSample[] | undefined): DocsCodeSample | null {

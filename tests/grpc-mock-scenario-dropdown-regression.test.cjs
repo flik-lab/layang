@@ -13,9 +13,9 @@ test("gRPC Mock groups active-scenario controls by Proto service and method", ()
 
   assert.match(services, /const allScenarioProtoGroups = useMemo<ScenarioProtoGroup\[]>/);
   assert.match(services, /scenarioProtoGroups\.map\(\(proto\)/);
-  assert.match(services, /proto\.services\.map\(\(service\)/);
-  assert.match(services, /service\.methods\.map\(\(method\)/);
-  assert.match(services, /Active scenario/);
+  assert.match(services, /proto\.services\.map\(\(service, serviceIndex\) =>/);
+  assert.match(services, /service\.methods\.map\(\(method, methodIndex\) =>/);
+  assert.match(services, /Scenario\s*<\/Typography>/);
   assert.match(services, /Active scenario for \$\{method\.method\.methodName\}/);
 });
 
@@ -43,25 +43,30 @@ test("each workspace method has an independent active switch", () => {
   assert.match(services, /handleMockMethodEnabledChange\(method\.method, event\.target\.checked\)/);
 });
 
-test("active scenario dropdown uses native text options and isolates row click handling", () => {
+test("active scenario dropdown uses concise options and isolates row click handling", () => {
   const services = read("app/playground/features/services/services-workspace.tsx");
 
-  assert.match(services, /const optionLabel =\s*displayName === row\.scenario\.id/);
   assert.match(
     services,
-    /<MenuItem key=\{`\$\{key\}:\$\{row\.scenario\.id\}`\} value=\{row\.scenario\.id\}>\s*\{optionLabel\}\s*<\/MenuItem>/,
+    /<MenuItem key=\{`\$\{key\}:\$\{row\.scenario\.id\}`\} value=\{row\.scenario\.id\}>\s*\{mockScenarioDisplayName\(row\.scenario, row\.method\)\}\s*<\/MenuItem>/,
   );
   assert.doesNotMatch(services, /renderValue=\{/);
+  assert.match(services, /key=\{`\$\{key\}:\$\{activeScenario\?\.scenario\.id/);
   assert.match(services, /onPointerDown=\{\(event: any\) => event\.stopPropagation\(\)\}/);
 });
 
-test("scenario settings keep edit and destructive actions outside the compact method row", () => {
+test("scenario settings keep edit and destructive actions in the shared settings flow", () => {
   const services = read("app/playground/features/services/services-workspace.tsx");
+  const shared = read("app/playground/features/mock-server/grpc-mock-scenario-controls.tsx");
 
   assert.match(services, /Scenario settings/);
-  assert.match(services, /Edit source/);
-  assert.match(services, /Manage scenarios/);
-  assert.match(services, /Duplicate active/);
-  assert.match(services, /Delete active/);
-  assert.match(services, /aria-label="Method scenarios"/);
+  assert.match(services, /<GrpcMockScenarioActionsMenu/);
+  assert.match(services, /<GrpcMockScenarioManagerDialog/);
+  assert.match(shared, /Edit source/);
+  assert.match(shared, /Manage scenarios/);
+  assert.match(shared, /Add scenario/);
+  assert.match(shared, /Duplicate active/);
+  assert.match(shared, /Delete active/);
+  assert.match(shared, /aria-label="Method scenarios"/);
+  assert.match(services, /setManagedMethodKey\(""\);[\s\S]{0,180}window\.setTimeout\(\(\) => deleteScenario\(row\), 0\)/);
 });

@@ -20,6 +20,7 @@ import { createId } from "../shared/entity-utils";
 import { toErrorMessage } from "../shared/error-utils";
 import { formatTimestampShort } from "../shared/formatters";
 import { methodKey } from "../shared/rpc-method-utils";
+import { quoteCliArg, recordGuiCliCommand } from "../features/cli/cli-command-history";
 import { defaultUnaryDeadlineMs, maxMessagesPerRequest } from "../shared/workbench-constants";
 import type {
   ApiCollectionRequest,
@@ -76,6 +77,7 @@ export type UseRequestRunnerOptions = {
   activateRequestSession: (session: RequestSession) => void;
   updateRequestSession: (sessionId: string, patch: Partial<RequestSession>) => void;
   beforeRunRequest?: () => Promise<void> | void;
+  workspaceFolderPath?: string;
 };
 
 export function useRequestRunner(options: UseRequestRunnerOptions) {
@@ -125,6 +127,16 @@ export function useRequestRunner(options: UseRequestRunnerOptions) {
       const assertionToRun = overrides?.overrideAssertionJson ?? assertionJson;
 
       if (collectionRequest && (!methodToRun || collectionRequest.kind !== "grpc")) {
+        recordGuiCliCommand({
+          command: buildRequestCliCommand({
+            collectionRequest,
+            method: methodToRun,
+            transportMode: activeTransportMode,
+            environmentKey: activeEnvironmentKey,
+          }),
+          label: `Run ${collectionRequest.name || collectionRequest.id} from GUI`,
+          workspacePath: options.workspaceFolderPath,
+        });
         await runCollectionRequest({
           collectionRequest,
           requestToRun,
@@ -155,6 +167,17 @@ export function useRequestRunner(options: UseRequestRunnerOptions) {
       }
 
       if (!loaded || !methodToRun) return;
+
+      recordGuiCliCommand({
+        command: buildRequestCliCommand({
+          collectionRequest,
+          method: methodToRun,
+          transportMode: activeTransportMode,
+          environmentKey: activeEnvironmentKey,
+        }),
+        label: `Run ${collectionRequest?.name || methodToRun.methodName} from GUI`,
+        workspacePath: options.workspaceFolderPath,
+      });
 
       const key = methodKey(methodToRun);
       const collectionGrpcRequest = collectionRequest?.kind === "grpc" ? collectionRequest : null;
@@ -755,4 +778,24 @@ function parsePossiblyJson(text: string): unknown {
   } catch {
     return text;
   }
+}
+
+
+function buildRequestCliCommand(input: {
+  collectionRequest: ActiveCollectionRequest | null;
+  method: RpcMethodInfo | null;
+  transportMode: TransportMode;
+  environmentKey: string;
+}) {
+  const parts = ["layang", "run"];
+  if (input.collectionRequest?.collectionName) parts.push("--collection", quoteCliArg(input.collectionRequest.collectionName));
+  if (input.collectionRequest) parts.push("--request", quoteCliArg(input.collectionRequest.name || input.collectionRequest.id));
+  else if (input.method) parts.push("--method", quoteCliArg(methodKey(input.method)));
+  if (input.collectionRequest?.kind === "websocket") parts.push("--transport", "websocket");
+  else if (!input.collectionRequest || input.collectionRequest.kind === "grpc") {
+    if (input.transportMode === "native-grpc" || input.transportMode === "grpc-web")
+      parts.push("--transport", input.transportMode);
+  }
+  if (input.environmentKey && input.environmentKey !== "default") parts.push("--env", quoteCliArg(input.environmentKey));
+  return parts.join(" ");
 }

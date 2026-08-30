@@ -6,13 +6,16 @@ declare const process: { env?: Record<string, string | undefined> } | undefined;
 export const projectStorageKey = "layang-project-v2";
 export const legacyWorkspaceKey = "grpc-lab-workspaces-v1";
 export const legacyActiveWorkspaceKey = "grpc-lab-active-workspace-v1";
-export const railWidth = 52;
+export const railWidth = designSystem.size.railWidth;
 export const collapsedSidebarWidth = 0;
-export const sidebarWidth = 278;
-export const minSidebarWidth = 224;
-export const maxSidebarWidth = 440;
-export const defaultResponseHeight = 340;
-export const minResponseHeight = 160;
+export const sidebarWidth = designSystem.size.sidebarWidth;
+export const minSidebarWidth = designSystem.size.sidebarMinWidth;
+export const maxSidebarWidth = designSystem.size.sidebarMaxWidth;
+export const defaultResponseHeight = 300;
+export const minResponseHeight = 120;
+export const maxStoredResponseHeight = 1200;
+export const minResponseWidth = 300;
+export const maxStoredResponseWidth = 1600;
 export const layoutStorageKey = "layang-layout-v1";
 export const legacyProjectStorageKey = "grpc-lab-project-v2";
 export const legacyLayoutStorageKey = "grpc-lab-layout-v1";
@@ -68,6 +71,8 @@ export const defaultMetadata: MetadataPair[] = [
 
 export const defaultAssertion = "";
 export const defaultMockPort = 50055;
+/** Sentinel used when the gRPC Mock root/dashboard is selected instead of an individual RPC method. */
+export const grpcMockOverviewMethodKey = "__layang_grpc_mock_overview__";
 export const defaultMockStreamIntervalMs = 1000;
 export const defaultMockStreamLoop = false;
 export const defaultMockScenarioText = `version: 1

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import {
   Box,
   Button,
@@ -8,13 +8,10 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  FormControl,
-  IconButton,
   InputAdornment,
   Menu,
   MenuItem,
   Paper,
-  Select,
   Stack,
   TextField,
   Tooltip,
@@ -23,29 +20,28 @@ import {
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarTrigger,
 } from "@/components/ui/sidebar";
 import {
-  Add,
   Api,
-  Delete,
   DocsIcon,
   MockServer,
-  PanelBottom,
-  PanelRight,
   ProtoIcon,
   Search,
   Settings as SettingsIcon,
   SourceControl,
 } from "@/components/shadcn/icons";
-import { collapsedSidebarWidth, maxSidebarWidth, minSidebarWidth, railWidth } from "../../shared/workbench-constants";
+import {
+  collapsedSidebarWidth,
+  grpcMockOverviewMethodKey,
+  maxSidebarWidth,
+  minSidebarWidth,
+  railWidth,
+} from "../../shared/workbench-constants";
 import { loadProtoFiles } from "@/lib/proto-loader";
-import { SearchHighlightedText } from "../../shared/components/search-highlight";
 import type { ProtoSourceFile } from "@/lib/types";
 import {
   assessProtoLibraryImport,
@@ -53,27 +49,17 @@ import {
   type ProtoLibraryImportAssessment,
   type ProtoVersionImportPlan,
 } from "../proto-library/proto-version-management";
-import type { ServiceProtocol, ServicesSection, SettingsSection, SideSection } from "../../shared/workbench-types";
+import type { SettingsSection, SideSection } from "../../shared/workbench-types";
 import type { WorkbenchViewContext } from "./use-workbench-container-model";
-import { GitSourceControlSidebar } from "../git/git-source-control";
+import { MockingSidebarTree } from "../services/mocking-sidebar-tree";
+import { SchemaSidebarTree } from "../proto-registry/schema-sidebar-tree";
 
 const settingsItems: Array<{ value: SettingsSection; label: string }> = [
-  { value: "general", label: "General" },
+  { value: "general", label: "Appearance & Layout" },
   { value: "workspace", label: "Workspace" },
   { value: "environments", label: "Environments" },
-  { value: "network", label: "Network" },
+  { value: "network", label: "Network & Certificates" },
   { value: "logging", label: "Logging" },
-];
-
-const serviceItems: Array<{
-  id: string;
-  label: string;
-  section: ServicesSection;
-  protocol?: ServiceProtocol;
-}> = [
-  { id: "grpc-mock", label: "gRPC", section: "mock-servers", protocol: "grpc-mock" },
-  { id: "rest", label: "REST Mock", section: "mock-servers", protocol: "rest" },
-  { id: "websocket", label: "WebSocket Mock", section: "mock-servers", protocol: "websocket" },
 ];
 
 type TextInputChangeEvent = ChangeEvent<HTMLInputElement | HTMLTextAreaElement>;
@@ -117,6 +103,9 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
     importMockScenarioFile,
     importWorkspaceFiles,
     mockScenarioInputRef,
+    mockSelectedMethodKey,
+    mockServer,
+    setMockSelectedMethodKey,
     openAddCollectionDialog,
     openAddCollectionRequestDialog,
     openDocumentationPage,
@@ -134,8 +123,6 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
     renameCollectionRequest,
     purgeGlobalProtoLibrary,
     repairCollectionGrpcRequest,
-    requestResponseLayout,
-    requestSessions,
     selectCollectionRequest,
     selectProtoLibraryVersion,
     serviceProtocol,
@@ -153,12 +140,14 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
     sidebarOpen,
     sidebarWidthPx,
     moveCollectionTreeNode,
-    toggleRequestResponseLayout,
     updateDocumentationSettings,
   } = ctx;
 
   const [protoFilter, setProtoFilter] = useState("");
   const [protoImportAnchor, setProtoImportAnchor] = useState<HTMLElement | null>(null);
+  const [newMenuAnchor, setNewMenuAnchor] = useState<HTMLElement | null>(null);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [commandPaletteQuery, setCommandPaletteQuery] = useState("");
   const [deleteSchemaLibraryId, setDeleteSchemaLibraryId] = useState("");
   const [globalProtoImportReview, setGlobalProtoImportReview] = useState<GlobalProtoImportReview | null>(null);
   const [globalProtoImportError, setGlobalProtoImportError] = useState("");
@@ -168,7 +157,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
   const railItems: RailItem[] = [
     { section: "collections", label: "Collections", icon: <Api fontSize="small" /> },
     { section: "proto-schemas", label: "Schemas", icon: <ProtoIcon fontSize="small" /> },
-    { section: "services", label: "Services", icon: <MockServer fontSize="small" /> },
+    { section: "services", label: "Mocking", icon: <MockServer fontSize="small" /> },
     { section: "docs", label: "Docs", icon: <DocsIcon fontSize="small" /> },
     { section: "source-control", label: "Source Control", icon: <SourceControl fontSize="small" /> },
   ];
@@ -179,21 +168,14 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
       : sideSection === "proto-schemas"
         ? "Schemas"
         : sideSection === "services"
-          ? "Services"
+          ? "Mocking"
           : sideSection === "docs"
             ? "Docs"
             : sideSection === "source-control"
               ? "Source Control"
               : "Settings";
 
-  const filteredLibraries = protoLibraries.filter((library: any) => {
-    const query = protoFilter.trim().toLowerCase();
-    if (!query) return true;
-    return (
-      library.name.toLowerCase().includes(query) ||
-      library.versions?.some((version: any) => version.version.toLowerCase().includes(query))
-    );
-  });
+
 
   const anyServiceRunning = Boolean(
     ctx.mockServerStatus.running ||
@@ -207,6 +189,49 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
         collection.requests.filter((request: any) => request.grpc?.libraryId === deleteSchemaLibrary.id),
       ).length
     : 0;
+
+  function quickRequestDestination() {
+    for (const collection of collections) {
+      const request = collection.requests.find((item: any) => item.id === activeCollectionRequestId);
+      if (request) return { collectionId: collection.id, folderId: request.parentId ?? null };
+    }
+    const firstCollection = collections[0];
+    return firstCollection ? { collectionId: firstCollection.id, folderId: null } : null;
+  }
+
+  function openQuickRequest(kind: "" | "grpc" | "rest" | "websocket" = "") {
+    setNewMenuAnchor(null);
+    setCommandPaletteOpen(false);
+    const destination = quickRequestDestination();
+    if (!destination) {
+      if (kind === "grpc" || kind === "") {
+        openAddCollectionRequestDialog("", kind, null);
+        return;
+      }
+      openAddCollectionDialog();
+      return;
+    }
+    openAddCollectionRequestDialog(destination.collectionId, kind, destination.folderId);
+  }
+
+  useEffect(() => {
+    const handleQuickCreateShortcut = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "n") {
+        event.preventDefault();
+        openQuickRequest("");
+        return;
+      }
+      if (key === "k") {
+        event.preventDefault();
+        setCommandPaletteQuery("");
+        setCommandPaletteOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handleQuickCreateShortcut);
+    return () => window.removeEventListener("keydown", handleQuickCreateShortcut);
+  }, [activeCollectionRequestId, collections]);
 
   function openGlobalProtoImporter(mode: "files" | "folder") {
     setProtoImportAnchor(null);
@@ -313,13 +338,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
     setSidebarOpen(true);
   }
 
-  function selectService(item: (typeof serviceItems)[number]) {
-    setServicesSection(item.section);
-    if (item.protocol) setServiceProtocol(item.protocol);
-    if (compactViewport) setSidebarOpen(false);
-  }
 
-  const activeServiceId = serviceProtocol === "web-access" ? "grpc-mock" : serviceProtocol;
 
   return (
     <>
@@ -380,27 +399,27 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
         {...{ webkitdirectory: "", directory: "" }}
         onChange={(event) => void reviewGlobalProtoFiles(event.target.files)}
       />
-      {!compactViewport && (
-        <Box
+      <Box
           component="nav"
           aria-label="Workbench areas"
+          className="workbench-activity-rail"
           sx={{
             position: "fixed",
             top: designSystem.size.titlebarHeight,
-            bottom: 24,
+            bottom: designSystem.size.statusbarHeight,
             left: 0,
             width: railWidth,
-            zIndex: 1110,
+            zIndex: 1220,
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
             borderRight: "1px solid",
-            borderColor: "divider",
-            bgcolor: "background.paper",
-            py: 0.75,
+            borderColor: "var(--border-strong)",
+            bgcolor: "var(--rail-bg)",
+            py: 0,
           }}
         >
-          <Stack spacing={0.35} alignItems="center" sx={{ width: "100%" }}>
+          <Stack spacing={0} alignItems="center" sx={{ width: "100%" }}>
             {railItems.map((item) => (
               <Tooltip key={item.section} title={item.label} placement="right">
                 <Button
@@ -410,10 +429,10 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
                   onClick={() => openRailSection(item.section)}
                   sx={{
                     minWidth: 0,
-                    width: 40,
-                    height: 40,
+                    width: designSystem.size.railButton,
+                    height: "var(--rail-button-size, 48px)",
                     p: 0,
-                    borderRadius: 1.25,
+                    borderRadius: 0,
                     color: sideSection === item.section ? "primary.main" : "text.secondary",
                     bgcolor: sideSection === item.section ? "action.selected" : "transparent",
                     position: "relative",
@@ -422,11 +441,11 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
                         ? {
                             content: '""',
                             position: "absolute",
-                            left: -6,
+                            left: 0,
                             top: 8,
                             bottom: 8,
-                            width: 3,
-                            borderRadius: "0 3px 3px 0",
+                            width: 2,
+                            borderRadius: "0 2px 2px 0",
                             bgcolor: "primary.main",
                           }
                         : undefined,
@@ -455,34 +474,6 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
 
           <Box sx={{ flex: 1 }} />
 
-          {sideSection === "collections" && Boolean(activeCollectionRequestId) && (
-            <Tooltip
-              title={`Request editor layout: ${requestResponseLayout === "horizontal" ? "Side by side" : "Stacked"}`}
-              placement="right"
-            >
-              <Button
-                size="small"
-                aria-label={`Switch request editor to ${requestResponseLayout === "horizontal" ? "stacked" : "side-by-side"} layout`}
-                onClick={toggleRequestResponseLayout}
-                sx={{
-                  minWidth: 0,
-                  width: 40,
-                  height: 40,
-                  p: 0,
-                  mb: 0.35,
-                  borderRadius: 1.25,
-                  color: "text.secondary",
-                }}
-              >
-                {requestResponseLayout === "horizontal" ? (
-                  <PanelRight fontSize="small" />
-                ) : (
-                  <PanelBottom fontSize="small" />
-                )}
-              </Button>
-            </Tooltip>
-          )}
-
           <Tooltip title="Settings" placement="right">
             <Button
               size="small"
@@ -491,10 +482,10 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
               onClick={() => openRailSection("settings")}
               sx={{
                 minWidth: 0,
-                width: 40,
-                height: 40,
+                width: designSystem.size.railButton,
+                height: "var(--rail-button-size, 48px)",
                 p: 0,
-                borderRadius: 1.25,
+                borderRadius: 0,
                 color: sideSection === "settings" ? "primary.main" : "text.secondary",
                 bgcolor: sideSection === "settings" ? "action.selected" : "transparent",
               }}
@@ -503,92 +494,77 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
             </Button>
           </Tooltip>
         </Box>
-      )}
 
-      {(compactViewport || sideSection !== "source-control") && (
+      {(compactViewport || sidebarOpen) && sideSection !== "source-control" && (
         <Sidebar
           mobile={compactViewport}
           width={sidebarWidthPx}
           collapsedWidth={collapsedSidebarWidth}
           top={designSystem.size.titlebarHeight}
-          bottom={24}
-          style={!compactViewport ? { left: railWidth } : undefined}
+          bottom={designSystem.size.statusbarHeight}
+          style={{ left: railWidth, maxWidth: `calc(100vw - ${railWidth}px)` }}
         >
           <SidebarHeader>
-            <Stack direction="row" alignItems="center" spacing={0.75}>
-              <Typography variant="subtitle1" noWrap title={sidebarTitle} sx={{ minWidth: 0, flex: 1 }}>
+            <Stack direction="row" alignItems="center" spacing={0.5} sx={{ width: "100%" }}>
+              <Typography
+                variant="caption"
+                noWrap
+                title={sidebarTitle}
+                sx={{ minWidth: 0, flex: 1, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}
+              >
                 {sidebarTitle}
               </Typography>
               {sideSection === "collections" && (
-                <Tooltip title="New collection">
-                  <IconButton
-                    size="small"
-                    onClick={openAddCollectionDialog}
-                    aria-label="New collection"
-                    sx={{
-                      width: 28,
-                      height: 28,
-                      color: "primary.contrastText",
-                      bgcolor: "primary.main",
-                      "&:hover": { bgcolor: "primary.dark" },
-                    }}
-                  >
-                    <Add sx={{ fontSize: 16 }} />
-                  </IconButton>
-                </Tooltip>
+                <Button
+                  size="small"
+                  variant="text"
+                  onClick={(event: any) => setNewMenuAnchor(event.currentTarget)}
+                  aria-label="New request or collection"
+                  title="New"
+                  sx={{ minWidth: 26, width: 26, px: 0, color: "text.secondary", fontSize: 16 }}
+                >
+                  +
+                </Button>
               )}
               {sideSection === "proto-schemas" && (
-                <Tooltip title="Import Proto">
-                  <IconButton
-                    size="small"
-                    onClick={(event: any) => setProtoImportAnchor(event.currentTarget)}
-                    aria-label="Import Proto"
-                    sx={{
-                      width: 28,
-                      height: 28,
-                      color: "primary.contrastText",
-                      bgcolor: "primary.main",
-                      "&:hover": { bgcolor: "primary.dark" },
-                    }}
-                  >
-                    <Add sx={{ fontSize: 16 }} />
-                  </IconButton>
-                </Tooltip>
+                <Button
+                  size="small"
+                  variant="text"
+                  onClick={(event: any) => setProtoImportAnchor(event.currentTarget)}
+                  aria-label="Import Proto"
+                  sx={{ minWidth: 0, px: 0.75, color: "text.secondary" }}
+                >
+                  Import
+                </Button>
               )}
-              {!compactViewport ? (
-                <SidebarTrigger aria-label="Hide context sidebar" />
-              ) : (
+              {compactViewport ? (
                 <Button size="small" variant="text" aria-label="Close sidebar" onClick={() => setSidebarOpen(false)}>
                   Close
                 </Button>
-              )}
+              ) : null}
             </Stack>
 
-            {compactViewport && (
-              <Stack direction="row" spacing={0.25} sx={{ pt: 0.75, overflowX: "auto" }} aria-label="Workbench areas">
-                {[
-                  ...railItems,
-                  { section: "settings" as const, label: "Settings", icon: <SettingsIcon fontSize="small" /> },
-                ].map((item) => (
-                  <Button
-                    key={item.section}
-                    size="small"
-                    variant={sideSection === item.section ? "contained" : "text"}
-                    aria-label={item.label}
-                    onClick={() => setSideSection(item.section)}
-                    sx={{ minWidth: 34, px: 0.65 }}
-                  >
-                    {item.icon}
-                  </Button>
-                ))}
-              </Stack>
-            )}
           </SidebarHeader>
+
+          <Menu anchorEl={newMenuAnchor} open={Boolean(newMenuAnchor)} onClose={() => setNewMenuAnchor(null)}>
+            <MenuItem onClick={() => openQuickRequest("")}>Quick create…</MenuItem>
+            <MenuItem onClick={() => openQuickRequest("grpc")}>Request from schema</MenuItem>
+            <MenuItem onClick={() => openQuickRequest("rest")}>Blank HTTP request</MenuItem>
+            <MenuItem onClick={() => openQuickRequest("websocket")}>Blank WebSocket request</MenuItem>
+            <MenuItem
+              onClick={() => {
+                setNewMenuAnchor(null);
+                openAddCollectionDialog();
+              }}
+            >
+              New collection
+            </MenuItem>
+          </Menu>
 
           <SidebarContent className="p-0">
             {sideSection === "collections" && (
               <Stack spacing={0} sx={{ minHeight: 0 }}>
-                <Box sx={{ px: 0.75, pt: 0.7, pb: 0.65 }}>
+                <Box sx={{ px: 0.6, pt: 0.55, pb: 0.55 }}>
                   <TextField
                     size="small"
                     fullWidth
@@ -610,7 +586,6 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
                   protoLibraries={protoLibraries}
                   filterQuery={collectionFilter}
                   selectedCollectionRequestId={activeCollectionRequestId}
-                  requestSessions={requestSessions}
                   onSelectCollectionRequest={(collection: any, request: any) => {
                     setProtoPreview(null);
                     setActiveDocumentationPageId("");
@@ -632,8 +607,8 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
             )}
 
             {sideSection === "proto-schemas" && (
-              <Stack spacing={0} sx={{ minHeight: 0 }}>
-                <Box sx={{ px: 0.75, pt: 0.7, pb: 0.65 }}>
+              <Stack spacing={0} sx={{ minHeight: 0, height: "100%" }}>
+                <Box sx={{ px: 0.6, pt: 0.55, pb: 0.55 }}>
                   <TextField
                     size="small"
                     fullWidth
@@ -650,132 +625,57 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
                     inputProps={{ "aria-label": "Search schemas" }}
                   />
                 </Box>
-                <Stack spacing="4px" sx={{ px: 0.6, pb: 0.75, overflow: "auto" }}>
-                  {filteredLibraries.length === 0 ? (
-                    <Typography variant="body2" color="text.secondary" sx={{ px: 0.5, py: 1 }}>
-                      No schemas found.
-                    </Typography>
-                  ) : (
-                    filteredLibraries.map((library: any) => {
-                      const visibleVersions = (library.versions ?? []).filter(
-                        (version: any) => version.lifecycle !== "archived",
-                      );
-                      const selectedVersion =
-                        visibleVersions.find(
-                          (version: any) => version.id === activeProtoVersionId && library.id === activeProtoLibraryId,
-                        ) ??
-                        visibleVersions.find((version: any) => version.id === library.defaultVersionId) ??
-                        visibleVersions[0];
-                      const active = library.id === activeProtoLibraryId;
-                      const methodCount = active ? (ctx.loaded?.methods?.length ?? 0) : undefined;
-                      return (
-                        <Paper
-                          key={library.id}
-                          variant="outlined"
-                          sx={{
-                            borderColor: active ? "primary.main" : "divider",
-                            bgcolor: active ? "action.selected" : "transparent",
-                            overflow: "hidden",
-                          }}
-                        >
-                          <Stack direction="row" alignItems="stretch" spacing={0} sx={{ minWidth: 0 }}>
-                            <Button
-                              size="small"
-                              variant="text"
-                              onClick={() =>
-                                selectedVersion && selectProtoLibraryVersion(library.id, selectedVersion.id)
-                              }
-                              sx={{
-                                flex: 1,
-                                minWidth: 0,
-                                minHeight: 44,
-                                justifyContent: "flex-start",
-                                px: 0.8,
-                                py: 0.55,
-                                textAlign: "left",
-                                color: "text.primary",
-                                borderRadius: 0,
-                              }}
-                            >
-                              <Box sx={{ minWidth: 0, flex: 1 }}>
-                                <Typography variant="body2" fontWeight={600} noWrap title={library.name}>
-                                  <SearchHighlightedText text={library.name} query={protoFilter} />
-                                </Typography>
-                                <Typography variant="caption" color="text.secondary" noWrap>
-                                  <SearchHighlightedText
-                                    text={selectedVersion?.version ?? "No revision"}
-                                    query={protoFilter}
-                                  />{" "}
-                                  · {selectedVersion?.files?.length ?? 0}{" "}
-                                  {(selectedVersion?.files?.length ?? 0) === 1 ? "file" : "files"}
-                                  {methodCount !== undefined
-                                    ? ` · ${methodCount} ${methodCount === 1 ? "method" : "methods"}`
-                                    : ""}
-                                </Typography>
-                              </Box>
-                            </Button>
-                            <Tooltip title={`Delete ${library.name}`}>
-                              <IconButton
-                                size="small"
-                                aria-label={`Delete ${library.name}`}
-                                onClick={(event: any) => {
-                                  event.stopPropagation();
-                                  setDeleteSchemaLibraryId(library.id);
-                                }}
-                                sx={{
-                                  width: 28,
-                                  minWidth: 28,
-                                  height: 28,
-                                  alignSelf: "center",
-                                  mr: 0.45,
-                                  color: "text.secondary",
-                                  "&:hover": { color: "error.main", bgcolor: "action.hover" },
-                                }}
-                              >
-                                <Delete sx={{ fontSize: 15 }} />
-                              </IconButton>
-                            </Tooltip>
-                          </Stack>
-                          {active && visibleVersions.length > 1 && (
-                            <Box sx={{ px: 0.7, pb: 0.65 }}>
-                              <FormControl fullWidth size="small">
-                                <Select
-                                  value={selectedVersion?.id ?? ""}
-                                  inputProps={{ "aria-label": `Revision for ${library.name}` }}
-                                  onChange={(event: any) => {
-                                    setProtoPreview(null);
-                                    selectProtoLibraryVersion(library.id, String(event.target.value));
-                                  }}
-                                >
-                                  {visibleVersions.map((version: any) => (
-                                    <MenuItem key={version.id} value={version.id}>
-                                      {version.version}
-                                      {version.id === library.defaultVersionId ? " · Default" : ""}
-                                    </MenuItem>
-                                  ))}
-                                </Select>
-                              </FormControl>
-                            </Box>
-                          )}
-                        </Paper>
-                      );
-                    })
-                  )}
-                </Stack>
+                <Box sx={{ minHeight: 0, flex: 1, overflow: "auto", pb: 0.5 }}>
+                  <SchemaSidebarTree
+                    libraries={protoLibraries}
+                    activeLibraryId={activeProtoLibraryId}
+                    activeVersionId={activeProtoVersionId}
+                    query={protoFilter}
+                    onSelectVersion={(libraryId, versionId) => {
+                      setProtoPreview(null);
+                      selectProtoLibraryVersion(libraryId, versionId);
+                      window.setTimeout(() => window.dispatchEvent(new CustomEvent("layang:schema-select", { detail: { libraryId, versionId } })), 0);
+                      if (compactViewport) setSidebarOpen(false);
+                    }}
+                    onSelectMethod={(libraryId, versionId, method) => {
+                      setProtoPreview(null);
+                      selectProtoLibraryVersion(libraryId, versionId);
+                      window.setTimeout(() => {
+                        window.dispatchEvent(
+                          new CustomEvent("layang:schema-select", {
+                            detail: { libraryId, versionId, methodKey: `${method.serviceName}/${method.methodName}` },
+                          }),
+                        );
+                      }, 0);
+                      if (compactViewport) setSidebarOpen(false);
+                    }}
+                  />
+                </Box>
               </Stack>
             )}
 
             {sideSection === "services" && (
-              <Box sx={{ p: 0.75 }}>
-                <SidebarMenu aria-label="Service views">
-                  {serviceItems.map((item) => (
-                    <SidebarMenuItem key={item.id}>
-                      <SidebarMenuButton isActive={activeServiceId === item.id} onClick={() => selectService(item)}>
-                        {item.label}
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
+              <Box sx={{ py: 0.35 }}>
+                <MockingSidebarTree
+                  protoLibraries={protoLibraries}
+                  mockServer={mockServer}
+                  mockServerStatus={ctx.mockServerStatus}
+                  selectedMethodKey={mockSelectedMethodKey}
+                  serviceProtocol={serviceProtocol}
+                  onSelectGrpcMethod={(libraryId, versionId, method) => {
+                    selectProtoLibraryVersion(libraryId, versionId);
+                    setMockSelectedMethodKey(`${method.serviceName}/${method.methodName}`);
+                    setServicesSection("mock-servers");
+                    setServiceProtocol("grpc-mock");
+                    if (compactViewport) setSidebarOpen(false);
+                  }}
+                  onSelectProtocol={(protocol) => {
+                    setServicesSection("mock-servers");
+                    if (protocol === "grpc-mock") setMockSelectedMethodKey(grpcMockOverviewMethodKey);
+                    setServiceProtocol(protocol);
+                    if (compactViewport) setSidebarOpen(false);
+                  }}
+                />
               </Box>
             )}
 
@@ -798,24 +698,8 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
               </Box>
             )}
 
-            {sideSection === "source-control" && (
-              <GitSourceControlSidebar
-                directoryPath={ctx.workspaceFolderPath || ""}
-                onFlushWorkspace={async () => {
-                  const directoryPath = ctx.workspaceFolderPath || "";
-                  if (!directoryPath || !window.electronWorkspace?.saveFolder || !ctx.getWorkspaceExportBundle) return;
-                  const result = await window.electronWorkspace.saveFolder(
-                    ctx.getWorkspaceExportBundle(),
-                    directoryPath,
-                  );
-                  if (!result?.ok)
-                    throw new Error(result?.error || "Failed to save the workspace before the Git operation.");
-                }}
-              />
-            )}
-
             {sideSection === "settings" && (
-              <Box sx={{ p: 0.75 }}>
+              <Box sx={{ p: 0.45 }}>
                 <SidebarMenu aria-label="Settings sections">
                   {settingsItems.map((item) => (
                     <SidebarMenuItem key={item.value}>
@@ -834,12 +718,6 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
               </Box>
             )}
           </SidebarContent>
-
-          <SidebarFooter>
-            <Typography variant="caption" color="text.secondary" noWrap>
-              Ctrl+B toggles this panel
-            </Typography>
-          </SidebarFooter>
 
           {!compactViewport && sidebarOpen && (
             <Box
@@ -870,15 +748,27 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
               sx={{
                 position: "absolute",
                 top: 0,
-                right: -3,
-                width: 6,
+                right: -5,
+                width: 10,
                 height: "100%",
                 cursor: "col-resize",
-                zIndex: 2,
-                "&:hover, &:focus-visible": {
+                zIndex: 4,
+                bgcolor: "transparent",
+                outline: "none",
+                "&::after": {
+                  content: '""',
+                  position: "absolute",
+                  top: 0,
+                  bottom: 0,
+                  left: "50%",
+                  width: 1,
+                  transform: "translateX(-0.5px)",
+                  bgcolor: "var(--border-strong)",
+                },
+                "&:hover::after, &:focus-visible::after": {
+                  width: 2,
+                  transform: "translateX(-1px)",
                   bgcolor: "primary.main",
-                  opacity: 0.4,
-                  outline: "none",
                 },
               }}
             />
@@ -890,6 +780,43 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
         <MenuItem onClick={() => openGlobalProtoImporter("files")}>Import files</MenuItem>
         <MenuItem onClick={() => openGlobalProtoImporter("folder")}>Import folder</MenuItem>
       </Menu>
+
+      <Dialog open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle>Command palette</DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <Stack spacing={0.75} sx={{ mt: 0.5 }}>
+            <TextField
+              autoFocus
+              size="small"
+              value={commandPaletteQuery}
+              onChange={(event: TextInputChangeEvent) => setCommandPaletteQuery(event.target.value)}
+              placeholder="Search commands"
+              inputProps={{ "aria-label": "Search commands" }}
+            />
+            {[
+              { label: "Create requests from schema", run: () => openQuickRequest("grpc") },
+              { label: "New HTTP request", run: () => openQuickRequest("rest") },
+              { label: "New WebSocket request", run: () => openQuickRequest("websocket") },
+              { label: "New collection", run: () => { setCommandPaletteOpen(false); openAddCollectionDialog(); } },
+              { label: "Import Proto schema", run: () => { setCommandPaletteOpen(false); openGlobalProtoImporter("files"); } },
+            ]
+              .filter((command) => command.label.toLowerCase().includes(commandPaletteQuery.trim().toLowerCase()))
+              .map((command) => (
+                <Button
+                  key={command.label}
+                  variant="text"
+                  onClick={command.run}
+                  sx={{ justifyContent: "flex-start", textTransform: "none" }}
+                >
+                  {command.label}
+                </Button>
+              ))}
+            <Typography variant="caption" color="text.secondary">
+              Ctrl/Cmd+N opens Quick Create · Ctrl/Cmd+K opens this palette
+            </Typography>
+          </Stack>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={Boolean(globalProtoImportReview)}

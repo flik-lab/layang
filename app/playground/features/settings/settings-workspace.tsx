@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { Box, Button, Chip, Divider, Paper, Stack, TextField, Typography } from "@/components/shadcn/compat";
-import { DarkMode, LightMode, PanelBottom, PanelRight, Settings, Storage, UploadFile } from "@/components/shadcn/icons";
+import { Box, Button, Chip, Paper, Stack, TextField, Typography } from "@/components/shadcn/compat";
+import { DarkMode, LightMode, PanelBottom, PanelRight, Storage, UploadFile } from "@/components/shadcn/icons";
 import { maxSidebarWidth, minSidebarWidth, sidebarWidth } from "../../shared/workbench-constants";
 import { uiCopy } from "../../shared/ui-copy";
 
@@ -10,10 +10,13 @@ type ViewContext = Record<string, any>;
 
 const settingCardSx = {
   width: "100%",
-  border: "1px solid",
+  borderBottom: "1px solid",
   borderColor: "divider",
-  borderRadius: 2,
-  p: "var(--workbench-section-padding)",
+  borderRadius: 0,
+  px: 0,
+  py: 1.25,
+  bgcolor: "transparent",
+  boxShadow: "none",
 } as const;
 
 export function SettingsWorkspace({ ctx }: { ctx: ViewContext }) {
@@ -25,6 +28,7 @@ export function SettingsWorkspace({ ctx }: { ctx: ViewContext }) {
     createNewWorkspaceFolder,
     densityMode,
     environments,
+    horizontalLayoutAvailable,
     openCertificateSettings,
     openEnvironmentManager,
     openLoggerSettings,
@@ -77,15 +81,15 @@ export function SettingsWorkspace({ ctx }: { ctx: ViewContext }) {
         direction="row"
         alignItems="center"
         spacing={1}
-        sx={{ px: 1.6, py: 1.1, borderBottom: "1px solid", borderColor: "divider" }}
+        sx={{ minHeight: 50, px: 1.5, borderBottom: "1px solid var(--border-strong)" }}
       >
-        <Settings sx={{ fontSize: 19 }} color="primary" />
         <Box>
-          <Typography variant="h6">Settings</Typography>
+          <Typography variant="subtitle1" fontWeight={600}>Settings</Typography>
+          <Typography variant="caption" color="text.secondary">Configure Layang without leaving the workbench.</Typography>
         </Box>
       </Stack>
       <Box sx={{ p: "var(--workbench-section-padding)", minHeight: 0, minWidth: 0, flex: 1, overflow: "auto" }}>
-        <Box sx={{ width: "100%", maxWidth: 960, mx: "auto" }}>
+        <Box sx={{ width: "100%", maxWidth: 820 }}>
           {settingsSection === "general" && (
             <Stack spacing="var(--workbench-card-gap)" sx={{ width: "100%" }}>
               <SettingCard title="Appearance">
@@ -155,21 +159,28 @@ export function SettingsWorkspace({ ctx }: { ctx: ViewContext }) {
                 </Stack>
               </SettingCard>
               <SettingCard title="Request editor layout">
-                <Stack direction="row" spacing={0.8} flexWrap="wrap" useFlexGap>
-                  <Button
-                    variant={requestResponseLayout === "horizontal" ? "contained" : "outlined"}
-                    startIcon={<PanelRight />}
-                    onClick={() => setRequestResponseLayout("horizontal")}
-                  >
-                    Side by side
-                  </Button>
-                  <Button
-                    variant={requestResponseLayout === "vertical" ? "contained" : "outlined"}
-                    startIcon={<PanelBottom />}
-                    onClick={() => setRequestResponseLayout("vertical")}
-                  >
-                    Stacked
-                  </Button>
+                <Stack spacing={0.65}>
+                  <Stack direction="row" spacing={0.8} flexWrap="wrap" useFlexGap>
+                    <Button
+                      variant={requestResponseLayout === "horizontal" ? "contained" : "outlined"}
+                      startIcon={<PanelRight />}
+                      onClick={() => setRequestResponseLayout("horizontal")}
+                    >
+                      Side by side
+                    </Button>
+                    <Button
+                      variant={requestResponseLayout === "vertical" ? "contained" : "outlined"}
+                      startIcon={<PanelBottom />}
+                      onClick={() => setRequestResponseLayout("vertical")}
+                    >
+                      Stacked
+                    </Button>
+                  </Stack>
+                  {requestResponseLayout === "horizontal" && !horizontalLayoutAvailable ? (
+                    <Typography variant="caption" color="text.secondary">
+                      Side by side is preserved and will resume automatically when the workbench is wide enough.
+                    </Typography>
+                  ) : null}
                 </Stack>
               </SettingCard>
               <SettingCard title="Interface zoom">
@@ -333,15 +344,14 @@ export function SettingsWorkspace({ ctx }: { ctx: ViewContext }) {
 
 function SettingCard({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
-    <Paper variant="outlined" sx={settingCardSx}>
-      <Typography variant="subtitle1">{title}</Typography>
+    <Paper elevation={0} sx={settingCardSx}>
+      <Typography variant="body2" fontWeight={600}>{title}</Typography>
       {description && (
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
           {description}
         </Typography>
       )}
-      <Divider sx={{ my: 1 }} />
-      {children}
+      <Box sx={{ mt: 0.8 }}>{children}</Box>
     </Paper>
   );
 }

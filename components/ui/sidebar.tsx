@@ -174,11 +174,11 @@ export function Sidebar({
         data-mobile={mobile ? "true" : "false"}
         data-state={mobile ? "expanded" : state}
         className={cn(
-          "flex min-h-0 flex-col overflow-hidden border-r border-border bg-card text-card-foreground shadow-sm transition-[width] duration-200 ease-linear",
+          "flex min-h-0 flex-col overflow-hidden border-r bg-card text-card-foreground transition-[width] duration-200 ease-linear",
           mobile && "shadow-2xl",
           className,
         )}
-        style={sidebarStyle}
+        style={{ ...sidebarStyle, borderRightColor: "var(--border-strong)" }}
         {...props}
       >
         {children}
@@ -188,13 +188,19 @@ export function Sidebar({
 }
 
 export function SidebarHeader({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return <div data-sidebar="header" className={cn("shrink-0 border-b border-border p-2", className)} {...props} />;
+  return (
+    <div
+      data-sidebar="header"
+      className={cn("flex h-[35px] shrink-0 items-center border-b border-border px-2 py-0", className)}
+      {...props}
+    />
+  );
 }
 export function SidebarContent({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       data-sidebar="content"
-      className={cn("min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-2", className)}
+      className={cn("min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-0", className)}
       {...props}
     />
   );

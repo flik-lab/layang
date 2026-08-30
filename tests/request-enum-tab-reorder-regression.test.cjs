@@ -73,11 +73,11 @@ test("unknown enum names still fail protobuf validation", () => {
 test("request tab drag reorder is persisted through the session action", () => {
   const tabs = read("app/playground/features/shell/shell-components.tsx");
   const actions = read("app/playground/features/request-editor/use-request-session-actions.ts");
-  const appBar = read("app/playground/features/shell/workbench-app-bar.tsx");
+  const mainPanel = read("app/playground/features/shell/workbench-main-panel.tsx");
 
   assert.match(tabs, /draggable=\{Boolean\(onReorder\)\}/);
   assert.match(tabs, /onReorder\?\.\(sourceId, session\.id, position\)/);
   assert.match(actions, /reorderRequestSessionList\(requestSessions, sourceId, targetId, position\)/);
   assert.match(actions, /persistRequestTabsNow\(next, activeRequestId\)/);
-  assert.match(appBar, /onReorder=\{reorderRequestSessions\}/);
+  assert.match(mainPanel, /onReorder=\{reorderRequestSessions\}/);
 });

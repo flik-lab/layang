@@ -227,10 +227,12 @@ import { normalizeEditableText, safeJsonParse } from "../../shared/json-utils";
 import { clamp } from "../../shared/number-utils";
 import { methodKey, methodTypeLabel } from "../../shared/rpc-method-utils";
 import { createId, savedExampleKey, slugify } from "../../shared/entity-utils";
+import { quoteCliArg, recordGuiCliCommand } from "../cli/cli-command-history";
 import {
   defaultAssertion,
   defaultMetadata,
   defaultMockPort,
+  grpcMockOverviewMethodKey,
   iconButtonSx,
   layoutStorageKey,
   minResponseHeight,
@@ -361,6 +363,8 @@ export function useWorkbenchContainerModel() {
     responseWidth,
     setResponseWidth,
     requestResponseLayout,
+    effectiveRequestResponseLayout,
+    horizontalLayoutAvailable,
     setRequestResponseLayout,
     beginSidebarResize,
     beginResponseResize,
@@ -530,6 +534,12 @@ export function useWorkbenchContainerModel() {
     setRequestGrpcVersionIdDraft,
     requestGrpcMethodKeyDraft,
     setRequestGrpcMethodKeyDraft,
+    requestGrpcBatchMethodKeysDraft,
+    setRequestGrpcBatchMethodKeysDraft,
+    requestGrpcSelectionModeDraft,
+    setRequestGrpcSelectionModeDraft,
+    requestGrpcSkipExistingDraft,
+    setRequestGrpcSkipExistingDraft,
     requestTargetCollectionId,
     setRequestTargetCollectionId,
     requestTargetFolderId,
@@ -598,6 +608,8 @@ export function useWorkbenchContainerModel() {
     applyWorkspacePreference,
     chooseCustomWorkspacePreference,
   } = workspace;
+
+
 
   const refreshLoggerSettings = useCallback(async () => {
     const info = await getLoggerInfo();
@@ -797,6 +809,63 @@ export function useWorkbenchContainerModel() {
     clearMockServerLocalDirty,
     refreshGrpcMockServerFromWorkspace,
   } = grpcMock;
+
+  // Keep CLI daemon runtime state in sync only after all protocol controllers are
+  // initialized. Referencing setMockServerStatus before useGrpcMockController runs
+  // triggers a temporal-dead-zone crash during SSR/client render.
+  useEffect(() => {
+    if (!workspaceFolderPath || !window.electronCli?.mockRuntimeStatus) return;
+    let cancelled = false;
+
+    const applyCliRuntimeStatus = async () => {
+      const result = await window.electronCli?.mockRuntimeStatus?.(workspaceFolderPath);
+      if (cancelled || !result?.ok) return;
+      const cliRunning = Boolean(result.running);
+      const statuses = result.statuses ?? {};
+      const protocol = result.protocol ?? "all";
+      const includes = (target: "grpc" | "rest" | "websocket") => protocol === "all" || protocol === target;
+
+      setMockServerStatus((current) => {
+        const next = statuses.grpc;
+        if (cliRunning && includes("grpc") && next) {
+          return { ...current, ...next, running: true, runtimeKind: "mock", runtimeSource: "cli", message: next.message ?? "Running from Layang CLI" };
+        }
+        if (!cliRunning && current.runtimeSource === "cli") {
+          return { ...current, running: false, runtimeSource: undefined, message: result.message ?? "CLI mock runtime stopped." };
+        }
+        return current;
+      });
+
+      setRestMockStatus((current) => {
+        const next = statuses.rest;
+        if (cliRunning && includes("rest") && next) {
+          return { ...current, ...next, running: true, runtimeSource: "cli", message: next.message ?? "Running from Layang CLI" };
+        }
+        if (!cliRunning && current.runtimeSource === "cli") {
+          return { ...current, running: false, runtimeSource: undefined, message: result.message ?? "CLI mock runtime stopped." };
+        }
+        return current;
+      });
+
+      setWsMockStatus((current) => {
+        const next = statuses.websocket;
+        if (cliRunning && includes("websocket") && next) {
+          return { ...current, ...next, running: true, runtimeSource: "cli", message: next.message ?? "Running from Layang CLI" };
+        }
+        if (!cliRunning && current.runtimeSource === "cli") {
+          return { ...current, running: false, runtimeSource: undefined, message: result.message ?? "CLI mock runtime stopped." };
+        }
+        return current;
+      });
+    };
+
+    void applyCliRuntimeStatus();
+    const timer = window.setInterval(() => void applyCliRuntimeStatus(), 900);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [workspaceFolderPath, setMockServerStatus, setRestMockStatus, setWsMockStatus]);
 
   useWorkspaceFolderAutosave({
     enabled: hydrated,
@@ -1086,6 +1155,7 @@ export function useWorkbenchContainerModel() {
 
   const mockSelectedMethod = useMemo(() => {
     const explicitKey = mockSelectedMethodKey.trim();
+    if (explicitKey === grpcMockOverviewMethodKey) return null;
     if (explicitKey) {
       const activeMatch = loaded?.methods.find((method) => methodKey(method) === explicitKey);
       if (activeMatch) return activeMatch;
@@ -2074,6 +2144,7 @@ export function useWorkbenchContainerModel() {
     activateRequestSession,
     updateRequestSession,
     beforeRunRequest: flushRunningMockServersBeforeRequest,
+    workspaceFolderPath,
   });
   requestRunnerRef.current = requestRunner;
 
@@ -2117,7 +2188,9 @@ export function useWorkbenchContainerModel() {
   }, [compactViewport, setRequestResponseLayout]);
 
   const contextSidebarVisible = sidebarOpen && sideSection !== "source-control";
-  const shellLeft = !compactViewport ? railWidth + (contextSidebarVisible ? sidebarWidthPx : 0) : 0;
+  // The activity rail remains fixed at every effective viewport width (including browser/Electron zoom).
+  // Compact context sidebars overlay the workbench to the right of the rail instead of replacing the rail with a top strip.
+  const shellLeft = railWidth + (!compactViewport && contextSidebarVisible ? sidebarWidthPx : 0);
 
   const viewDerived = useWorkbenchViewDerived({
     activeCollectionRequest,
@@ -2233,6 +2306,12 @@ export function useWorkbenchContainerModel() {
         restoredCount > 0
           ? ` ${restoredCount} missing reference${restoredCount === 1 ? "" : "s"} restored${reviewCount > 0 ? `; ${reviewCount} need body review` : ""}.`
           : "";
+      recordGuiCliCommand({
+        command: `layang schema:import --file "<proto-or-folder>" --name ${quoteCliArg(name)} --revision ${quoteCliArg(versionLabel)}`,
+        label: "Schema imported from GUI · choose the source path before replaying",
+        workspacePath: workspaceFolderPath,
+        replayable: false,
+      });
       showToast(
         (existing
           ? `${targetLibrary.name} is already available in the global Proto Schemas registry.`
@@ -2301,6 +2380,13 @@ export function useWorkbenchContainerModel() {
         setProtoPreview([...plan.candidateVersion.files].sort((a, b) => a.name.localeCompare(b.name))[0] ?? null);
         setSideSection("proto-schemas");
       }
+      const schemaLibrary = protoLibraries.find((item) => item.id === plan.libraryId);
+      recordGuiCliCommand({
+        command: `layang schema:update --schema ${quoteCliArg(schemaLibrary?.name || plan.libraryId)} --file "<proto-or-folder>" --revision ${quoteCliArg(plan.candidateVersion.version)}`,
+        label: "Schema revision updated from GUI · choose the source path before replaying",
+        workspacePath: workspaceFolderPath,
+        replayable: false,
+      });
       showToast(
         `${plan.candidateVersion.version} imported. ${selectedRequestIds.size} request${selectedRequestIds.size === 1 ? "" : "s"} updated.`,
         "success",
@@ -2330,39 +2416,74 @@ export function useWorkbenchContainerModel() {
   }
 
   function archiveProtoLibraryVersion(libraryId: string, versionId: string) {
+    const libraryBefore = protoLibraries.find((item) => item.id === libraryId);
+    const versionBefore = libraryBefore?.versions.find((item) => item.id === versionId);
     const result = archiveProtoVersion({ libraries: protoLibraries, libraryId, versionId });
     if (!result.ok) return result;
     activateProtoLifecycleSelection(result.libraries, result.nextLibraryId, result.nextVersionId);
+    if (libraryBefore && versionBefore) {
+      recordGuiCliCommand({
+        command: `layang schema:revision-archive --schema ${quoteCliArg(libraryBefore.name)} --revision ${quoteCliArg(versionBefore.version)}`,
+        label: `Archive schema revision · ${libraryBefore.name} ${versionBefore.version}`,
+        workspacePath: workspaceFolderPath,
+      });
+    }
     showToast("Proto revision archived. Existing references remain runnable.", "success");
     return { ...result, collections };
   }
 
   function restoreProtoLibraryVersion(libraryId: string, versionId: string) {
+    const libraryBefore = protoLibraries.find((item) => item.id === libraryId);
+    const versionBefore = libraryBefore?.versions.find((item) => item.id === versionId);
     const result = restoreProtoVersion({ libraries: protoLibraries, libraryId, versionId });
     if (!result.ok) return result;
     activateProtoLifecycleSelection(result.libraries, result.nextLibraryId, result.nextVersionId);
+    if (libraryBefore && versionBefore) {
+      recordGuiCliCommand({
+        command: `layang schema:revision-restore --schema ${quoteCliArg(libraryBefore.name)} --revision ${quoteCliArg(versionBefore.version)}`,
+        label: `Restore schema revision · ${libraryBefore.name} ${versionBefore.version}`,
+        workspacePath: workspaceFolderPath,
+      });
+    }
     showToast("Proto revision restored.", "success");
     return { ...result, collections };
   }
 
   function archiveGlobalProtoLibrary(libraryId: string) {
+    const libraryBefore = protoLibraries.find((item) => item.id === libraryId);
     const result = archiveProtoLibrary({ libraries: protoLibraries, libraryId });
     if (!result.ok) return result;
     activateProtoLifecycleSelection(result.libraries, result.nextLibraryId, result.nextVersionId);
+    if (libraryBefore) {
+      recordGuiCliCommand({
+        command: `layang schema:archive --schema ${quoteCliArg(libraryBefore.name)}`,
+        label: `Archive schema · ${libraryBefore.name}`,
+        workspacePath: workspaceFolderPath,
+      });
+    }
     showToast("Proto schema archived. Existing references remain runnable.", "success");
     return { ...result, collections };
   }
 
   function restoreGlobalProtoLibrary(libraryId: string) {
+    const libraryBefore = protoLibraries.find((item) => item.id === libraryId);
     const result = restoreProtoLibrary({ libraries: protoLibraries, libraryId });
     if (!result.ok) return result;
     activateProtoLifecycleSelection(result.libraries, result.nextLibraryId, result.nextVersionId);
+    if (libraryBefore) {
+      recordGuiCliCommand({
+        command: `layang schema:restore --schema ${quoteCliArg(libraryBefore.name)}`,
+        label: `Restore schema · ${libraryBefore.name}`,
+        workspacePath: workspaceFolderPath,
+      });
+    }
     showToast("Proto schema restored.", "success");
     return { ...result, collections };
   }
 
   function purgeProtoLibraryVersion(libraryId: string, versionId: string, referencePolicy: ProtoPurgeReferencePolicy) {
     const library = protoLibraries.find((item) => item.id === libraryId);
+    const versionBefore = library?.versions.find((item) => item.id === versionId);
     const runtimeBindings: GrpcRequestBinding[] = [
       ...requestSessions.flatMap((session) => (session.grpc ? [session.grpc] : [])),
       ...methodDocs.flatMap((doc) => (doc.grpc ? [doc.grpc] : [])),
@@ -2443,6 +2564,17 @@ export function useWorkbenchContainerModel() {
       updatedAt: new Date().toISOString(),
     }));
     activateProtoLifecycleSelection(result.libraries, result.nextLibraryId, result.nextVersionId);
+    if (library && versionBefore) {
+      const replacementVersion =
+        referencePolicy.type === "move-compatible"
+          ? library.versions.find((item) => item.id === referencePolicy.replacementVersionId)
+          : undefined;
+      recordGuiCliCommand({
+        command: `layang schema:revision-delete --schema ${quoteCliArg(library.name)} --revision ${quoteCliArg(versionBefore.version)}${replacementVersion ? ` --replacement ${quoteCliArg(replacementVersion.version)}` : ""} --yes`,
+        label: `Delete schema revision · ${library.name} ${versionBefore.version}`,
+        workspacePath: workspaceFolderPath,
+      });
+    }
     showToast(
       referencePolicy.type === "keep-unresolved"
         ? "Proto revision deleted. Existing references were kept unresolved."
@@ -2453,6 +2585,7 @@ export function useWorkbenchContainerModel() {
   }
 
   function purgeGlobalProtoLibrary(libraryId: string) {
+    const libraryBefore = protoLibraries.find((item) => item.id === libraryId);
     const markMissing = (binding: GrpcRequestBinding | undefined) =>
       binding?.libraryId === libraryId ? { ...binding, status: "library-missing" as const } : binding;
     const result = purgeProtoLibrary({ libraries: protoLibraries, collections, libraryId });
@@ -2473,6 +2606,13 @@ export function useWorkbenchContainerModel() {
       updatedAt: new Date().toISOString(),
     }));
     activateProtoLifecycleSelection(result.libraries, result.nextLibraryId, result.nextVersionId);
+    if (libraryBefore) {
+      recordGuiCliCommand({
+        command: `layang schema:delete --schema ${quoteCliArg(libraryBefore.name)} --yes`,
+        label: `Delete schema · ${libraryBefore.name}`,
+        workspacePath: workspaceFolderPath,
+      });
+    }
     showToast("Proto schema deleted. Existing references were kept unresolved.", "success");
     return result;
   }
@@ -2801,6 +2941,8 @@ export function useWorkbenchContainerModel() {
   });
   const {
     handleMockScenarioTextChange,
+    saveMockScenarioEditorDraft,
+    discardMockScenarioEditorDraft,
     handleMockPortChange,
     handleMockBindHostChange,
     handleGatewayModeChange,
@@ -2982,6 +3124,9 @@ export function useWorkbenchContainerModel() {
     requestGrpcLibraryIdDraft,
     requestGrpcVersionIdDraft,
     requestGrpcMethodKeyDraft,
+    requestGrpcBatchMethodKeysDraft,
+    requestGrpcSelectionModeDraft,
+    requestGrpcSkipExistingDraft,
     requestRunner,
     requestSessions,
     requestTargetCollectionId,
@@ -3035,6 +3180,9 @@ export function useWorkbenchContainerModel() {
     setRequestGrpcLibraryIdDraft,
     setRequestGrpcVersionIdDraft,
     setRequestGrpcMethodKeyDraft,
+    setRequestGrpcBatchMethodKeysDraft,
+    setRequestGrpcSelectionModeDraft,
+    setRequestGrpcSkipExistingDraft,
     setRequestNameDialogOpen,
     setRequestNameDraft,
     setRequestSessions,
@@ -3097,6 +3245,7 @@ export function useWorkbenchContainerModel() {
     importGrpcRequestIntoCollection,
     saveGrpcMethodToCollection,
     openGrpcMethodRequestDialog,
+    openGrpcMethodsRequestDialog,
     addCollectionRequest,
   } = collectionActions;
 
@@ -3497,6 +3646,8 @@ export function useWorkbenchContainerModel() {
     handleMockScenarioSelectChange,
     handleMockScenarioStreamSettingsChange,
     handleMockScenarioTextChange,
+    saveMockScenarioEditorDraft,
+    discardMockScenarioEditorDraft,
     handleProtoFiles,
     handleRequestJsonChange,
     handleResponseBodyScroll,
@@ -3514,6 +3665,7 @@ export function useWorkbenchContainerModel() {
     importGrpcRequestIntoCollection,
     saveGrpcMethodToCollection,
     openGrpcMethodRequestDialog,
+    openGrpcMethodsRequestDialog,
     importMockScenarioFile,
     importWorkspaceFiles,
     isNativeBridgeAvailable,
@@ -3612,12 +3764,17 @@ export function useWorkbenchContainerModel() {
     requestGrpcLibraryIdDraft,
     requestGrpcVersionIdDraft,
     requestGrpcMethodKeyDraft,
+    requestGrpcBatchMethodKeysDraft,
+    requestGrpcSelectionModeDraft,
+    requestGrpcSkipExistingDraft,
     requestTargetCollectionId,
     requestTargetFolderId,
     requestLocationEditable,
     requestNameDialogOpen,
     requestNameDraft,
     requestResponseLayout,
+    effectiveRequestResponseLayout,
+    horizontalLayoutAvailable,
     setRequestResponseLayout,
     requestRunner,
     requestSessions,
@@ -3683,6 +3840,9 @@ export function useWorkbenchContainerModel() {
     setRequestGrpcLibraryIdDraft,
     setRequestGrpcVersionIdDraft,
     setRequestGrpcMethodKeyDraft,
+    setRequestGrpcBatchMethodKeysDraft,
+    setRequestGrpcSelectionModeDraft,
+    setRequestGrpcSkipExistingDraft,
     setRequestTargetCollectionId,
     setRequestTargetFolderId,
     setRequestLocationEditable,

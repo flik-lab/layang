@@ -58,7 +58,10 @@ test("sidebar tooltips honor horizontal placements", () => {
   const compat = read("components/shadcn/compat.tsx");
   assert.match(compat, /side === "right"/);
   assert.match(compat, /side === "left"/);
-  assert.match(compat, /translateY\(-50%\)/);
+  assert.match(compat, /window\.innerWidth - width - margin/);
+  assert.match(compat, /window\.innerHeight - height - margin/);
+  assert.match(compat, /anchorRect\.right \+ gap \+ width > window\.innerWidth - margin/);
+  assert.match(compat, /visibility: tooltipPosition \? "visible" : "hidden"/);
   assert.doesNotMatch(compat, /max-w-72 -translate-x-1\/2/);
 });
 
@@ -73,14 +76,27 @@ test("search results use a visible yellow mark instead of bold-only matches", ()
   assert.doesNotMatch(responseViewer, /renderBoldMatches|HighlightedCodeText|HighlightedInlineText/);
 });
 
-test("request mock only selects a workspace scenario and never changes the request target", () => {
+test("request mock reuses Mock Settings controls without changing the request target", () => {
   const mainPanel = read("app/playground/features/shell/workbench-main-panel.tsx");
+  const controls = read("app/playground/features/mock-server/grpc-mock-scenario-controls.tsx");
+  const settings = read("app/playground/features/mock-server/mock-server-panels.tsx");
 
   assert.match(mainPanel, /selectActiveRequestScenario/);
+  assert.match(mainPanel, /setActiveRequestMockEnabled/);
+  assert.match(mainPanel, /openActiveRequestScenarioEditor/);
+  assert.match(mainPanel, /<GrpcMockScenarioActionsMenu/);
+  assert.match(mainPanel, /<GrpcMockScenarioManagerDialog/);
+  assert.match(mainPanel, /<GrpcScenarioSourceDialog/);
+  assert.match(mainPanel, /<GrpcMockScenarioControls/);
+  assert.match(settings, /<GrpcMockScenarioControls/);
+  assert.match(controls, /MethodMockSwitch/);
+  assert.match(controls, /Scenario settings/);
+  assert.match(controls, /Manage scenarios/);
+  assert.match(controls, /Add scenario/);
+  assert.doesNotMatch(mainPanel, /requestMockEditorDraft/);
   assert.doesNotMatch(mainPanel, /startActiveRequestMock/);
   assert.doesNotMatch(mainPanel, /setTargetDraft\(localTarget\)/);
   assert.doesNotMatch(mainPanel, /setNativeTarget\(localTarget\)/);
-  assert.doesNotMatch(mainPanel, /Edit scenario/);
   assert.match(mainPanel, /Configure in workspace/);
 });
 

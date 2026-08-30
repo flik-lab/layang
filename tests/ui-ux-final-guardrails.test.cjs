@@ -32,6 +32,7 @@ test("final method and scenario UX supports keyboard selection and explicit sour
 test("final shared UI guardrails keep dialogs and mock copy usable", () => {
   const compat = read("components/shadcn/compat.tsx");
   const mock = read("app/playground/features/mock-server/mock-server-panels.tsx");
+  const scenarioControls = read("app/playground/features/mock-server/grpc-mock-scenario-controls.tsx");
   const guidelines = read("docs/ui-copy-guidelines.md");
   const evaluation = read("docs/ui-ux-final-evaluation.md");
 
@@ -39,7 +40,8 @@ test("final shared UI guardrails keep dialogs and mock copy usable", () => {
   assert.match(mock, /uiCopy\.actions\.reloadFile/);
   assert.match(mock, /uiCopy\.fields\.intervalMs/);
   assert.match(mock, /uiCopy\.helper\.zeroMeansUnlimited/);
-  assert.match(mock, /aria-label=\{`Edit \$\{selectedScenarioId \|\| "scenario"\}`\}/);
+  assert.match(mock, /<GrpcMockScenarioControls/);
+  assert.match(scenarioControls, /aria-label=\{`Edit \$\{selectedScenario\?\.id \|\| "scenario"\}`\}/);
   assert.doesNotMatch(mock, />Fetch from file<|label="Interval ms"|helperText="0 = infinite"/);
   assert.match(guidelines, /## Final interaction guardrails/);
   assert.match(evaluation, /# Final UI\/UX evaluation/);

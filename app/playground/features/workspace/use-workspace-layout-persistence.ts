@@ -5,10 +5,12 @@ import { clamp } from "../../shared/number-utils";
 import {
   layoutStorageKey,
   maxSidebarWidth,
+  maxStoredResponseHeight,
+  maxStoredResponseWidth,
   minResponseHeight,
+  minResponseWidth,
   minSidebarWidth,
 } from "../../shared/workbench-constants";
-import { minResponseWidth } from "../layout/use-workbench-layout";
 import type { RequestResponseLayoutMode, WorkspaceLayoutSnapshot } from "../../shared/workbench-types";
 
 type StateSetter<T> = (value: T | ((current: T) => T)) => void;
@@ -58,10 +60,12 @@ export function useWorkspaceLayoutPersistence(scope: WorkspaceLayoutPersistenceS
             : sidebarWidthPx,
         responseHeight:
           typeof layout.responseHeight === "number"
-            ? Math.max(minResponseHeight, layout.responseHeight)
+            ? clamp(layout.responseHeight, minResponseHeight, maxStoredResponseHeight)
             : responseHeight,
         responseWidth:
-          typeof layout.responseWidth === "number" ? Math.max(minResponseWidth, layout.responseWidth) : responseWidth,
+          typeof layout.responseWidth === "number"
+            ? clamp(layout.responseWidth, minResponseWidth, maxStoredResponseWidth)
+            : responseWidth,
         requestResponseLayout:
           layout.requestResponseLayout === "vertical" || layout.requestResponseLayout === "horizontal"
             ? layout.requestResponseLayout

@@ -56,7 +56,7 @@ export function GitSourceControlSidebar({ directoryPath, onFlushWorkspace }: Git
   const unstaged = git.status.changes.filter((item) => item.unstaged);
 
   return (
-    <div className="min-h-0 space-y-2 p-1.5">
+    <div className="min-h-0 space-y-1 p-1">
       <div className="flex items-center gap-1.5">
         <GitBranch className="size-4 shrink-0" aria-hidden="true" />
         <p className="min-w-0 flex-1 truncate text-[length:var(--font-size-body)] font-semibold">
@@ -72,13 +72,13 @@ export function GitSourceControlSidebar({ directoryPath, onFlushWorkspace }: Git
           <RefreshCw className="size-3.5" />
         </Button>
       </div>
-      <div className="flex flex-wrap gap-1">
+      <div className="flex flex-wrap gap-0.5">
         <Badge variant="muted">{git.status.changes.length} changes</Badge>
         {git.status.ahead > 0 && <Badge>↑{git.status.ahead}</Badge>}
         {git.status.behind > 0 && <Badge variant="warning">↓{git.status.behind}</Badge>}
         {git.status.conflictCount > 0 && <Badge variant="destructive">{git.status.conflictCount} conflicts</Badge>}
       </div>
-      <div className="flex gap-1">
+      <div className="flex gap-0.5">
         <Button size="xs" variant="outline" onClick={() => void git.actions.fetch()} disabled={Boolean(git.busyAction)}>
           Fetch
         </Button>
@@ -250,8 +250,8 @@ function GitChangeGroup({
   onDiscard?: (change: LayangGitChange) => void;
 }) {
   return (
-    <section className="mb-1.5">
-      <div className="flex items-center gap-1 px-1 py-1">
+    <section className="mb-0.5">
+      <div className="flex min-h-6 items-center gap-1 px-1 py-0.5">
         <h3 className="min-w-0 flex-1 text-[length:var(--font-size-caption)] font-semibold">{title}</h3>
         {changes.length > 0 && (
           <Button size="xs" variant="ghost" onClick={onAction}>
@@ -273,7 +273,7 @@ function GitChangeGroup({
             <button
               type="button"
               onClick={() => onSelect(change)}
-              className="flex min-h-10 min-w-0 flex-1 items-center gap-1.5 px-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex min-h-7 min-w-0 flex-1 items-center gap-1 px-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <StatusCode change={change} />
               <span className="min-w-0 flex-1">

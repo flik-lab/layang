@@ -29,6 +29,11 @@ import {
   type CollectionNodeRef,
 } from "./collection-tree-domain";
 import { uniqueCollectionRequestName } from "./grpc-request-name";
+import {
+  NEW_SCHEMA_COLLECTION_TARGET,
+  preferredSchemaCollectionId,
+  uniqueSchemaCollectionName,
+} from "./quick-request-creator-domain";
 import { findReusableCollectionRequestSession } from "../request-editor/request-session-domain";
 
 type StateSetter<T> = (value: T | ((current: T) => T)) => void;
@@ -88,6 +93,9 @@ export function useCollectionActions(ctx: ActionContext) {
     requestGrpcLibraryIdDraft,
     requestGrpcVersionIdDraft,
     requestGrpcMethodKeyDraft,
+    requestGrpcBatchMethodKeysDraft,
+    requestGrpcSelectionModeDraft,
+    requestGrpcSkipExistingDraft,
     requestRunner,
     requestSessions,
     requestTargetCollectionId,
@@ -104,6 +112,9 @@ export function useCollectionActions(ctx: ActionContext) {
     setRequestGrpcLibraryIdDraft,
     setRequestGrpcVersionIdDraft,
     setRequestGrpcMethodKeyDraft,
+    setRequestGrpcBatchMethodKeysDraft,
+    setRequestGrpcSelectionModeDraft,
+    setRequestGrpcSkipExistingDraft,
     setRequestNameDialogOpen,
     setRequestNameDraft,
     setRequestSessions,
@@ -170,15 +181,24 @@ export function useCollectionActions(ctx: ActionContext) {
       });
       return;
     }
-    const firstSchema = protoLibraries[0];
+    const rememberedSchemaId =
+      typeof window !== "undefined" ? window.localStorage.getItem("layang:last-request-schema-id") ?? "" : "";
+    const firstSchema = protoLibraries.find((library) => library.id === rememberedSchemaId) ?? protoLibraries[0];
     const firstVersion =
       firstSchema?.versions.find((version) => version.id === firstSchema.defaultVersionId) ?? firstSchema?.versions[0];
     const firstCompiled =
       firstSchema && firstVersion ? protoRuntimeRegistry.resolveVersion(firstSchema.id, firstVersion.id) : null;
-    setRequestTargetCollectionId(collectionId);
+    const rememberedService =
+      typeof window !== "undefined" ? window.localStorage.getItem("layang:last-request-service-name") ?? "" : "";
+    const preferredMethods =
+      firstCompiled?.loaded.methods.filter((method) => method.serviceName === rememberedService) ?? [];
+    setRequestTargetCollectionId(collectionId || NEW_SCHEMA_COLLECTION_TARGET);
     setRequestTargetFolderId(parentId);
-    setRequestLocationEditable(false);
-    const firstMethod = kind === "grpc" ? firstCompiled?.loaded.methods[0] : undefined;
+    setRequestLocationEditable(kind === "grpc" || !kind);
+    const firstMethod = kind === "grpc" ? preferredMethods[0] ?? firstCompiled?.loaded.methods[0] : undefined;
+    setRequestGrpcSelectionModeDraft(kind === "grpc" ? "multi" : "single");
+    setRequestGrpcSkipExistingDraft(true);
+    setRequestGrpcBatchMethodKeysDraft(firstMethod && kind === "grpc" ? [methodKey(firstMethod)] : []);
     setRequestKindDraft(kind);
     setRequestNameDraft(
       firstMethod
@@ -197,35 +217,166 @@ export function useCollectionActions(ctx: ActionContext) {
   }
 
   function openGrpcMethodRequestDialog(method: RpcMethodInfo) {
-    const targetCollection =
-      collections.find((collection) => collection.id === activeCollectionRequest?.collectionId) ?? collections[0];
-    if (!targetCollection) {
-      showToast("Create a collection before saving this gRPC method.", "warning");
-      return;
-    }
     const activeProto = findProtoVersion(protoLibraries, activeProtoLibraryId, activeProtoVersionId);
     if (!activeProto) {
       showToast("Select a schema revision before creating a request.", "warning");
       return;
     }
-    setRequestTargetCollectionId(targetCollection.id);
-    setRequestTargetFolderId(null);
+    const contextualCollectionId = activeCollectionRequest?.collectionId ?? "";
+    const targetCollectionId = preferredSchemaCollectionId(activeProto.library.name, collections, contextualCollectionId);
+    setRequestTargetCollectionId(targetCollectionId);
+    setRequestTargetFolderId(targetCollectionId === contextualCollectionId ? activeCollectionRequest?.parentId ?? null : null);
     setRequestLocationEditable(true);
     setRequestKindDraft("grpc");
     setRequestGrpcLibraryIdDraft(activeProto.library.id);
     setRequestGrpcVersionIdDraft(activeProto.version.id);
     setRequestGrpcMethodKeyDraft(methodKey(method));
+    setRequestGrpcSelectionModeDraft("single");
+    setRequestGrpcSkipExistingDraft(true);
+    setRequestGrpcBatchMethodKeysDraft([]);
     setRequestNameDraft(
       uniqueCollectionRequestName(
         method.methodName,
-        targetCollection.requests.map((request) => request.name),
+        collections.find((collection) => collection.id === targetCollectionId)?.requests.map((request) => request.name) ?? [],
       ),
     );
     setRequestNameDialogOpen(true);
   }
 
+  function openGrpcMethodsRequestDialog(
+    methods: RpcMethodInfo[],
+    libraryId = activeProtoLibraryId,
+    versionId = activeProtoVersionId,
+  ) {
+    const uniqueMethods = methods.filter(
+      (method, index, items) => items.findIndex((candidate) => methodKey(candidate) === methodKey(method)) === index,
+    );
+    if (uniqueMethods.length === 0) {
+      showToast("This schema revision does not expose any RPC method.", "warning");
+      return;
+    }
+    const activeProto = findProtoVersion(protoLibraries, libraryId, versionId);
+    if (!activeProto) {
+      showToast("Select a schema revision before creating requests.", "warning");
+      return;
+    }
+    const contextualCollectionId = activeCollectionRequest?.collectionId ?? "";
+    const targetCollectionId = preferredSchemaCollectionId(activeProto.library.name, collections, contextualCollectionId);
+    setRequestTargetCollectionId(targetCollectionId);
+    setRequestTargetFolderId(targetCollectionId === contextualCollectionId ? activeCollectionRequest?.parentId ?? null : null);
+    setRequestLocationEditable(true);
+    setRequestKindDraft("grpc");
+    setRequestGrpcLibraryIdDraft(activeProto.library.id);
+    setRequestGrpcVersionIdDraft(activeProto.version.id);
+    setRequestGrpcMethodKeyDraft("");
+    setRequestGrpcSelectionModeDraft("multi");
+    setRequestGrpcSkipExistingDraft(true);
+    setRequestGrpcBatchMethodKeysDraft(uniqueMethods.map((method) => methodKey(method)));
+    setRequestNameDraft("");
+    setRequestNameDialogOpen(true);
+  }
+
+  function addGrpcMethodsToCollection(
+    collectionId: string,
+    methods: RpcMethodInfo[],
+    compiled: NonNullable<ReturnType<ProtoRuntimeRegistry["resolveVersion"]>>,
+    parentId: string | null,
+    skipExisting = true,
+    groupByService = true,
+  ) {
+    if (methods.length === 0) return { created: 0, skipped: 0 };
+    const createSchemaCollection = collectionId === NEW_SCHEMA_COLLECTION_TARGET;
+    const existingCollection = collections.find((item) => item.id === collectionId);
+    if (!createSchemaCollection && !existingCollection) return { created: 0, skipped: 0 };
+
+    const now = new Date().toISOString();
+    let workingCollection: ApiCollection = existingCollection
+      ? {
+          ...existingCollection,
+          folders: [...existingCollection.folders],
+          requests: [...existingCollection.requests],
+        }
+      : {
+          id: createId(),
+          name: uniqueSchemaCollectionName(compiled.library.name, collections),
+          folders: [],
+          requests: [],
+          createdAt: now,
+          updatedAt: now,
+        };
+
+    const existingMethodNames = new Set(
+      workingCollection.requests
+        .filter((request) => request.kind === "grpc" && request.grpc?.libraryId === compiled.library.id)
+        .map((request) => request.grpc?.methodFullName)
+        .filter((value): value is string => Boolean(value)),
+    );
+    const methodsToCreate = skipExisting
+      ? methods.filter((method) => !existingMethodNames.has(`${method.serviceName}/${method.methodName}`))
+      : methods;
+    const skipped = methods.length - methodsToCreate.length;
+    const usedNames = workingCollection.requests.map((request) => request.name);
+    const serviceFolderIds = new Map<string, string>();
+
+    if (groupByService) {
+      for (const serviceName of Array.from(new Set(methodsToCreate.map((method) => method.serviceName)))) {
+        const existingFolder = workingCollection.folders.find(
+          (folder) =>
+            folder.parentId === parentId &&
+            folder.name.trim().toLowerCase() === serviceName.trim().toLowerCase(),
+        );
+        if (existingFolder) {
+          serviceFolderIds.set(serviceName, existingFolder.id);
+          continue;
+        }
+        const folder = createFolderEntity(workingCollection, parentId, serviceName, now);
+        workingCollection = { ...workingCollection, folders: [...workingCollection.folders, folder] };
+        serviceFolderIds.set(serviceName, folder.id);
+      }
+    }
+
+    const requests: ApiCollectionRequest[] = [];
+    for (const method of methodsToCreate) {
+      const name = uniqueCollectionRequestName(method.methodName, usedNames);
+      usedNames.push(name);
+      const requestParentId = groupByService ? serviceFolderIds.get(method.serviceName) ?? parentId : parentId;
+      const request = createCollectionRequest(workingCollection.id, "grpc", {
+        name,
+        url: draftEffectiveBaseUrl,
+        grpcMethodKey: methodKey(method),
+        grpc: createPinnedGrpcBinding(compiled.library, compiled.version, method),
+        body: JSON.stringify(generateExampleFromType(compiled.loaded.root, method.requestType), null, 2),
+        headers: [],
+        parentId: requestParentId,
+        order: nextCollectionSiblingOrder(workingCollection, requestParentId),
+      });
+      requests.push(request);
+      workingCollection = { ...workingCollection, requests: [...workingCollection.requests, request] };
+    }
+    workingCollection = { ...workingCollection, updatedAt: now };
+
+    setCollections((current) =>
+      createSchemaCollection
+        ? [workingCollection, ...current]
+        : current.map((item) => (item.id === workingCollection.id ? workingCollection : item)),
+    );
+    if (requests.length > 0) {
+      const collectionNote = createSchemaCollection ? ` in new ${workingCollection.name} collection` : "";
+      showToast(
+        `${requests.length} gRPC request${requests.length === 1 ? "" : "s"} added${collectionNote}${
+          skipped ? ` · ${skipped} existing skipped` : ""
+        }.`,
+        "success",
+      );
+    } else if (skipped > 0) {
+      showToast("All selected gRPC methods already exist in this collection.", "info");
+    }
+    return { created: requests.length, skipped, collectionId: workingCollection.id };
+  }
+
   function confirmAddCollectionRequest() {
     const name = requestNameDraft.trim();
+    const isGrpcBatch = requestKindDraft === "grpc" && requestGrpcSelectionModeDraft === "multi";
     if (!requestTargetCollectionId) {
       setRequestNameDialogOpen(false);
       return;
@@ -234,7 +385,7 @@ export function useCollectionActions(ctx: ActionContext) {
       showToast("Select REST, WebSocket, or gRPC.", "warning");
       return;
     }
-    if (!name) {
+    if (!isGrpcBatch && !name) {
       const label = requestKindDraft === "grpc" ? "gRPC" : requestKindDraft === "rest" ? "REST" : "WebSocket";
       showToast(`${label} request name is required.`, "warning");
       return;
@@ -242,20 +393,62 @@ export function useCollectionActions(ctx: ActionContext) {
 
     if (requestKindDraft === "grpc") {
       const compiled = protoRuntimeRegistry.resolveVersion(requestGrpcLibraryIdDraft, requestGrpcVersionIdDraft);
+      if (isGrpcBatch) {
+        if (!compiled) {
+          showToast("Select a global proto schema and revision.", "warning");
+          return;
+        }
+        const methodKeys = new Set(requestGrpcBatchMethodKeysDraft);
+        const methods = compiled.loaded.methods.filter((item) => methodKeys.has(methodKey(item)));
+        if (methods.length !== methodKeys.size) {
+          showToast("Some RPC methods are no longer available in this schema revision.", "warning");
+          return;
+        }
+        addGrpcMethodsToCollection(
+          requestTargetCollectionId,
+          methods,
+          compiled,
+          requestTargetFolderId,
+          requestGrpcSkipExistingDraft,
+          true,
+        );
+        setRequestNameDialogOpen(false);
+        setRequestTargetCollectionId("");
+        setRequestTargetFolderId(null);
+        setRequestLocationEditable(false);
+        setRequestGrpcLibraryIdDraft("");
+        setRequestGrpcVersionIdDraft("");
+        setRequestGrpcMethodKeyDraft("");
+        setRequestGrpcBatchMethodKeysDraft([]);
+        setRequestGrpcSelectionModeDraft("single");
+        setRequestGrpcSkipExistingDraft(true);
+        return;
+      }
       const method = compiled?.loaded.methods.find((item) => methodKey(item) === requestGrpcMethodKeyDraft);
       if (!compiled || !method) {
         showToast("Select a global proto schema, revision, and method.", "warning");
         return;
       }
-      addCollectionRequest(requestTargetCollectionId, "grpc", {
-        name,
-        url: draftEffectiveBaseUrl,
-        grpcMethodKey: methodKey(method),
-        grpc: createPinnedGrpcBinding(compiled.library, compiled.version, method),
-        body: JSON.stringify(generateExampleFromType(compiled.loaded.root, method.requestType), null, 2),
-        headers: [],
-        parentId: requestTargetFolderId,
-      });
+      if (requestTargetCollectionId === NEW_SCHEMA_COLLECTION_TARGET) {
+        addGrpcMethodsToCollection(
+          requestTargetCollectionId,
+          [method],
+          compiled,
+          requestTargetFolderId,
+          false,
+          true,
+        );
+      } else {
+        addCollectionRequest(requestTargetCollectionId, "grpc", {
+          name,
+          url: draftEffectiveBaseUrl,
+          grpcMethodKey: methodKey(method),
+          grpc: createPinnedGrpcBinding(compiled.library, compiled.version, method),
+          body: JSON.stringify(generateExampleFromType(compiled.loaded.root, method.requestType), null, 2),
+          headers: [],
+          parentId: requestTargetFolderId,
+        });
+      }
     } else {
       addCollectionRequest(requestTargetCollectionId, requestKindDraft, {
         name,
@@ -276,6 +469,9 @@ export function useCollectionActions(ctx: ActionContext) {
     setRequestGrpcLibraryIdDraft("");
     setRequestGrpcVersionIdDraft("");
     setRequestGrpcMethodKeyDraft("");
+    setRequestGrpcBatchMethodKeysDraft([]);
+    setRequestGrpcSelectionModeDraft("single");
+    setRequestGrpcSkipExistingDraft(true);
   }
 
   function confirmAddCollection() {
@@ -828,6 +1024,7 @@ export function useCollectionActions(ctx: ActionContext) {
     importGrpcRequestIntoCollection,
     saveGrpcMethodToCollection,
     openGrpcMethodRequestDialog,
+    openGrpcMethodsRequestDialog,
     createCollectionRequestSession,
     selectCollectionRequest,
     upsertRequestSessionPreservingOrder,

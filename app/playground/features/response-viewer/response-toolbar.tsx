@@ -6,6 +6,8 @@ import {
   DocsIcon,
   Download,
   KeyboardArrowDown,
+  KeyboardArrowLeft,
+  KeyboardArrowRight,
   KeyboardArrowUp,
   MoreHoriz,
   Search,
@@ -44,6 +46,9 @@ export type ResponseToolbarProps = {
   onClearResponse: () => void;
   fullscreen: boolean;
   onToggleFullscreen: () => void;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
+  layout?: "vertical" | "horizontal";
 };
 
 /** Keeps the common response actions visible and moves secondary output actions into one overflow menu. */
@@ -63,6 +68,9 @@ export const ResponseToolbar = memo(function ResponseToolbar({
   onClearResponse,
   fullscreen,
   onToggleFullscreen,
+  collapsed = false,
+  onToggleCollapsed,
+  layout = "vertical",
 }: ResponseToolbarProps) {
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [matchCount, setMatchCount] = useState(0);
@@ -70,6 +78,10 @@ export const ResponseToolbar = memo(function ResponseToolbar({
   const activeMarkRef = useRef<HTMLElement | null>(null);
   const activeMatchIndexRef = useRef(-1);
   const hasResponse = hasEvents || hasLastResult;
+
+  useEffect(() => {
+    if (collapsed) setMenuAnchor(null);
+  }, [collapsed]);
 
   const getSearchMarks = useCallback(() => {
     const root = document.getElementById(searchRootId);
@@ -148,22 +160,52 @@ export const ResponseToolbar = memo(function ResponseToolbar({
   return (
     <Stack
       direction="row"
-      spacing={0.8}
+      spacing={collapsed && layout === "horizontal" ? 0 : 0.7}
       alignItems="center"
+      flexWrap={layout === "horizontal" && !collapsed ? "wrap" : "nowrap"}
+      useFlexGap
       className="response-toolbar"
-      sx={{ px: 1.4, py: 0.8, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0, minWidth: 0 }}
+      sx={{
+        minHeight: 30,
+        height: layout === "horizontal" && !collapsed ? "auto" : 30,
+        px: collapsed && layout === "horizontal" ? 0.25 : 0.75,
+        py: layout === "horizontal" && !collapsed ? 0.25 : 0,
+        rowGap: layout === "horizontal" && !collapsed ? 0.25 : 0,
+        borderBottomWidth: collapsed ? 0 : 1,
+        borderBottomStyle: "solid",
+        borderBottomColor: "divider",
+        flexShrink: 0,
+        minWidth: 0,
+        bgcolor: "background.paper",
+      }}
     >
-      <Box sx={{ minWidth: 0 }}>
-        <Typography variant="subtitle1">Response</Typography>
-        <Typography variant="caption" color="text.secondary" noWrap title={summary}>
-          {summary}
-        </Typography>
-      </Box>
-      <Box sx={{ flex: 1 }} />
-      <TextField
+      {!(collapsed && layout === "horizontal") ? (
+        <Stack direction="row" spacing={0.6} alignItems="center" sx={{ minWidth: 0 }}>
+          <Typography variant="caption" fontWeight={600} sx={{ letterSpacing: "0.06em" }}>
+            RESPONSE
+          </Typography>
+          {summary ? (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              noWrap
+              title={summary}
+              sx={{ display: layout === "horizontal" ? "none" : "block" }}
+            >
+              {summary}
+            </Typography>
+          ) : null}
+        </Stack>
+      ) : null}
+      <Box sx={{ flex: 1, minWidth: layout === "horizontal" ? 8 : 0 }} />
+      {!collapsed && hasResponse && <TextField
         size="small"
         className="response-search"
-        sx={{ width: { xs: 160, md: 240 }, maxWidth: "38vw" }}
+        sx={{
+          width: layout === "horizontal" ? 132 : { xs: 150, md: 220 },
+          maxWidth: layout === "horizontal" ? "100%" : "34vw",
+          mx: 0.5,
+        }}
         value={filter}
         onChange={onFilterChange}
         onKeyDown={(event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -180,8 +222,8 @@ export const ResponseToolbar = memo(function ResponseToolbar({
             </InputAdornment>
           ),
         }}
-      />
-      {filter && (
+      />}
+      {!collapsed && hasResponse && filter && (
         <Stack direction="row" spacing={0.25} alignItems="center">
           <Typography
             variant="caption"
@@ -220,7 +262,7 @@ export const ResponseToolbar = memo(function ResponseToolbar({
           </Button>
         </Stack>
       )}
-      <Tooltip title={fullscreen ? "Exit full screen response" : "Open response full screen"}>
+      {!collapsed && <Tooltip title={fullscreen ? "Exit full screen response" : "Open response full screen"}>
         <IconButton
           size="small"
           onClick={onToggleFullscreen}
@@ -228,8 +270,8 @@ export const ResponseToolbar = memo(function ResponseToolbar({
         >
           <DesktopWindows sx={{ fontSize: 17 }} />
         </IconButton>
-      </Tooltip>
-      <Tooltip title="Response actions">
+      </Tooltip>}
+      {!collapsed && <Tooltip title="Response actions">
         <IconButton
           size="small"
           aria-label="Response actions"
@@ -237,7 +279,29 @@ export const ResponseToolbar = memo(function ResponseToolbar({
         >
           <MoreHoriz sx={{ fontSize: 17 }} />
         </IconButton>
-      </Tooltip>
+      </Tooltip>}
+      {onToggleCollapsed ? (
+        <Tooltip title={collapsed ? "Expand response panel (Ctrl+J)" : "Collapse response panel (Ctrl+J)"}>
+          <IconButton
+            size="small"
+            aria-label={collapsed ? "Expand response panel" : "Collapse response panel"}
+            onClick={onToggleCollapsed}
+            sx={{ ml: collapsed && layout === "horizontal" ? 0 : 0.25 }}
+          >
+            {layout === "horizontal" ? (
+              collapsed ? (
+                <KeyboardArrowLeft sx={{ fontSize: 16 }} />
+              ) : (
+                <KeyboardArrowRight sx={{ fontSize: 16 }} />
+              )
+            ) : collapsed ? (
+              <KeyboardArrowUp sx={{ fontSize: 16 }} />
+            ) : (
+              <KeyboardArrowDown sx={{ fontSize: 16 }} />
+            )}
+          </IconButton>
+        </Tooltip>
+      ) : null}
       <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)}>
         <MenuItem disabled={!hasResponse} onClick={() => void copyResponse()}>
           <ContentCopy fontSize="small" /> Copy response
@@ -289,23 +353,24 @@ function responseTabItems(kind: "rest" | "grpc" | "websocket", streaming: boolea
   if (kind === "rest") {
     return [
       { value: "messages", label: "Body" },
+      { value: "latest", label: "Latest JSON" },
       { value: "headers", label: "Headers" },
-      { value: "tests", label: "Tests" },
+      { value: "timeline", label: "Timeline" },
     ];
   }
   if (kind === "websocket") {
     return [
       { value: "messages", label: "Messages" },
-      { value: "headers", label: "Headers" },
-      { value: "tests", label: "Tests" },
+      { value: "latest", label: "Latest JSON" },
+      { value: "headers", label: "Metadata" },
+      { value: "timeline", label: "Timeline" },
     ];
   }
   return [
     { value: "messages", label: streaming ? "Messages" : "Message" },
-    ...(streaming ? [{ value: "latest" as const, label: "Latest" }] : []),
+    { value: "latest", label: "Latest JSON" },
     { value: "headers", label: "Metadata" },
-    { value: "trailers", label: "Trailers" },
-    { value: "tests", label: "Tests" },
+    { value: "timeline", label: "Timeline" },
   ];
 }
 
@@ -323,6 +388,9 @@ export const ResponseWorkbenchTabs = memo(function ResponseWorkbenchTabs({
 }) {
   const items = responseTabItems(kind, streaming);
   const normalizedValue = items.some((item) => item.value === value) ? value : "messages";
+  useEffect(() => {
+    if (normalizedValue !== value) onChange(normalizedValue);
+  }, [normalizedValue, onChange, value]);
   return (
     <WorkbenchTabs<ResponseTab>
       value={normalizedValue}

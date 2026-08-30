@@ -9,19 +9,20 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import type { CSSProperties, ElementType, ReactElement, ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { Check, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { colorTokens, designSystem, paletteMode, type ColorMode } from "@/lib/design-system";
 import { Badge as UiBadge } from "@/components/ui/badge";
 import { Button as UiButton, type ButtonProps as UiButtonProps } from "@/components/ui/button";
 import { Checkbox as UiCheckbox } from "@/components/ui/checkbox";
 import { Input as UiInput } from "@/components/ui/input";
-import { Select as UiSelect } from "@/components/ui/select";
 import { Switch as UiSwitch } from "@/components/ui/switch";
 import { Textarea as UiTextarea } from "@/components/ui/textarea";
 
@@ -113,11 +114,13 @@ function cssVariableStyle(resolved: ShadcnTheme): CSSProperties {
     "--destructive-foreground": "#ffffff",
     "--border": tokens.border,
     "--input": tokens.border,
-    "--ring": tokens.primary,
+    "--ring": tokens.primaryStrong,
     "--radius": "0.5rem",
     "--surface": tokens.surface,
     "--surface-alt": tokens.surfaceAlt,
     "--surface-muted": tokens.surfaceMuted,
+    "--titlebar-bg": tokens.titlebarBg,
+    "--rail-bg": tokens.railBg,
     "--border-strong": tokens.borderStrong,
     "--text-muted": tokens.textMuted,
     "--tab-bg": tokens.tabBg,
@@ -398,6 +401,7 @@ export function Button({
       size={mappedSize}
       className={cn(
         "shadcn-button",
+        safeProps["aria-haspopup"] === "menu" && "m-[2px]",
         fullWidth && "w-full",
         color === "warning" && variant === "contained" && "bg-warning text-warning-foreground hover:bg-warning/90",
         color === "warning" && variant !== "contained" && "text-warning hover:bg-warning/10",
@@ -437,6 +441,7 @@ export function IconButton({ size = "medium", color, sx, className, children, di
       size={size === "small" ? "icon-sm" : "icon"}
       className={cn(
         "shadcn-icon-button",
+        props["aria-haspopup"] === "menu" && "m-[2px]",
         color === "warning" && "text-warning-foreground",
         color === "error" && "text-destructive",
         color === "primary" && "text-primary",
@@ -470,10 +475,10 @@ export function Chip({ label, color = "default", variant, size = "medium", sx, c
     <UiBadge
       {...props}
       variant={mappedVariant}
-      className={cn("shadcn-chip", size === "small" && "h-5 px-1.5", className)}
+      className={cn("shadcn-chip", size === "small" && "h-[22px] min-h-[22px] px-1.5", className)}
       style={mergeStyles(sxToStyle(sx, theme), props.style)}
     >
-      <span className="truncate" style={sxToStyle(labelSx, theme)}>
+      <span className="inline-flex h-full min-w-0 items-center truncate leading-4" style={sxToStyle(labelSx, theme)}>
         {label}
       </span>
     </UiBadge>
@@ -545,7 +550,11 @@ export function FormControl({
   );
 }
 
-/** Legacy select adapter backed by the native shadcn Select primitive. */
+/** Legacy select adapter backed by a viewport-safe custom popup.
+ * Keeps the MUI-like `onChange(event.target.value)` contract while avoiding the
+ * platform-native option popup so hover/selected spacing is consistent on
+ * Windows, Linux, and Electron.
+ */
 export function Select({
   value,
   onChange,
@@ -559,30 +568,211 @@ export function Select({
   label: _label,
   inputProps,
   style,
+  disabled,
+  id,
+  name,
+  required: _required,
+  onBlur,
   ...props
 }: AnyProps) {
   const theme = useContext(ThemeContext);
-  const options: Array<{ value: unknown; label: ReactNode }> = Children.toArray(children)
+  const tokens = colorTokens[paletteMode(theme.palette.mode)];
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const popupRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [popupRect, setPopupRect] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
+  const options: Array<{ value: unknown; label: ReactNode; disabled: boolean }> = Children.toArray(children)
     .filter(isValidElement)
     .map((child) => {
-      const option = child as ReactElement<{ value?: unknown; children?: ReactNode }>;
-      return { value: option.props.value, label: option.props.children };
+      const option = child as ReactElement<{ value?: unknown; children?: ReactNode; disabled?: boolean }>;
+      return { value: option.props.value, label: option.props.children, disabled: Boolean(option.props.disabled) };
     });
+  const selectedIndex = options.findIndex((option) => String(option.value ?? "") === String(value ?? ""));
+  const selectedOption = selectedIndex >= 0 ? options[selectedIndex] : null;
+
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current) return;
+    const updatePopupRect = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const gap = 2;
+      const edge = 8;
+      const preferredHeight = Math.min(320, Math.max(96, options.length * 38 + 8));
+      const spaceBelow = viewportHeight - rect.bottom - edge;
+      const spaceAbove = rect.top - edge;
+      const openUp = spaceBelow < Math.min(180, preferredHeight) && spaceAbove > spaceBelow;
+      const available = Math.max(96, (openUp ? spaceAbove : spaceBelow) - gap);
+      const maxHeight = Math.min(preferredHeight, available);
+      const width = Math.min(Math.max(rect.width, 180), Math.max(180, viewportWidth - edge * 2));
+      const left = Math.min(Math.max(edge, rect.left), Math.max(edge, viewportWidth - width - edge));
+      const top = openUp ? Math.max(edge, rect.top - maxHeight - gap) : Math.min(viewportHeight - edge - 40, rect.bottom + gap);
+      setPopupRect({ top, left, width, maxHeight });
+    };
+    updatePopupRect();
+    window.addEventListener("resize", updatePopupRect);
+    window.addEventListener("scroll", updatePopupRect, true);
+    return () => {
+      window.removeEventListener("resize", updatePopupRect);
+      window.removeEventListener("scroll", updatePopupRect, true);
+    };
+  }, [open, options.length]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setOpen(false);
+        triggerRef.current?.focus();
+        return;
+      }
+      if (!["ArrowDown", "ArrowUp", "Home", "End", "Enter", " "].includes(event.key)) return;
+      const items = Array.from(popupRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]:not([disabled])') ?? []);
+      if (items.length === 0) return;
+      const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+      if (event.key === "Enter" || event.key === " ") {
+        if (currentIndex >= 0) {
+          event.preventDefault();
+          items[currentIndex]?.click();
+        }
+        return;
+      }
+      const nextIndex =
+        event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? items.length - 1
+            : event.key === "ArrowDown"
+              ? (Math.max(currentIndex, -1) + 1) % items.length
+              : (currentIndex <= 0 ? items.length : currentIndex) - 1;
+      event.preventDefault();
+      items[nextIndex]?.focus();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    queueMicrotask(() => {
+      const items = Array.from(popupRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]:not([disabled])') ?? []);
+      const selected = popupRef.current?.querySelector<HTMLButtonElement>('[role="option"][aria-selected="true"]:not([disabled])');
+      selected?.focus?.();
+      if (!selected) items[0]?.focus?.();
+    });
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open]);
+
+  const chooseOption = (option: { value: unknown; label: ReactNode; disabled: boolean }) => {
+    if (option.disabled) return;
+    const nextValue = String(option.value ?? "");
+    onChange?.({
+      target: { value: nextValue, name },
+      currentTarget: { value: nextValue, name },
+    });
+    setOpen(false);
+    queueMicrotask(() => triggerRef.current?.focus());
+  };
+
+  const ariaLabel = inputProps?.["aria-label"] ?? props["aria-label"];
+  const ariaLabelledBy = inputProps?.["aria-labelledby"] ?? props["aria-labelledby"];
+  const triggerStyle = mergeStyles(sxToStyle(sx, theme), inputProps?.style, style);
   return (
-    <UiSelect
-      {...inputProps}
-      {...props}
-      value={value}
-      onChange={onChange}
-      className={cn("shadcn-select", inputProps?.className, className)}
-      style={mergeStyles(sxToStyle(sx, theme), inputProps?.style, style)}
-    >
-      {options.map((option) => (
-        <option key={String(option.value)} value={String(option.value ?? "")}>
-          {option.label}
-        </option>
-      ))}
-    </UiSelect>
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        id={id}
+        name={name}
+        title={props.title}
+        disabled={disabled}
+        aria-label={ariaLabel}
+        aria-labelledby={ariaLabelledBy}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className={cn(
+          "shadcn-select relative flex h-[var(--control-height)] min-h-[var(--control-height)] w-full min-w-0 items-center rounded-md border border-input bg-background px-2.5 pr-8 text-left text-[length:var(--font-size-control)] font-normal leading-5 text-foreground shadow-sm outline-none transition-colors disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground disabled:opacity-70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+          inputProps?.className,
+          className,
+        )}
+        style={triggerStyle}
+        onClick={() => !disabled && setOpen((current) => !current)}
+        onBlur={(event) => onBlur?.(event)}
+        onKeyDown={(event) => {
+          if (disabled) return;
+          if (["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)) {
+            event.preventDefault();
+            setOpen(true);
+          }
+        }}
+      >
+        <span className="flex h-full min-w-0 flex-1 items-center overflow-hidden text-ellipsis whitespace-nowrap leading-5">
+          {selectedOption?.label ?? (String(value ?? "") || "Select")}
+        </span>
+        <ChevronDown aria-hidden="true" className={cn("pointer-events-none absolute right-2 size-3.5 text-muted-foreground transition-transform", open && "rotate-180")} />
+      </button>
+      {open && popupRect && typeof document !== "undefined"
+        ? createPortal(
+            <>
+              <div
+                aria-hidden="true"
+                className="fixed inset-0 cursor-default bg-transparent"
+                style={{ zIndex: portalLayer.menuBackdrop, WebkitAppRegion: "no-drag" } as CSSProperties}
+                onMouseDown={() => setOpen(false)}
+              />
+              <div
+                ref={popupRef}
+                role="listbox"
+                aria-label={ariaLabel}
+                className="fixed overflow-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-2xl"
+                style={
+                  {
+                    ...cssVariableStyle(theme),
+                    top: popupRect.top,
+                    left: popupRect.left,
+                    width: popupRect.width,
+                    maxHeight: popupRect.maxHeight,
+                    zIndex: portalLayer.menu,
+                    WebkitAppRegion: "no-drag",
+                    backgroundColor: tokens.surface,
+                    color: tokens.text,
+                    borderColor: tokens.border,
+                    boxShadow:
+                      theme.palette.mode === "dark"
+                        ? "0 18px 48px rgba(0, 0, 0, 0.55)"
+                        : "0 18px 42px rgba(15, 23, 42, 0.18)",
+                  } as CSSProperties
+                }
+              >
+                {options.map((option, index) => {
+                  const selected = index === selectedIndex;
+                  return (
+                    <button
+                      key={String(option.value)}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      disabled={option.disabled}
+                      className={cn(
+                        "group my-0.5 flex min-h-9 w-full min-w-0 items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[length:var(--font-size-control)] font-medium leading-5 outline-none transition-colors",
+                        selected
+                          ? "bg-primary/12 text-foreground ring-1 ring-inset ring-primary/50 hover:bg-primary/16 focus:bg-primary/16"
+                          : "hover:bg-accent/60 focus:bg-accent/60",
+                        option.disabled && "cursor-not-allowed opacity-45",
+                      )}
+                      onClick={() => chooseOption(option)}
+                    >
+                      <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{option.label}</span>
+                      <Check
+                        aria-hidden="true"
+                        className={cn("size-3.5 shrink-0 text-primary transition-opacity", selected ? "opacity-100" : "opacity-0")}
+                      />
+                    </button>
+                  );
+                })}
+              </div>
+            </>,
+            document.body,
+          )
+        : null}
+    </>
   );
 }
 
@@ -749,7 +939,8 @@ export function Menu({ anchorEl, open, onClose, children }: AnyProps) {
   const anchorTop = rect?.top ?? 8;
   const spaceBelow = viewportHeight - anchorBottom - 8;
   const shouldOpenUp = spaceBelow < 180 && anchorTop > spaceBelow;
-  const rawTop = shouldOpenUp ? anchorTop - menuMaxHeight - 6 : anchorBottom + 6;
+  const menuGap = 2;
+  const rawTop = shouldOpenUp ? anchorTop - menuMaxHeight - menuGap : anchorBottom + menuGap;
   const top = Math.min(Math.max(8, rawTop), Math.max(8, viewportHeight - 64));
   const left = Math.min(Math.max(8, rect?.left ?? 8), Math.max(8, viewportWidth - menuWidth - 8));
 
@@ -809,8 +1000,8 @@ export function MenuItem({ selected, onClick, children, sx, className, disabled,
         }
       }}
       className={cn(
-        "shadcn-menu-item flex min-h-8 w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[length:var(--font-size-control)] font-medium outline-none hover:bg-accent focus:bg-accent",
-        selected && "bg-accent text-accent-foreground",
+        "shadcn-menu-item my-0.5 flex min-h-8 w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[length:var(--font-size-control)] font-medium outline-none transition-colors hover:bg-accent/60 focus:bg-accent/60",
+        selected && "bg-primary/10 text-foreground ring-1 ring-inset ring-primary/45 hover:bg-primary/15 focus:bg-primary/15",
         disabled && "pointer-events-none opacity-50",
         className,
       )}
@@ -1367,18 +1558,35 @@ export function Tooltip({
   title,
   children,
   placement = "bottom",
+  enterDelay = 0,
 }: {
   title?: ReactNode;
   children: ReactNode;
   placement?: string;
+  enterDelay?: number;
 }) {
   const tooltipId = useId();
   const [open, setOpen] = useState(false);
-  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+  const [tooltipPosition, setTooltipPosition] = useState<{ top: number; left: number } | null>(null);
+  const enterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const anchorElementRef = useRef<HTMLElement | null>(null);
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+
+  const clearEnterTimer = () => {
+    if (!enterTimerRef.current) return;
+    clearTimeout(enterTimerRef.current);
+    enterTimerRef.current = null;
+  };
+
+  useEffect(() => clearEnterTimer, []);
 
   useEffect(() => {
     if (!open) return;
-    const close = () => setOpen(false);
+    const close = () => {
+      clearEnterTimer();
+      setOpen(false);
+      setTooltipPosition(null);
+    };
     window.addEventListener("scroll", close, true);
     window.addEventListener("resize", close);
     return () => {
@@ -1387,24 +1595,87 @@ export function Tooltip({
     };
   }, [open]);
 
-  if (!title) return <>{children}</>;
-  if (!isValidElement(children)) {
-    return <span aria-describedby={tooltipId}>{children}</span>;
-  }
+  useLayoutEffect(() => {
+    if (!open || !tooltipRef.current) return;
 
-  const element = children as ReactElement<AnyProps>;
+    const anchorElement = anchorElementRef.current;
+    if (!anchorElement?.isConnected) {
+      setOpen(false);
+      setTooltipPosition(null);
+      return;
+    }
+
+    const node = tooltipRef.current;
+    const anchorRect = anchorElement.getBoundingClientRect();
+    const margin = 8;
+    const gap = 8;
+    const [requestedSide, requestedAlign = "center"] = placement.split("-");
+    const tooltipRect = node.getBoundingClientRect();
+    const width = tooltipRect.width;
+    const height = tooltipRect.height;
+
+    const crossAxisX = () => {
+      if (requestedAlign === "start") return anchorRect.left;
+      if (requestedAlign === "end") return anchorRect.right - width;
+      return anchorRect.left + (anchorRect.width - width) / 2;
+    };
+    const crossAxisY = () => {
+      if (requestedAlign === "start") return anchorRect.top;
+      if (requestedAlign === "end") return anchorRect.bottom - height;
+      return anchorRect.top + (anchorRect.height - height) / 2;
+    };
+
+    let side = requestedSide;
+    if (side === "top" && anchorRect.top - gap - height < margin) side = "bottom";
+    else if (side === "bottom" && anchorRect.bottom + gap + height > window.innerHeight - margin) side = "top";
+    else if (side === "left" && anchorRect.left - gap - width < margin) side = "right";
+    else if (side === "right" && anchorRect.right + gap + width > window.innerWidth - margin) side = "left";
+
+    let top = crossAxisY();
+    let left = crossAxisX();
+    if (side === "top") top = anchorRect.top - gap - height;
+    else if (side === "bottom") top = anchorRect.bottom + gap;
+    else if (side === "left") left = anchorRect.left - gap - width;
+    else if (side === "right") left = anchorRect.right + gap;
+
+    top = Math.min(Math.max(margin, top), Math.max(margin, window.innerHeight - height - margin));
+    left = Math.min(Math.max(margin, left), Math.max(margin, window.innerWidth - width - margin));
+    setTooltipPosition({ top, left });
+  }, [open, placement]);
+
+  if (!title) return <>{children}</>;
+
+  const element = isValidElement(children)
+    ? (children as ReactElement<AnyProps>)
+    : (<span tabIndex={0}>{children}</span> as ReactElement<AnyProps>);
   const existingDescribedBy = element.props["aria-describedby"];
   const describedBy = [existingDescribedBy, tooltipId].filter(Boolean).join(" ");
-  const show = (target: EventTarget | null) => {
-    if (target instanceof HTMLElement) setAnchorRect(target.getBoundingClientRect());
+  const show = (target: EventTarget | null, delayed = false) => {
+    clearEnterTimer();
+    if (target instanceof HTMLElement) {
+      anchorElementRef.current = target;
+      setTooltipPosition(null);
+    }
+    if (delayed && enterDelay > 0) {
+      enterTimerRef.current = setTimeout(() => {
+        enterTimerRef.current = null;
+        if (anchorElementRef.current?.isConnected) setOpen(true);
+      }, enterDelay);
+      return;
+    }
     setOpen(true);
   };
-  const hide = () => setOpen(false);
+  const hide = () => {
+    clearEnterTimer();
+    anchorElementRef.current = null;
+    setOpen(false);
+    setTooltipPosition(null);
+  };
   const trigger = cloneElement(element, {
     "aria-describedby": describedBy,
     onMouseEnter: (event: React.MouseEvent<HTMLElement>) => {
       element.props.onMouseEnter?.(event);
-      show(event.currentTarget);
+      show(event.currentTarget, true);
     },
     onMouseLeave: (event: React.MouseEvent<HTMLElement>) => {
       element.props.onMouseLeave?.(event);
@@ -1424,46 +1695,23 @@ export function Tooltip({
     },
   });
 
-  const side = placement.split("-")[0];
-  const anchorCenterX = anchorRect ? anchorRect.left + anchorRect.width / 2 : 0;
-  const anchorCenterY = anchorRect ? anchorRect.top + anchorRect.height / 2 : 0;
-  const top = anchorRect
-    ? side === "top"
-      ? Math.max(8, anchorRect.top - 8)
-      : side === "bottom"
-        ? Math.min(window.innerHeight - 8, anchorRect.bottom + 8)
-        : Math.min(Math.max(12, anchorCenterY), window.innerHeight - 12)
-    : 0;
-  const left = anchorRect
-    ? side === "left"
-      ? Math.max(8, anchorRect.left - 8)
-      : side === "right"
-        ? Math.min(window.innerWidth - 8, anchorRect.right + 8)
-        : Math.min(Math.max(12, anchorCenterX), window.innerWidth - 12)
-    : 0;
-  const transform =
-    side === "top"
-      ? "translate(-50%, -100%)"
-      : side === "bottom"
-        ? "translateX(-50%)"
-        : side === "left"
-          ? "translate(-100%, -50%)"
-          : "translateY(-50%)";
-
   return (
     <>
       {trigger}
-      {open && anchorRect && typeof document !== "undefined"
+      {open && typeof document !== "undefined"
         ? createPortal(
             <div
+              ref={tooltipRef}
               id={tooltipId}
               role="tooltip"
               className="pointer-events-none fixed max-w-72 rounded-md border border-border bg-popover px-2 py-1 text-[11px] leading-snug text-popover-foreground shadow-lg"
               style={{
                 zIndex: portalLayer.tooltip,
-                top,
-                left,
-                transform,
+                top: tooltipPosition?.top ?? -9999,
+                left: tooltipPosition?.left ?? -9999,
+                visibility: tooltipPosition ? "visible" : "hidden",
+                maxWidth: "min(18rem, calc(100vw - 16px))",
+                overflowWrap: "anywhere",
               }}
             >
               {title}
@@ -1540,8 +1788,8 @@ export function Switch({
 function themeColor(mode: ColorMode, token: "success" | "successForeground" | "warning" | "warningForeground") {
   const values = {
     dark: {
-      success: "#10b981",
-      successForeground: "#86efac",
+      success: "#0d9c72",
+      successForeground: "#c5ecd3",
       warning: "#f59e0b",
       warningForeground: "#fcd34d",
     },
