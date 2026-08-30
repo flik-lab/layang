@@ -141,16 +141,36 @@ function compileLauncher() {
   }
   const source = path.join(root, "packaging", "cli", platform === "win32" ? "launcher-win.c" : "launcher-unix.c");
   const executable = path.join(output, platform === "win32" ? "layang.exe" : "layang");
+  const objectFile = path.join(output, "launcher-win.obj");
   let result;
   if (compiler.kind === "msvc") {
-    result = spawnSync(compiler.command, ["/nologo", "/O2", `/Fe:${executable}`, source], { shell: true, stdio: "inherit" });
+    result = spawnSync(compiler.command, ["/nologo", "/O2", `/Fe:${executable}`, `/Fo:${objectFile}`, source], {
+      shell: true,
+      stdio: "inherit",
+    });
   } else if (compiler.kind === "msvc-vcvars") {
     const vcArch = arch === "arm64" ? "arm64" : "x64";
-    const command = `call "${compiler.vcvars}" ${vcArch} >nul && cl.exe /nologo /O2 /Fe:"${executable}" "${source}"`;
-    result = spawnSync("cmd.exe", ["/d", "/s", "/c", command], { stdio: "inherit" });
+    const compileScript = path.join(output, "compile-launcher.cmd");
+    fs.writeFileSync(
+      compileScript,
+      [
+        "@echo off",
+        `call "${compiler.vcvars}" ${vcArch} >nul`,
+        "if errorlevel 1 exit /b %errorlevel%",
+        `cl.exe /nologo /O2 /Fe:"${executable}" /Fo:"${objectFile}" "${source}"`,
+        "exit /b %errorlevel%",
+        "",
+      ].join("\r\n"),
+    );
+    try {
+      result = spawnSync("cmd.exe", ["/d", "/c", compileScript], { stdio: "inherit" });
+    } finally {
+      fs.rmSync(compileScript, { force: true });
+    }
   } else {
     result = spawnSync(compiler.command, ["-O2", "-o", executable, source], { stdio: "inherit" });
   }
+  if (platform === "win32") fs.rmSync(objectFile, { force: true });
   if (result.status !== 0) throw new Error(`Failed to compile Layang CLI launcher with ${compiler.command}.`);
   if (platform !== "win32") fs.chmodSync(executable, 0o755);
 }

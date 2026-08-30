@@ -20,6 +20,7 @@
 ### Fixed
 
 - Fixed integrated terminal ANSI and Windows carriage-return handling, including preservation of the final output fragment when a process exits without a trailing newline.
+- Fixed Windows standalone CLI packaging on GitHub Actions by invoking Visual Studio's environment setup through a temporary batch script instead of a fragile inline `cmd.exe` command.
 - Synced CLI-started mock daemon state into the open GUI for gRPC, REST, and WebSocket, including GUI stop controls for external runtimes.
 - Hardened narrow and zoomed layouts, dropdown placement, text line boxes, tooltip bounds, response resizing, and request/mock toolbar alignment.
 - Improved gRPC-Web base64 frame decoding and incomplete-frame diagnostics, and kept native gRPC and Web Access request matching consistent.
