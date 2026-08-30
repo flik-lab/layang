@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.event_name == 'workflow_dispatch' && github.sha || github.ref_name }}
@@ -17,103 +17,83 @@ jobs:
   prepare:
     name: Prepare release metadata
     runs-on: ubuntu-latest
-
     outputs:
       version: ${{ steps.release-meta.outputs.version }}
       tag: ${{ steps.release-meta.outputs.tag }}
       release_name: ${{ steps.release-meta.outputs.release_name }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Read package version
         id: release-meta
         shell: bash
         run: |
           VERSION="$(node -p "require('./package.json').version")"
           TAG="v${VERSION}"
-
           if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF_NAME}" != "${TAG}" ]; then
             echo "Release tag ${GITHUB_REF_NAME} does not match package.json version ${VERSION}. Expected ${TAG}." >&2
             exit 1
           fi
-
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "release_name=Layang ${TAG}" >> "$GITHUB_OUTPUT"
-
-      - name: Show release metadata
-        run: |
-          echo "Version: ${{ steps.release-meta.outputs.version }}"
-          echo "Tag: ${{ steps.release-meta.outputs.tag }}"
 
   verify:
     name: Verify
     needs: prepare
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
       - name: Typecheck
         run: pnpm run typecheck
-
       - name: Lint
         run: pnpm lint
-
       - name: Test
-        run: pnpm run test:all
-
+        run: pnpm test
       - name: Build
         run: pnpm run build
 
-      - name: Validate docs
-        run: pnpm run docs:build
-
   package-windows:
-    name: Package Windows
+    name: Package Windows desktop + CLI
     needs:
       - prepare
       - verify
     runs-on: windows-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Build Windows updater installer
-        run: pnpm run desktop:win:setup:squirrel
-
-      - name: Build Windows portable zip
-        run: pnpm run desktop:win:portable
-
-      - name: Upload Windows artifacts
+      - name: Build Windows desktop
+        run: pnpm run desktop:win
+      - name: Build standalone Windows CLI
+        run: pnpm run cli:dist
+      - name: Create CLI checksum
+        shell: pwsh
+        run: |
+          $archives = @(Get-ChildItem -Path "dist/cli/layang-cli-windows-*.zip" -File)
+          if ($archives.Count -ne 1) { throw "Expected exactly one Windows CLI archive, found $($archives.Count)." }
+          $archive = $archives[0]
+          $hash = (Get-FileHash -Algorithm SHA256 $archive.FullName).Hash.ToLowerInvariant()
+          "$hash  $($archive.Name)" | Set-Content -Encoding ascii "$($archive.FullName).sha256"
+      - name: Upload Windows release artifacts
         uses: actions/upload-artifact@v4
         with:
           name: layang-windows-${{ needs.prepare.outputs.version }}
@@ -122,38 +102,47 @@ jobs:
             dist/make/**/*.nupkg
             dist/make/**/RELEASES
             dist/make/**/*.zip
+            dist/cli/layang-cli-windows-*.zip
+            dist/cli/layang-cli-windows-*.zip.sha256
           if-no-files-found: error
+          retention-days: 14
 
   package-linux:
-    name: Package Linux
+    name: Package Linux desktop + CLI
     needs:
       - prepare
       - verify
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-
-      - name: Install system packaging dependencies
+      - name: Install packaging dependencies
         run: sudo apt-get update && sudo apt-get install -y rpm fakeroot dpkg
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Build Linux packages
+      - name: Build Linux desktop
         run: pnpm run desktop:linux
-
-      - name: Upload Linux artifacts
+      - name: Build standalone Linux CLI
+        run: pnpm run cli:dist
+      - name: Create CLI checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(dist/cli/layang-cli-linux-*.tar.gz)
+          if [ "${#archives[@]}" -ne 1 ]; then
+            echo "Expected exactly one Linux CLI archive, found ${#archives[@]}." >&2
+            exit 1
+          fi
+          sha256sum "${archives[0]}" > "${archives[0]}.sha256"
+      - name: Upload Linux release artifacts
         uses: actions/upload-artifact@v4
         with:
           name: layang-linux-${{ needs.prepare.outputs.version }}
@@ -161,50 +150,61 @@ jobs:
             dist/make/**/*.zip
             dist/make/**/*.deb
             dist/make/**/*.rpm
+            dist/cli/layang-cli-linux-*.tar.gz
+            dist/cli/layang-cli-linux-*.tar.gz.sha256
           if-no-files-found: error
+          retention-days: 14
 
   publish:
     name: Publish GitHub Release
+    permissions:
+      contents: write
     needs:
       - prepare
       - package-windows
       - package-linux
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Create release tag from package version
         if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           TAG="${{ needs.prepare.outputs.tag }}"
-
           git fetch --tags --force origin
-
           if git rev-parse "${TAG}" >/dev/null 2>&1; then
             TAG_COMMIT="$(git rev-list -n 1 "${TAG}")"
-
             if [ "${TAG_COMMIT}" != "${GITHUB_SHA}" ]; then
               echo "Tag ${TAG} already exists on a different commit." >&2
-              echo "Bump package.json version, or delete/recreate the existing tag intentionally." >&2
               exit 1
             fi
-
-            echo "Tag ${TAG} already exists on this commit."
           else
             git tag "${TAG}" "${GITHUB_SHA}"
             git push origin "${TAG}"
           fi
-
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-artifacts
-
+      - name: Verify standalone CLI assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          require_one() {
+            local pattern="$1"
+            mapfile -t files < <(find release-artifacts -type f -name "$pattern" -print)
+            if [ "${#files[@]}" -ne 1 ]; then
+              echo "Expected exactly one ${pattern}; found ${#files[@]}." >&2
+              exit 1
+            fi
+          }
+          require_one "layang-cli-windows-*.zip"
+          require_one "layang-cli-windows-*.zip.sha256"
+          require_one "layang-cli-linux-*.tar.gz"
+          require_one "layang-cli-linux-*.tar.gz.sha256"
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
@@ -212,5 +212,5 @@ jobs:
           name: ${{ needs.prepare.outputs.release_name }}
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
-          files: |
-            release-artifacts/**/*
+          fail_on_unmatched_files: true
+          files: release-artifacts/**/*

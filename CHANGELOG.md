@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.1.1
+
+### Added
+
+- Added an integrated CLI terminal with command history, streaming output, cancellation, GUI action history, and shared workspace context.
+- Added standalone Windows and Linux CLI archives with a private Node.js runtime, install helpers, SHA-256 checksums, and `layang ui <workspace>` desktop handoff.
+- Added CLI schema and revision lifecycle commands, including archive, restore, delete, and saved-request reference migration.
+- Added protocol-aware Quick Create for REST, WebSocket, and multi-select gRPC request generation with collection targeting and duplicate protection.
+- Added compact schema, mocking, and gRPC scenario trees plus contextual mock controls inside the request workspace.
+
+### Changed
+
+- Reworked the workbench into a denser VS Code-style layout with a stable activity rail, compact request tabs, responsive response splits, and simplified Docs, Source Control, and Settings workspaces.
+- Reorganized gRPC Mock management around collapsible services, method status filters, inline scenarios, TLS settings, and independent gRPC, REST, and WebSocket runtime switches.
+- Simplified development, test, and packaging commands while keeping runtime dependencies available to gRPC Mock and Web Access integration tests.
+- Consolidated overlapping batch regression guards into focused behavior-based suites for CLI, workspace, navigation, protocol, and mock runtime behavior.
+
+### Fixed
+
+- Fixed integrated terminal ANSI and Windows carriage-return handling, including preservation of the final output fragment when a process exits without a trailing newline.
+- Synced CLI-started mock daemon state into the open GUI for gRPC, REST, and WebSocket, including GUI stop controls for external runtimes.
+- Hardened narrow and zoomed layouts, dropdown placement, text line boxes, tooltip bounds, response resizing, and request/mock toolbar alignment.
+- Improved gRPC-Web base64 frame decoding and incomplete-frame diagnostics, and kept native gRPC and Web Access request matching consistent.
+
+### Security
+
+- Enabled the Electron renderer sandbox, restricted navigation to Layang-owned content, denied webviews and unsafe external schemes, and opened approved web/mail links through the operating system.
+- Disabled insecure mixed-content execution while retaining the explicit **Bypass TLS errors** option for untrusted development certificates.
+
+### Release
+
+- Bumped the release version to `1.1.1`.
+- Made typecheck, lint, the complete unit/E2E test command, and the production build prerequisites for packaging.
+- Made standalone Windows and Linux CLI archives and checksums mandatory GitHub Release assets alongside desktop packages.
+
 ## 1.1.0
 
 ### Major

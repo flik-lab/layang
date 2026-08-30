@@ -4,7 +4,7 @@ This folder is the public landing-site source for Layang.
 
 ## Pages
 
-- `index.html` - product landing page for Layang 1.1.0, including REST, WebSocket, gRPC, gRPC-Web, local mocks, gateway access, certificate settings, documentation, workspace files, CLI, and download sections.
+- `index.html` - product landing page for Layang 1.1.1, including REST, WebSocket, gRPC, gRPC-Web, local mocks, gateway access, certificate settings, documentation, workspace files, CLI, and download sections.
 
 ## Assets
 
@@ -17,14 +17,11 @@ This folder is the public landing-site source for Layang.
 
 ## Local checks
 
-```bash
-pnpm run docs:build
-pnpm run docs:dev
-```
+GitHub Pages deploys this directory directly from `.github/workflows/pages.yaml`. For local preview, serve `github-pages/` with any static HTTP server.
 
 ## Publish
 
-The repository workflow at `.github/workflows/pages.yml` publishes this folder directly to GitHub Pages. You can also copy the folder contents into a `gh-pages` branch manually.
+The repository workflow at `.github/workflows/pages.yaml` publishes this folder directly to GitHub Pages. You can also copy the folder contents into a `gh-pages` branch manually.
 
 ## Custom domain
 

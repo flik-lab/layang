@@ -5,7 +5,7 @@
 # Layang
 
 [![Website](https://img.shields.io/badge/website-layang.mff.web.id-blue)](https://layang.mff.web.id/)
-[![Version](https://img.shields.io/badge/version-1.1.0-blue)](https://github.com/flik-lab/layang/releases)
+[![Version](https://img.shields.io/badge/version-1.1.1-blue)](https://github.com/flik-lab/layang/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Layang is a workspace-based API workbench for testing, mocking, benchmarking, documenting, and automating APIs across REST, WebSocket, gRPC, and gRPC-Web.
@@ -50,6 +50,17 @@ The desktop UI uses a permanent icon rail for **Requests**, **Schemas**, **Servi
 - Use the WebSocket workbench for live connections, message sending, local mock responses, benchmark exports, and generated docs.
 - Use the REST workbench for params, headers, auth, bodies, docs, examples, local mocks, scenario matching, and templates.
 
+## Release 1.1.1
+
+The `1.1.1` release focuses on release hardening after the 1.1 workflow update.
+
+Highlights:
+
+- Electron renderer navigation guards and safer external-link handling without removing the explicit TLS bypass used for local/self-signed development endpoints.
+- Required Windows and Linux runtime CI for gRPC Mock and Web Access before release packaging.
+- Standalone CLI artifacts remain mandatory for both Windows and Linux GitHub Releases.
+- UI rendering, zoom/rail behavior, Quick Create, and gRPC Mock manager hardening from the current workbench phase.
+
 ## Release 1.1.0
 
 The `1.1.0` release is a major workflow and platform update across workspaces, schemas, mocks, documentation, and browser access.
@@ -82,6 +93,8 @@ gRPC mock scenarios live with the workspace and use YAML as the canonical editor
 ## Certificate Settings
 
 Certificate settings are available from **Settings → Network**. Import one or more `.pem`, `.crt`, or `.cer` files to trust internal HTTPS, APISIX, gRPC-Web, or native gRPC lab targets. Layang shows the imported certificate list and SHA-256 fingerprints; the raw PEM editor is intentionally not shown in the UI.
+
+For local/self-signed development endpoints, **Bypass TLS errors** remains an explicit opt-in escape hatch. It accepts certificate validation failures but does not convert plain HTTP into HTTPS or repair a TLS server that sends no certificate.
 
 ## Documentation
 
@@ -140,6 +153,8 @@ pnpm run cli -- docs:build ./workspace
 Native gRPC supports unary, server-streaming, client-streaming, and bidirectional methods. gRPC-Web supports unary and server-streaming, matching browser protocol limits. Visual dialogs remain in the UI; the equivalent CLI workflows use readable text, JSON, JUnit, and unified line-diff output.
 
 When the package is linked or installed, the command is exposed as `layang`.
+
+Windows and Linux releases also publish standalone CLI packages with a private Node.js runtime, so Electron and a system Node installation are not required for CLI-only use. The same workspace can be opened later in the optional desktop app with `layang ui <workspace>`. See [CLI_STANDALONE.md](CLI_STANDALONE.md).
 
 ## Workspace
 

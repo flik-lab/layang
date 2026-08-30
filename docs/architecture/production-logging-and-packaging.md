@@ -70,15 +70,12 @@ Request and response bodies should not be logged by default. Payload logging sho
 
 ## Packaging scripts
 
-Packaging entry points:
+Release packaging intentionally has only a few entry points:
 
 ```bash
-pnpm run desktop:pack
-pnpm run desktop:dist
-pnpm run desktop:win:setup
-pnpm run desktop:win:portable
-pnpm run desktop:linux:deb
-pnpm run desktop:linux:rpm
+pnpm run desktop:win
+pnpm run desktop:linux
+pnpm run cli:dist
 ```
 
-Release workflows read `package.json` and publish artifacts for the current version.
+The GitHub Release workflow runs the normal `typecheck`, `lint`, `test`, and `build` commands, then builds desktop + CLI artifacts per operating system.

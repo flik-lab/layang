@@ -33,37 +33,30 @@ Build the production app:
 pnpm run build
 ```
 
-Create the default Windows Squirrel installer:
+Build Windows desktop release artifacts:
 
 ```bash
-pnpm run desktop:win:setup
+pnpm run desktop:win
 ```
 
-Create the optional Windows MSI installer:
+Build Linux desktop release artifacts on Linux:
 
 ```bash
-pnpm run desktop:win:setup:msi
+pnpm run desktop:linux
 ```
 
-Install WiX Toolset v3 first on Windows if you need MSI builds:
-
-```powershell
-choco install wixtoolset --version=3.14.0
-```
-
-Create Linux packages:
+Build the standalone CLI archive for the current OS:
 
 ```bash
-pnpm run desktop:deb
-pnpm run desktop:rpm
+pnpm run cli:dist
 ```
 
 Run checks before opening a pull request:
 
 ```bash
 pnpm run typecheck
-pnpm run lint
-pnpm run format
+pnpm lint
+pnpm test
 pnpm run build
 ```
 
@@ -109,8 +102,8 @@ Before opening a PR:
 
 - [ ] The change has a clear description.
 - [ ] `pnpm run typecheck` passes locally.
-- [ ] `pnpm run lint` passes locally.
-- [ ] `pnpm run format` passes locally.
+- [ ] `pnpm lint` passes locally.
+- [ ] `pnpm test` passes locally.
 - [ ] `pnpm run build` passes locally.
 - [ ] Docs were updated when behavior changed.
 - [ ] No secrets, private endpoints, or customer data were committed.

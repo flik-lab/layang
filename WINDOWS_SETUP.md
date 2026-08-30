@@ -31,72 +31,73 @@ The portable ZIP is still useful for quick testing, but it is not the recommende
 - Stops mock/runtime services before quitting for a normal exit or update restart.
 
 
-## Electron binary download during development
+## Electron runtime during development
 
-The project explicitly allows the `electron` postinstall script in `pnpm-workspace.yaml`. This makes pnpm download the Electron binary during dependency installation instead of delaying it until `pnpm run desktop`.
-Electron 42 requires Node.js 22.12 or newer; verify it with `node --version` before repairing the installation.
+`pnpm desktop` launches the Electron runtime installed by the `electron` package directly. Electron Forge is reserved for packaging (`desktop:win` / `desktop:linux`), so normal development does not trigger Forge's separate Electron artifact preparation.
 
-After pulling a revision that adds this setting, repair an existing installation with:
+On a fresh clone:
 
 ```powershell
-Remove-Item -Recurse -Force node_modules\electron\dist -ErrorAction SilentlyContinue
-pnpm rebuild electron
+pnpm install
+pnpm desktop
+```
+
+Electron keeps downloaded artifacts in a machine-wide cache. On Windows the default cache is `%LOCALAPPDATA%\electron\Cache`, so another clone using the same Electron version can reuse the cached artifact instead of downloading it again.
+
+To preflight or repair the runtime explicitly:
+
+```powershell
+pnpm electron:prepare
 pnpm exec electron --version
-pnpm run desktop
 ```
 
-If the binary download cannot reach GitHub, configure a reachable Electron mirror for the current terminal, then rebuild:
+If `node_modules/electron/dist` was deleted or is incomplete, `electron:prepare` restores it using Electron's normal installer and shared cache. It also honors standard `HTTP_PROXY` / `HTTPS_PROXY` settings.
+
+If GitHub release downloads are blocked on a network, an Electron-compatible mirror can be selected explicitly for that terminal without changing the repository default:
 
 ```powershell
-$env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
-$env:ELECTRON_CUSTOM_DIR="{{ version }}"
-pnpm rebuild electron
+$env:LAYANG_ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
+pnpm electron:prepare
+Remove-Item Env:LAYANG_ELECTRON_MIRROR
 ```
 
-Clear those environment variables after the binary is installed when the official GitHub source should be used again.
+A custom persistent cache can also be used:
+
+```powershell
+$env:LAYANG_ELECTRON_CACHE="$env:LOCALAPPDATA\Layang\ElectronCache"
+pnpm electron:prepare
+```
+
+Do not set `ELECTRON_SKIP_BINARY_DOWNLOAD` for desktop development. If it is enabled, Layang reports the setting instead of silently hanging later during startup.
 
 ## Build commands
 
-Default user installer with auto-update support:
+Build the Windows updater installer and portable ZIP together:
 
 ```bash
-pnpm run desktop:win:setup
+pnpm run desktop:win
 ```
 
-Same command with explicit name:
+Build Linux desktop packages on Linux:
 
 ```bash
-pnpm run desktop:win:installer
+pnpm run desktop:linux
 ```
 
-Portable ZIP:
+Build the standalone CLI archive for the current operating system:
 
 ```bash
-pnpm run desktop:win:portable
-```
-
-MSI/WiX installer for enterprise-style deployment:
-
-```bash
-pnpm run desktop:win:setup:msi
+pnpm run cli:dist
 ```
 
 ## GitHub Release checklist
 
-1. Bump `package.json` version, for example `1.1.0`.
+1. Bump `package.json` version, for example `1.1.1`.
 2. Open **Actions → Release → Run workflow**. The workflow reads `package.json` and creates/publishes tag `v${package.version}` automatically.
-3. Alternatively, push a SemVer tag manually, for example `v1.1.0`; the workflow validates that the tag matches `package.json`.
-4. Let the release workflow publish Windows artifacts.
-5. Confirm the GitHub Release contains:
-
-```text
-LayangSetup.exe
-RELEASES
-*.nupkg
-*.zip
-```
-
-6. Tell normal users to install from `LayangSetup.exe`, not from the portable ZIP.
+3. Alternatively, push a SemVer tag manually, for example `v1.1.1`; the workflow validates that the tag matches `package.json`.
+4. Let the release workflow build Windows and Linux desktop packages plus the standalone CLI.
+5. Confirm the GitHub Release contains the Windows installer/portable archive, Linux packages, and both CLI archives with SHA-256 files.
+6. Tell normal Windows users to install from `LayangSetup.exe`; CLI-only users can use the standalone CLI archive.
 
 ## Local update testing notes
 
