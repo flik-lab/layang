@@ -99,3 +99,16 @@ test("desktop bootstrap prioritizes CLI launch workspace and keeps second-instan
   assert.match(controller, /workspacePreference\.hasCustomPreference/);
   assert.match(controller, /Workspace opened from Layang CLI/);
 });
+
+test("Windows CLI launcher compiles through a temporary batch file after vcvars setup", () => {
+  const fs = require("node:fs");
+  const root = path.resolve(__dirname, "..");
+  const packaging = fs.readFileSync(path.join(root, "scripts/build-cli-portable.cjs"), "utf8");
+
+  assert.match(packaging, /path\.join\(output, "compile-launcher\.cmd"\)/);
+  assert.match(packaging, /call "\$\{compiler\.vcvars\}" \$\{vcArch\}/);
+  assert.match(packaging, /spawnSync\("cmd\.exe", \["\/d", "\/c", compileScript\]/);
+  assert.match(packaging, /fs\.rmSync\(compileScript, \{ force: true \}\)/);
+  assert.match(packaging, /fs\.rmSync\(objectFile, \{ force: true \}\)/);
+  assert.doesNotMatch(packaging, /\["\/d", "\/s", "\/c", command\]/);
+});
