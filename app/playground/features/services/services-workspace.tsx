@@ -201,8 +201,9 @@ export function ServicesWorkspace({ ctx }: { ctx: ViewContext }) {
         value={protocolTab}
         ariaLabel={`${isRest ? "REST" : "WebSocket"} Mock sections`}
         idPrefix={isRest ? "rest-mock" : "websocket-mock"}
+        variant="underline"
         bordered={false}
-        className="mb-2 p-0"
+        className="mb-2"
         items={[
           { value: "scenarios", label: "Scenarios" },
           { value: "activity", label: "Activity" },
@@ -1220,8 +1221,8 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
           value={tab}
           ariaLabel="gRPC sections"
           idPrefix="grpc-mock"
+          variant="underline"
           bordered={false}
-          className="p-0"
           items={grpcMockTabs.map((value) => ({
             value,
             label:
@@ -1716,8 +1717,8 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
               value={activityView}
               ariaLabel="gRPC Mock activity"
               idPrefix="grpc-mock-activity"
+              variant="underline"
               bordered={false}
-              className="p-0"
               items={[{ value: "logs", label: "Logs" }]}
               onValueChange={(value) => setActivityView(value as GrpcMockActivityView)}
             />
@@ -2317,6 +2318,7 @@ function ScenarioSourceEditor({
           onValueChange={(value) => changeEditorFormat(value as MockFormat)}
           ariaLabel="Mock scenario source format"
           idPrefix={`mock-source-format-${row.scenario.id}`}
+          variant="pill"
           bordered={false}
           className="min-h-0 p-0"
         />
@@ -3537,8 +3539,8 @@ function WebAccessPanel({
           value={tab}
           ariaLabel="Web Access sections"
           idPrefix="web-access"
+          variant="underline"
           bordered={false}
-          className="p-0"
           items={[
             { value: "overview", label: "Overview" },
             { value: "logs", label: "Logs" },

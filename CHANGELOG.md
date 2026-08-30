@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.2
+
+### Changed
+
+- Standardized section navigation tabs with the compact Response-style underline treatment while preserving request document tabs and format selectors.
+
+### Fixed
+
+- Improved the integrated terminal layout with separate toolbar and tab rows, hidden tab scrollbars, and explicit 20px output line boxes to prevent overlapping text.
+
 ## 1.1.1
 
 ### Added

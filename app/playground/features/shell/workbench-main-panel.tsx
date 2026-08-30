@@ -12,6 +12,7 @@ import { createPortal } from "react-dom";
 import type { MetadataPair } from "@/lib/types";
 import { copyTextWithAnnouncement } from "@/lib/accessibility";
 import { MoreHoriz, WarningIcon } from "@/components/shadcn/icons";
+import { WorkbenchTabs } from "@/components/ui/workbench";
 import { methodKey } from "../../shared/rpc-method-utils";
 import { uiCopy } from "../../shared/ui-copy";
 import { MethodStatusIndicator } from "../../shared/components/method-status-indicator";
@@ -137,7 +138,6 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     UploadFile,
     WebSocketBenchmarkPanel,
     WebSocketMockPanel,
-    WorkbenchTabs,
     activateRequestSession,
     activeCollectionRequest,
     activeRequestId,
@@ -1666,7 +1666,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
               {requestContextView === "request" ? (
                 <WorkbenchTabs<RequestTab>
                   value={requestEditorTab}
-                  onChange={handleRequestEditorTabChange}
+                  onValueChange={handleRequestEditorTabChange}
                   items={requestEditorItems}
                   idPrefix="request-editor"
                   ariaLabel="Request editor sections"

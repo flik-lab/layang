@@ -11,7 +11,7 @@ const preload = fs.readFileSync("electron/preload.cjs", "utf8");
 const cliIpc = fs.readFileSync("electron/ipc/cli-ipc.cjs", "utf8");
 const runner = fs.readFileSync("app/playground/hooks/use-request-runner.ts", "utf8");
 
- test("workbench exposes a resizable VS Code-like Layang CLI bottom panel", () => {
+test("workbench exposes a resizable VS Code-like Layang CLI bottom panel", () => {
   assert.match(container, /CliTerminalPanel/);
   assert.match(container, /event\.key !== "`"/);
   assert.match(status, /Toggle Layang CLI terminal/);
@@ -19,6 +19,11 @@ const runner = fs.readFileSync("app/playground/hooks/use-request-runner.ts", "ut
   assert.match(terminal, /GUI → CLI History/);
   assert.match(terminal, /role="separator"/);
   assert.match(terminal, /Stop active CLI process/);
+  assert.match(terminal, /import \{ WorkbenchTabs \} from "@\/components\/ui\/workbench"/);
+  assert.match(terminal, /height: 30, minHeight: 30/);
+  assert.match(terminal, /ariaLabel="CLI panel sections"/);
+  assert.match(terminal, /variant="underline"/);
+  assert.doesNotMatch(terminal, /variant=\{tab === "terminal" \? "contained"/);
 });
 
 test("integrated terminal executes official CLI without a shell and streams output", () => {
@@ -28,6 +33,13 @@ test("integrated terminal executes official CLI without a shell and streams outp
   assert.match(cliIpc, /cli:event:\$\{runId\}/);
   assert.match(preload, /contextBridge\.exposeInMainWorld\("electronCli"/);
   assert.match(preload, /cli:cancel/);
+});
+
+test("integrated terminal reserves a fixed-height line box for every output row", () => {
+  assert.match(terminal, /minHeight: "20px"/);
+  assert.match(terminal, /lineHeight: "20px"/);
+  assert.match(terminal, /fontVariantLigatures: "none"/);
+  assert.doesNotMatch(terminal, /font: "inherit"/);
 });
 
 test("GUI request runs produce portable CLI history without serializing request secrets", () => {

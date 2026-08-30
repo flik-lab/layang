@@ -63,14 +63,15 @@ export function WorkbenchPanelHeader({
   );
 }
 
-export type WorkbenchTabItem = {
-  value: string;
+export type WorkbenchTabItem<T extends string = string> = {
+  value: T;
   label: ReactNode;
+  title?: string;
   count?: number;
   disabled?: boolean;
 };
 
-export function WorkbenchTabs({
+export function WorkbenchTabs<T extends string>({
   value,
   items,
   onValueChange,
@@ -78,11 +79,11 @@ export function WorkbenchTabs({
   idPrefix,
   className,
   bordered = true,
-  variant = "pill",
+  variant = "underline",
 }: {
-  value: string;
-  items: WorkbenchTabItem[];
-  onValueChange: (value: string) => void;
+  value: T;
+  items: WorkbenchTabItem<T>[];
+  onValueChange: (value: T) => void;
   ariaLabel: string;
   idPrefix?: string;
   className?: string;
@@ -96,13 +97,13 @@ export function WorkbenchTabs({
       role="tablist"
       aria-label={ariaLabel}
       className={cn(
-        "flex shrink-0 items-center overflow-x-auto",
+        "flex shrink-0 items-center overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
         variant === "underline"
-          ? "min-h-10 gap-4 px-3 py-0"
+          ? "h-7 min-h-7 gap-3.5 border-b border-border bg-card px-2 py-0"
           : variant === "section"
             ? "h-10 gap-1 bg-muted/10 px-3"
             : "min-h-10 gap-1 px-2 py-1",
-        bordered && "border-b border-border",
+        bordered && variant !== "underline" && "border-b border-border",
         className,
       )}
       onKeyDown={(event) => {
@@ -135,6 +136,7 @@ export function WorkbenchTabs({
             aria-selected={active}
             tabIndex={active ? 0 : -1}
             disabled={item.disabled}
+            title={item.title ?? (typeof item.label === "string" ? item.label : undefined)}
             size="sm"
             variant={
               variant === "underline"
@@ -151,7 +153,7 @@ export function WorkbenchTabs({
               "min-w-fit font-medium",
               variant === "section" && "h-8",
               variant === "underline" &&
-                "relative h-10 rounded-none border-b-2 border-transparent px-0 text-muted-foreground shadow-none hover:bg-transparent hover:text-foreground",
+                "relative h-[27px] rounded-none border-x-0 border-t-0 border-b-2 border-transparent px-px text-[11.5px] font-normal leading-[27px] text-muted-foreground shadow-none hover:bg-transparent hover:text-foreground",
               variant === "underline" && active && "border-primary text-foreground",
               variant === "pill" &&
                 active &&

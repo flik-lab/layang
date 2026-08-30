@@ -25,7 +25,7 @@ const expectedScripts = [
   "test",
 ];
 
-test("package scripts stay intentionally small for the 1.1.1 release", () => {
+test("package scripts stay intentionally small for releases", () => {
   assert.deepEqual(Object.keys(pkg.scripts), expectedScripts);
   assert.equal(pkg.scripts["test:ci"], undefined);
   assert.equal(pkg.scripts["docs:build"], undefined);

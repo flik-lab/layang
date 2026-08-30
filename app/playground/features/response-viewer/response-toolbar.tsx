@@ -24,7 +24,7 @@ import {
   Tooltip,
   Typography,
 } from "@/components/shadcn/compat";
-import { WorkbenchTabs, type WorkbenchTabItem } from "../shell/shell-components";
+import { WorkbenchTabs, type WorkbenchTabItem } from "@/components/ui/workbench";
 import type { ResponseTab } from "../../shared/workbench-types";
 import { copyTextWithAnnouncement } from "@/lib/accessibility";
 
@@ -395,9 +395,10 @@ export const ResponseWorkbenchTabs = memo(function ResponseWorkbenchTabs({
     <WorkbenchTabs<ResponseTab>
       value={normalizedValue}
       items={items}
-      onChange={onChange}
+      onValueChange={onChange}
       idPrefix="response-viewer"
       ariaLabel="Response sections"
+      variant="underline"
     />
   );
 });

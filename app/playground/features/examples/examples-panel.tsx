@@ -25,7 +25,7 @@ import { EmptyState } from "../../shared/components/empty-state";
 import { formatTimestampShort } from "../../shared/formatters";
 import { buttonSx, compactCardSx, iconButtonSx } from "../../shared/workbench-constants";
 import type { SavedExample } from "../../shared/workbench-types";
-import { WorkbenchTabs } from "../shell/shell-components";
+import { WorkbenchTabs } from "@/components/ui/workbench";
 
 export type ExampleEditorTab = "general" | "request" | "response" | "documentation";
 
@@ -275,9 +275,10 @@ export function ExampleEditorDialog({
           <Stack spacing={1} sx={{ minWidth: 0 }}>
             <WorkbenchTabs<ExampleEditorTab>
               value={tab}
-              onChange={setTab}
+              onValueChange={setTab}
               idPrefix="example-editor"
               ariaLabel="Example editor sections"
+              variant="underline"
               items={[
                 { value: "general", label: "General" },
                 { value: "request", label: "Request" },

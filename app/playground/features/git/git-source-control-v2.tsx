@@ -618,7 +618,7 @@ function GitPageTabs({
       value={page}
       ariaLabel="Git workspace sections"
       idPrefix="git-workspace"
-      variant="section"
+      variant="underline"
       items={tabs.map((tab) => {
         const Icon = tab.icon;
         return {

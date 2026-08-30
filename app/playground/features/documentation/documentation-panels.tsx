@@ -59,7 +59,7 @@ import { copyTextWithAnnouncement } from "@/lib/accessibility";
 import { SearchHighlightedText } from "../../shared/components/search-highlight";
 import { uiCopy } from "../../shared/ui-copy";
 import { MarkdownPreview } from "../docs-publisher/docs-publisher-panel";
-import { WorkbenchTabs } from "../shell/shell-components";
+import { WorkbenchTabs } from "@/components/ui/workbench";
 import { WorkbenchTree, workbenchTreeGroupSx, workbenchTreeMetrics } from "@/components/workbench-ui/tree";
 
 export type DocumentationPanelTab = "content" | "preview";
@@ -300,9 +300,10 @@ export function UnifiedDocumentationPanel({
 
       <WorkbenchTabs<DocumentationPanelTab>
         value={tab}
-        onChange={setTab}
+        onValueChange={setTab}
         idPrefix="documentation-editor"
         ariaLabel="Documentation editor sections"
+        variant="underline"
         items={[
           { value: "content", label: "Write" },
           { value: "preview", label: "Preview" },

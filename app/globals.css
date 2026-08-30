@@ -297,98 +297,6 @@ button:disabled {
   --scrollbar-thumb-hover: #aeb8c7;
 }
 
-/* Workbench-specific shadcn refinements. Keep these class-based so the UI stays
-   stable while the legacy MUI-like compatibility layer is gradually removed. */
-.workbench-stacked-tabs {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 38px;
-  padding: 6px 8px 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  border-bottom: 1px solid var(--border);
-  background: var(--card);
-  contain: layout paint style;
-}
-
-.workbench-stacked-tab {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 76px;
-  height: 30px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-bottom-color: transparent;
-  border-radius: 8px 8px 0 0;
-  background: var(--surface-muted);
-  color: var(--muted-foreground);
-  font-size: var(--font-size-control);
-  font-weight: var(--font-weight-medium);
-  line-height: 1;
-  white-space: nowrap;
-  transition:
-    background-color 120ms ease,
-    border-color 120ms ease,
-    color 120ms ease;
-}
-
-.workbench-stacked-tab:hover {
-  background: var(--hover);
-  color: var(--foreground);
-}
-
-.workbench-stacked-tab[data-active="true"] {
-  background: var(--card);
-  border-color: var(--tab-active-border);
-  border-bottom-color: var(--card);
-  color: var(--tab-active-text);
-  box-shadow: 0 2px 0 var(--primary) inset;
-}
-
-.workbench-stacked-tab__label {
-  display: block;
-  min-width: 0;
-  max-width: 132px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Collection Response panel follows the compact VS Code bottom-panel treatment. */
-.response-toolbar + .workbench-stacked-tabs {
-  min-height: 28px;
-  height: 28px;
-  gap: 14px;
-  padding: 0 8px;
-  background: var(--card);
-}
-
-.response-toolbar + .workbench-stacked-tabs .workbench-stacked-tab {
-  min-width: 0;
-  height: 28px;
-  padding: 0 1px;
-  border: 0;
-  border-bottom: 1px solid transparent;
-  border-radius: 0;
-  background: transparent;
-  color: var(--muted-foreground);
-  font-weight: var(--font-weight-regular);
-}
-
-.response-toolbar + .workbench-stacked-tabs .workbench-stacked-tab:hover {
-  background: transparent;
-  color: var(--foreground);
-}
-
-.response-toolbar + .workbench-stacked-tabs .workbench-stacked-tab[data-active="true"] {
-  background: transparent;
-  border-bottom-color: var(--primary);
-  color: var(--foreground);
-  box-shadow: none;
-}
-
 .request-tab-strip {
   display: flex;
   align-items: stretch;
@@ -799,8 +707,7 @@ button:disabled {
   contain: layout paint style;
 }
 
-.response-toolbar button,
-.workbench-stacked-tab {
+.response-toolbar button {
   transform: translateZ(0);
   backface-visibility: hidden;
 }
@@ -967,7 +874,6 @@ button:disabled {
   --workbench-sidebar-row-height: 24px;
 }
 
-[data-density="comfortable"] .workbench-stacked-tab,
 [data-density="comfortable"] .request-tab {
   min-height: 34px;
   padding-inline: 12px;
@@ -1055,76 +961,6 @@ button:disabled {
   background: #fb923c;
   box-shadow: 0 0 0 2px rgba(234, 88, 12, 0.72);
 }
-
-/* Request workspace navigation follows the compact VS Code editor treatment. */
-.workbench-stacked-tabs[data-variant="underline"] {
-  min-height: 27px;
-  height: 27px;
-  gap: 12px;
-  padding: 0 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--background);
-}
-
-.workbench-stacked-tabs[data-variant="underline"] .workbench-stacked-tab {
-  min-width: 0;
-  height: 27px;
-  padding: 0 1px;
-  border: 0;
-  border-bottom: 1px solid transparent;
-  border-radius: 0;
-  background: transparent;
-  color: var(--muted-foreground);
-  font-size: 11.5px;
-  font-weight: 400;
-  box-shadow: none;
-}
-
-.workbench-stacked-tabs[data-variant="underline"] .workbench-stacked-tab:hover {
-  background: transparent;
-  color: var(--foreground);
-}
-
-.workbench-stacked-tabs[data-variant="underline"] .workbench-stacked-tab[data-active="true"] {
-  background: transparent;
-  border-bottom-color: var(--primary);
-  color: var(--foreground);
-  box-shadow: none;
-}
-
-.workbench-stacked-tabs[data-variant="mode"] {
-  min-height: 32px;
-  height: 32px;
-  gap: 2px;
-  padding: 0 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--background);
-}
-
-.workbench-stacked-tabs[data-variant="mode"] .workbench-stacked-tab {
-  min-width: 0;
-  height: 28px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 3px;
-  background: transparent;
-  color: var(--muted-foreground);
-  font-size: 12px;
-  font-weight: 500;
-  box-shadow: none;
-}
-
-.workbench-stacked-tabs[data-variant="mode"] .workbench-stacked-tab:hover {
-  background: var(--hover);
-  color: var(--foreground);
-}
-
-.workbench-stacked-tabs[data-variant="mode"] .workbench-stacked-tab[data-active="true"] {
-  background: var(--surface-selected);
-  color: var(--foreground);
-  box-shadow: inset 0 -1px 0 var(--primary);
-}
-
 
 /* Keep the VS Code-style activity rail vertical at every zoom level.
    Effective viewport height shrinks under Electron/browser zoom, so buttons compact

@@ -155,7 +155,6 @@ import {
   RequestTabs,
   SidebarHeader,
   WindowControls,
-  WorkbenchTabs,
 } from "../shell/shell-components";
 import {
   buildDefaultMockScenario,
@@ -3504,7 +3503,6 @@ export function useWorkbenchContainerModel() {
     WebSocketMockPanel,
     WebSocketMockSidebar,
     WindowControls,
-    WorkbenchTabs,
     activateRequestSession,
     activeCollectionRequest,
     activeCollectionRequestId,

@@ -7,7 +7,7 @@ const designSystem = fs.readFileSync("lib/design-system.ts", "utf8");
 const globals = fs.readFileSync("app/globals.css", "utf8");
 const compat = fs.readFileSync("components/shadcn/compat.tsx", "utf8");
 
-test("dark workbench restores the cooler Layang reference tone", () => {
+test("dark workbench uses the cooler Layang reference tone", () => {
   assert.match(designSystem, /bg: "#0f1117"/);
   assert.match(designSystem, /surface: "#151922"/);
   assert.match(designSystem, /railBg: "#0c1018"/);

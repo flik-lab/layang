@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import { ContentCopy, History, PlayArrow, StopCircle, Terminal } from "@/components/shadcn/icons";
 import { Box, Button, IconButton, Stack, Tooltip, Typography } from "@/components/shadcn/compat";
+import { WorkbenchTabs } from "@/components/ui/workbench";
 import { copyTextWithAnnouncement } from "@/lib/accessibility";
 import {
   clearCliHistory,
@@ -265,16 +266,13 @@ export function CliTerminalPanel({
       <Stack
         direction="row"
         alignItems="center"
-        spacing={0.35}
-        sx={{ height: 34, minHeight: 34, px: 0.7, borderBottom: "1px solid var(--border-strong)" }}
+        spacing={0.6}
+        sx={{ height: 30, minHeight: 30, px: 0.75, borderBottom: "1px solid var(--border-strong)" }}
       >
-        <Terminal sx={{ fontSize: 15 }} />
-        <Button size="small" variant={tab === "terminal" ? "contained" : "text"} onClick={() => setTab("terminal")}>
-          Terminal
-        </Button>
-        <Button size="small" variant={tab === "history" ? "contained" : "text"} onClick={() => setTab("history")}>
-          GUI → CLI History{guiHistory.length ? ` (${guiHistory.length})` : ""}
-        </Button>
+        <Terminal sx={{ fontSize: 14 }} />
+        <Typography variant="caption" fontWeight={600} sx={{ letterSpacing: "0.06em" }}>
+          TERMINAL
+        </Typography>
         <Box sx={{ flex: 1 }} />
         <Typography variant="caption" color="text.secondary" noWrap title={workspacePath || undefined}>
           {workspacePath ? `cwd · ${workspacePath}` : "No workspace folder"}
@@ -292,9 +290,26 @@ export function CliTerminalPanel({
           </Button>
         </Tooltip>
       </Stack>
+      <WorkbenchTabs
+        value={tab}
+        items={[
+          { value: "terminal", label: "Terminal" },
+          { value: "history", label: "GUI → CLI History", count: guiHistory.length },
+        ]}
+        onValueChange={setTab}
+        idPrefix="cli-panel"
+        ariaLabel="CLI panel sections"
+        variant="underline"
+      />
 
       {tab === "terminal" ? (
-        <>
+        <Box
+          role="tabpanel"
+          id="cli-panel-panel-terminal"
+          aria-labelledby="cli-panel-tab-terminal"
+          tabIndex={0}
+          sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+        >
           <Box
             ref={outputRef}
             className="response-selectable"
@@ -305,7 +320,8 @@ export function CliTerminalPanel({
               p: 1,
               fontFamily: '"Cascadia Code", "SFMono-Regular", Consolas, monospace',
               fontSize: 11.5,
-              lineHeight: 1.55,
+              lineHeight: "20px",
+              fontVariantLigatures: "none",
               bgcolor: "var(--code-bg, background.default)",
               userSelect: "text",
             }}
@@ -317,7 +333,9 @@ export function CliTerminalPanel({
                 sx={{
                   display: "block",
                   m: 0,
-                  py: 0.05,
+                  p: 0,
+                  minHeight: "20px",
+                  lineHeight: "20px",
                   whiteSpace: "pre-wrap",
                   wordBreak: "break-word",
                   overflowWrap: "anywhere",
@@ -329,7 +347,8 @@ export function CliTerminalPanel({
                         : line.stream === "system"
                           ? "text.secondary"
                           : "text.primary",
-                  font: "inherit",
+                  fontFamily: "inherit",
+                  fontSize: "inherit",
                 }}
               >
                 {line.text}
@@ -382,9 +401,15 @@ export function CliTerminalPanel({
               </span>
             </Tooltip>
           </Stack>
-        </>
+        </Box>
       ) : (
-        <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+        <Box
+          role="tabpanel"
+          id="cli-panel-panel-history"
+          aria-labelledby="cli-panel-tab-history"
+          tabIndex={0}
+          sx={{ flex: 1, minHeight: 0, overflow: "auto" }}
+        >
           <Stack
             direction="row"
             alignItems="center"

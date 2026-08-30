@@ -70,7 +70,34 @@ test("Response navigation is reduced to payload, metadata, and timeline", () => 
 });
 
 test("request tab primitive stays compact and underline-only for primary request sections", () => {
-  const css = read("app/globals.css");
-  assert.match(css, /workbench-stacked-tabs\[data-variant="underline"\][\s\S]*height: 27px/);
-  assert.match(css, /font-size: 11\.5px/);
+  const tabs = read("components/ui/workbench.tsx");
+  assert.match(tabs, /variant = "underline"/);
+  assert.match(tabs, /h-7 min-h-7 gap-3\.5/);
+  assert.match(tabs, /border-b border-border bg-card/);
+  assert.match(tabs, /border-b-2 border-transparent/);
+  assert.match(tabs, /overflow-y-hidden \[scrollbar-width:none\]/);
+  assert.match(tabs, /h-\[27px\]/);
+  assert.match(tabs, /text-\[11\.5px\]/);
+  assert.match(tabs, /border-primary text-foreground/);
+});
+
+test("section navigation shares one canonical accessible tab primitive", () => {
+  const tabs = read("components/ui/workbench.tsx");
+  const shell = read("app/playground/features/shell/shell-components.tsx");
+  const terminal = read("app/playground/features/cli/cli-terminal-panel.tsx");
+  const response = read("app/playground/features/response-viewer/response-toolbar.tsx");
+  const docs = read("app/playground/features/documentation/documentation-panels.tsx");
+  const examples = read("app/playground/features/examples/examples-panel.tsx");
+  const services = read("app/playground/features/services/services-workspace.tsx");
+  const git = read("app/playground/features/git/git-source-control-v2.tsx");
+
+  assert.doesNotMatch(shell, /export function WorkbenchTabs/);
+  for (const source of [terminal, response, docs, examples, services, git]) {
+    assert.match(source, /components\/ui\/workbench/);
+  }
+  assert.match(tabs, /role="tablist"/);
+  assert.match(tabs, /aria-selected=\{active\}/);
+  assert.match(tabs, /"ArrowLeft", "ArrowRight", "Home", "End"/);
+  assert.match(services, /variant="pill"/);
+  assert.match(git, /variant="underline"/);
 });
