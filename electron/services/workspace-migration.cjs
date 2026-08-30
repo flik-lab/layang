@@ -23,6 +23,18 @@ const LEGACY_WORKSPACE_PATHS = Object.freeze([
   path.join("mocks", "mock-server.json"),
   path.join("mocks", "rest-mock-server.json"),
   path.join("mocks", "scenarios"),
+  path.join("mocks", "scenarios.json"),
+  path.join("mocks", "scenarios.yaml"),
+  path.join("mocks", "scenarios.yml"),
+]);
+
+// Proto sources share the same top-level directory with the v6 managed proto library.
+// Back the legacy tree up before migration, but never remove the whole directory after
+// commit because it also contains the newly generated immutable revisions.
+const LEGACY_BACKUP_ONLY_PATHS = Object.freeze(["protos"]);
+const LEGACY_WORKSPACE_BACKUP_PATHS = Object.freeze([
+  ...LEGACY_WORKSPACE_PATHS,
+  ...LEGACY_BACKUP_ONLY_PATHS,
 ]);
 
 const STRONG_SPLIT_MARKERS = Object.freeze([
@@ -73,7 +85,7 @@ function looksLikeLegacyProjectDocument(value) {
 
 async function backupLegacyWorkspaceFiles(directoryPath) {
   const root = path.resolve(directoryPath);
-  const existing = LEGACY_WORKSPACE_PATHS.filter((relative) => fsSync.existsSync(path.join(root, relative)));
+  const existing = LEGACY_WORKSPACE_BACKUP_PATHS.filter((relative) => fsSync.existsSync(path.join(root, relative)));
   if (!existing.length) return "";
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const backupRoot = path.join(
@@ -220,6 +232,7 @@ function toPosix(value) {
 
 module.exports = {
   LEGACY_WORKSPACE_PATHS,
+  LEGACY_WORKSPACE_BACKUP_PATHS,
   hasRecognizedLegacyWorkspaceFiles,
   backupLegacyWorkspaceFiles,
   removeLegacyWorkspaceFiles,

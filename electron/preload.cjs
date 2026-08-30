@@ -1,15 +1,87 @@
 const { contextBridge, ipcRenderer } = require("electron");
-const crypto = require("node:crypto");
 
 const activeRunIds = new Set();
 
+function createRunId(explicitRunId) {
+  if (explicitRunId) return String(explicitRunId);
+  try {
+    if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+      return globalThis.crypto.randomUUID();
+    }
+  } catch {
+    // Fall through to a renderer-safe id when Web Crypto is unavailable.
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+
+const activeCliRunIds = new Set();
+const guiCliListeners = new Set();
+const workspaceOpenListeners = new Set();
+let pendingWorkspaceOpenRequest = "";
+
+ipcRenderer.on("workspace:open-request", (_event, directoryPath) => {
+  const nextPath = typeof directoryPath === "string" ? directoryPath : "";
+  if (!nextPath) return;
+  if (workspaceOpenListeners.size === 0) {
+    pendingWorkspaceOpenRequest = nextPath;
+    return;
+  }
+  for (const listener of workspaceOpenListeners) {
+    try { listener(nextPath); } catch {}
+  }
+});
+
+function quoteCliValue(value) {
+  const text = String(value ?? "");
+  if (/^[a-zA-Z0-9_./:@-]+$/.test(text)) return text;
+  return `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function notifyGuiCliCommand(command, label, replayable = true) {
+  const entry = { command, label, replayable, createdAt: new Date().toISOString() };
+  for (const listener of guiCliListeners) {
+    try { listener(entry); } catch {}
+  }
+}
+
+function invokeGitWithHistory(channel, payload, command, label, replayable = true) {
+  return ipcRenderer.invoke(channel, payload).then((result) => {
+    if (result?.ok !== false) notifyGuiCliCommand(command, label, replayable);
+    return result;
+  });
+}
+
+contextBridge.exposeInMainWorld("electronCli", {
+  run: (payload, onEvent) => {
+    const runId = createRunId(payload?.runId);
+    activeCliRunIds.add(runId);
+    const listener = typeof onEvent === "function" ? (_event, cliEvent) => onEvent(cliEvent) : null;
+    if (listener) ipcRenderer.on(`cli:event:${runId}`, listener);
+    return ipcRenderer.invoke("cli:run", { ...(payload || {}), runId }).finally(() => {
+      if (listener) ipcRenderer.removeListener(`cli:event:${runId}`, listener);
+      activeCliRunIds.delete(runId);
+    });
+  },
+  cancel: (runId) => {
+    const targetRunId = runId ? String(runId) : Array.from(activeCliRunIds).at(-1);
+    return targetRunId
+      ? ipcRenderer.invoke("cli:cancel", { runId: targetRunId })
+      : Promise.resolve({ ok: true, cancelled: false });
+  },
+  mockRuntimeStatus: (workspacePath) => ipcRenderer.invoke("cli:mock-runtime-status", { workspacePath }),
+  stopMockRuntime: (workspacePath) => ipcRenderer.invoke("cli:mock-runtime-stop", { workspacePath }),
+  onGuiCommand: (callback) => {
+    if (typeof callback !== "function") return () => undefined;
+    guiCliListeners.add(callback);
+    return () => guiCliListeners.delete(callback);
+  },
+  isAvailable: true,
+});
+
 contextBridge.exposeInMainWorld("electronGrpc", {
   invoke: (payload) => {
-    const runId = payload?.runId
-      ? String(payload.runId)
-      : crypto.randomUUID
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const runId = createRunId(payload?.runId);
     activeRunIds.add(runId);
     const onEvent = typeof payload.onEvent === "function" ? payload.onEvent : undefined;
     const serializablePayload = { ...payload, runId };
@@ -51,46 +123,131 @@ contextBridge.exposeInMainWorld("electronWorkspace", {
   openPath: (directoryPath, relativePath, options) =>
     ipcRenderer.invoke("workspace:open-path", { directoryPath, relativePath, ...(options || {}) }),
   getRevision: (directoryPath) => ipcRenderer.invoke("workspace:get-revision", { directoryPath }),
+  onOpenRequest: (callback) => {
+    if (typeof callback !== "function") return () => undefined;
+    workspaceOpenListeners.add(callback);
+    if (pendingWorkspaceOpenRequest) {
+      const nextPath = pendingWorkspaceOpenRequest;
+      pendingWorkspaceOpenRequest = "";
+      queueMicrotask(() => {
+        try { callback(nextPath); } catch {}
+      });
+    }
+    return () => workspaceOpenListeners.delete(callback);
+  },
   isAvailable: true,
 });
 
 contextBridge.exposeInMainWorld("electronGit", {
   info: (payload) => ipcRenderer.invoke("git:info", payload),
-  init: (payload) => ipcRenderer.invoke("git:init", payload),
+  init: (payload) => invokeGitWithHistory("git:init", payload, `layang git:init --branch ${quoteCliValue(payload?.initialBranch || "main")}`, "Initialize Git from GUI"),
   clone: (payload) => ipcRenderer.invoke("git:clone", payload),
   status: (payload) => ipcRenderer.invoke("git:status", payload),
   diff: (payload) => ipcRenderer.invoke("git:diff", payload),
-  stage: (payload) => ipcRenderer.invoke("git:stage", payload),
-  unstage: (payload) => ipcRenderer.invoke("git:unstage", payload),
-  discard: (payload) => ipcRenderer.invoke("git:discard", payload),
-  commit: (payload) => ipcRenderer.invoke("git:commit", payload),
+  stage: (payload) => invokeGitWithHistory("git:stage", payload, `layang git:stage${(payload?.paths || []).map((item) => ` --path ${quoteCliValue(item)}`).join("")}`, "Stage Git changes from GUI"),
+  unstage: (payload) => invokeGitWithHistory("git:unstage", payload, `layang git:unstage${(payload?.paths || []).map((item) => ` --path ${quoteCliValue(item)}`).join("")}`, "Unstage Git changes from GUI"),
+  discard: (payload) => invokeGitWithHistory("git:discard", payload, `layang git:discard${(payload?.paths || []).map((item) => ` --path ${quoteCliValue(item)}`).join("")} --yes`, "Discard Git changes from GUI"),
+  commit: (payload) => invokeGitWithHistory("git:commit", payload, `layang git:commit --message ${quoteCliValue(payload?.message || "")}`, "Commit from GUI"),
   log: (payload) => ipcRenderer.invoke("git:log", payload),
   branches: (payload) => ipcRenderer.invoke("git:branches", payload),
-  createBranch: (payload) => ipcRenderer.invoke("git:branch-create", payload),
-  switchBranch: (payload) => ipcRenderer.invoke("git:branch-switch", payload),
-  fetch: (payload) => ipcRenderer.invoke("git:fetch", payload),
-  addRemote: (payload) => ipcRenderer.invoke("git:remote-add", payload),
-  removeRemote: (payload) => ipcRenderer.invoke("git:remote-remove", payload),
-  pull: (payload) => ipcRenderer.invoke("git:pull", payload),
-  push: (payload) => ipcRenderer.invoke("git:push", payload),
+  createBranch: (payload) => invokeGitWithHistory("git:branch-create", payload, `layang git:branch-create --name ${quoteCliValue(payload?.name || "")}${payload?.switch ? " --switch" : ""}`, "Create Git branch from GUI"),
+  switchBranch: (payload) => invokeGitWithHistory("git:branch-switch", payload, `layang git:branch-switch --name ${quoteCliValue(payload?.name || "")}${payload?.force ? " --force" : ""}`, "Switch Git branch from GUI"),
+  fetch: (payload) => invokeGitWithHistory("git:fetch", payload, `layang git:fetch${payload?.remote ? ` --remote ${quoteCliValue(payload.remote)}` : ""}`, "Fetch Git remote from GUI"),
+  addRemote: (payload) =>
+    invokeGitWithHistory(
+      "git:remote-add",
+      payload,
+      `layang git:remote-add --remote ${quoteCliValue(payload?.name || "origin")} --url "<repository-url>"`,
+      "Add Git remote from GUI · enter the repository URL before replaying",
+      false,
+    ),
+  removeRemote: (payload) =>
+    invokeGitWithHistory(
+      "git:remote-remove",
+      payload,
+      `layang git:remote-remove --remote ${quoteCliValue(payload?.name || "origin")}`,
+      "Remove Git remote from GUI",
+    ),
+  pull: (payload) => invokeGitWithHistory("git:pull", payload, `layang git:pull${payload?.remote ? ` --remote ${quoteCliValue(payload.remote)}` : ""}${payload?.branch ? ` --branch ${quoteCliValue(payload.branch)}` : ""}${payload?.rebase ? " --rebase" : ""}`, "Pull Git changes from GUI"),
+  push: (payload) => invokeGitWithHistory("git:push", payload, `layang git:push${payload?.remote ? ` --remote ${quoteCliValue(payload.remote)}` : ""}${payload?.branch ? ` --branch ${quoteCliValue(payload.branch)}` : ""}${payload?.setUpstream ? " --set-upstream" : ""}`, "Push Git changes from GUI"),
   check: (payload) => ipcRenderer.invoke("git:check", payload),
   scanSecrets: (payload) => ipcRenderer.invoke("git:scan-secrets", payload),
-  continueMerge: (payload) => ipcRenderer.invoke("git:merge-continue", payload),
-  abortMerge: (payload) => ipcRenderer.invoke("git:merge-abort", payload),
+  continueMerge: (payload) => invokeGitWithHistory("git:merge-continue", payload, "layang git:merge-continue", "Continue Git merge from GUI"),
+  abortMerge: (payload) => invokeGitWithHistory("git:merge-abort", payload, "layang git:merge-abort", "Abort Git merge from GUI"),
   uxState: (payload) => ipcRenderer.invoke("git:ux-state", payload),
   changeSets: (payload) => ipcRenderer.invoke("git:change-sets", payload),
-  saveChangeSet: (payload) => ipcRenderer.invoke("git:change-set-save", payload),
-  deleteChangeSet: (payload) => ipcRenderer.invoke("git:change-set-delete", payload),
-  assignChangeSet: (payload) => ipcRenderer.invoke("git:change-set-assign", payload),
-  markReview: (payload) => ipcRenderer.invoke("git:review-mark", payload),
+  saveChangeSet: (payload) =>
+    invokeGitWithHistory(
+      "git:change-set-save",
+      payload,
+      `layang git:change-set-create${payload?.id ? ` --id ${quoteCliValue(payload.id)}` : ""} --name ${quoteCliValue(payload?.name || "Change Set")}${payload?.description ? ` --description ${quoteCliValue(payload.description)}` : ""}${payload?.color ? ` --color ${quoteCliValue(payload.color)}` : ""}${(payload?.paths || []).map((item) => ` --path ${quoteCliValue(item)}`).join("")}`,
+      payload?.id ? "Update Git change set from GUI" : "Create Git change set from GUI",
+    ),
+  deleteChangeSet: (payload) =>
+    invokeGitWithHistory(
+      "git:change-set-delete",
+      payload,
+      `layang git:change-set-delete --id ${quoteCliValue(payload?.id || "")}`,
+      "Delete Git change set from GUI",
+    ),
+  assignChangeSet: (payload) =>
+    invokeGitWithHistory(
+      "git:change-set-assign",
+      payload,
+      `layang git:change-set-assign --id ${quoteCliValue(payload?.id || "")}${(payload?.paths || []).map((item) => ` --path ${quoteCliValue(item)}`).join("")}`,
+      "Assign files to Git change set from GUI",
+    ),
+  markReview: (payload) =>
+    invokeGitWithHistory(
+      "git:review-mark",
+      payload,
+      `layang git:review --path ${quoteCliValue(payload?.path || "")} --status ${quoteCliValue(payload?.status || "reviewed")}`,
+      "Update Git review status from GUI",
+    ),
   reviewSummary: (payload) => ipcRenderer.invoke("git:review-summary", payload),
   enhancedDiff: (payload) => ipcRenderer.invoke("git:diff-enhanced", payload),
-  stageHunks: (payload) => ipcRenderer.invoke("git:hunk-stage", payload),
-  unstageHunks: (payload) => ipcRenderer.invoke("git:hunk-unstage", payload),
-  discardHunks: (payload) => ipcRenderer.invoke("git:hunk-discard", payload),
-  stageFields: (payload) => ipcRenderer.invoke("git:field-stage", payload),
-  unstageFields: (payload) => ipcRenderer.invoke("git:field-unstage", payload),
-  clearCompletedChangeSets: (payload) => ipcRenderer.invoke("git:change-sets-clear-completed", payload),
+  stageHunks: (payload) =>
+    invokeGitWithHistory(
+      "git:hunk-stage",
+      payload,
+      `layang git:hunk-stage --path ${quoteCliValue(payload?.file || "")}${(payload?.hunkIds || []).map((id) => ` --hunk ${quoteCliValue(id)}`).join("")}`,
+      "Stage Git hunks from GUI",
+    ),
+  unstageHunks: (payload) =>
+    invokeGitWithHistory(
+      "git:hunk-unstage",
+      payload,
+      `layang git:hunk-unstage --path ${quoteCliValue(payload?.file || "")}${(payload?.hunkIds || []).map((id) => ` --hunk ${quoteCliValue(id)}`).join("")}`,
+      "Unstage Git hunks from GUI",
+    ),
+  discardHunks: (payload) =>
+    invokeGitWithHistory(
+      "git:hunk-discard",
+      payload,
+      `layang git:hunk-discard --path ${quoteCliValue(payload?.file || "")}${(payload?.hunkIds || []).map((id) => ` --hunk ${quoteCliValue(id)}`).join("")} --yes`,
+      "Discard Git hunks from GUI",
+    ),
+  stageFields: (payload) =>
+    invokeGitWithHistory(
+      "git:field-stage",
+      payload,
+      `layang git:field-stage --path ${quoteCliValue(payload?.file || "")}${(payload?.fields || []).map((field) => ` --field ${quoteCliValue(field)}`).join("")}`,
+      "Stage structured fields from GUI",
+    ),
+  unstageFields: (payload) =>
+    invokeGitWithHistory(
+      "git:field-unstage",
+      payload,
+      `layang git:field-unstage --path ${quoteCliValue(payload?.file || "")}${(payload?.fields || []).map((field) => ` --field ${quoteCliValue(field)}`).join("")}`,
+      "Unstage structured fields from GUI",
+    ),
+  clearCompletedChangeSets: (payload) =>
+    invokeGitWithHistory(
+      "git:change-sets-clear-completed",
+      payload,
+      "layang git:change-sets-clear",
+      "Clear completed Git change sets from GUI",
+    ),
   incoming: (payload) => ipcRenderer.invoke("git:incoming", payload),
   outgoing: (payload) => ipcRenderer.invoke("git:outgoing", payload),
   commitDetails: (payload) => ipcRenderer.invoke("git:commit-details", payload),
@@ -99,11 +256,33 @@ contextBridge.exposeInMainWorld("electronGit", {
   branchHealth: (payload) => ipcRenderer.invoke("git:branch-health", payload),
   predictConflicts: (payload) => ipcRenderer.invoke("git:conflict-predict", payload),
   conflictDetails: (payload) => ipcRenderer.invoke("git:conflict-details", payload),
-  resolveConflict: (payload) => ipcRenderer.invoke("git:conflict-resolve", payload),
+  resolveConflict: (payload) =>
+    invokeGitWithHistory(
+      "git:conflict-resolve",
+      payload,
+      `layang git:conflict-resolve --path ${quoteCliValue(payload?.file || "")} --mode ${quoteCliValue(payload?.mode || "custom")}${payload?.mode === "custom" ? ' --content "<resolved-content>"' : ""}`,
+      payload?.mode === "custom"
+        ? "Resolve Git conflict from GUI · enter resolved content before replaying"
+        : "Resolve Git conflict from GUI",
+      payload?.mode !== "custom",
+    ),
   worktrees: (payload) => ipcRenderer.invoke("git:worktrees", payload),
-  addWorktree: (payload) => ipcRenderer.invoke("git:worktree-add", payload),
-  removeWorktree: (payload) => ipcRenderer.invoke("git:worktree-remove", payload),
-  pruneWorktrees: (payload) => ipcRenderer.invoke("git:worktree-prune", payload),
+  addWorktree: (payload) =>
+    invokeGitWithHistory(
+      "git:worktree-add",
+      payload,
+      `layang git:worktree-add --directory ${quoteCliValue(payload?.path || "")}${payload?.ref ? ` --ref ${quoteCliValue(payload.ref)}` : ""}${payload?.newBranch ? ` --branch ${quoteCliValue(payload.newBranch)}` : ""}`,
+      "Add Git worktree from GUI",
+    ),
+  removeWorktree: (payload) =>
+    invokeGitWithHistory(
+      "git:worktree-remove",
+      payload,
+      `layang git:worktree-remove --directory ${quoteCliValue(payload?.path || "")}${payload?.force ? " --force" : ""}`,
+      "Remove Git worktree from GUI",
+    ),
+  pruneWorktrees: (payload) =>
+    invokeGitWithHistory("git:worktree-prune", payload, "layang git:worktree-prune", "Prune Git worktrees from GUI"),
   suggestCommit: (payload) => ipcRenderer.invoke("git:commit-suggest", payload),
   isAvailable: true,
 });

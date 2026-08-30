@@ -51,3 +51,11 @@ test("normalizes websocket transport options", () => {
   assert.equal(options.transport, "websocket");
   assert.equal(options.wsWaitMs, 250);
 });
+
+test("parses Git change-set assignment parity command", () => {
+  const parsed = parseCliArgs(["git:change-set-assign", ".", "--id", "feature-x", "--path", "requests/a.yml"]);
+  assert.equal(parsed.command, "git:change-set-assign");
+  assert.equal(parsed.flags.id, "feature-x");
+  assert.deepEqual(parsed.flags.path, ["requests/a.yml"]);
+  assert.match(helpText(), /git:change-set-assign/);
+});

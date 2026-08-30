@@ -28,7 +28,7 @@ const hopByHopHeaders = new Set([
   "transfer-encoding",
   "upgrade",
 ]);
-const protocolHeaders = new Set(["accept", "content-type", "grpc-accept-encoding", "x-grpc-web", "x-user-agent"]);
+const protocolHeaders = new Set(["accept", "content-type", "grpc-accept-encoding", "grpc-encoding", "x-grpc-web", "x-user-agent"]);
 
 function normalizeGrpcWebConfig(input = {}) {
   const security = normalizeWebSecurity(input.security);
@@ -55,6 +55,8 @@ function normalizeGrpcWebConfig(input = {}) {
           "authorization",
           "content-type",
           "grpc-timeout",
+          "grpc-accept-encoding",
+          "grpc-encoding",
           "x-grpc-web",
           "x-user-agent",
           "x-request-id",
@@ -308,12 +310,22 @@ function createRequestHandler(context) {
       const payload = decodeGrpcWebRequestBody(body, contentType.text, context.config.maxRequestBytes);
       request = route.definition.requestDeserialize(payload);
     } catch (error) {
-      writeGrpcWebError(
-        res,
-        contentType,
-        grpc.status.INVALID_ARGUMENT,
-        error?.message || "Invalid gRPC-Web request body.",
-      );
+      const message = error?.message || "Invalid gRPC-Web request body.";
+      context.onLog({
+        kind: "call",
+        behavior: "grpc-web",
+        status: "INVALID_ARGUMENT",
+        method: route.methodKey,
+        message,
+        details: {
+          requestPath,
+          contentType: String(req.headers?.["content-type"] || ""),
+          transferEncoding: String(req.headers?.["transfer-encoding"] || ""),
+          contentLength: String(req.headers?.["content-length"] || ""),
+          client: String(req.headers?.["x-user-agent"] || req.headers?.["user-agent"] || ""),
+        },
+      });
+      writeGrpcWebError(res, contentType, grpc.status.INVALID_ARGUMENT, message);
       return;
     }
 

@@ -8,11 +8,13 @@ const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "u
 
 test("Web Access lives inside the gRPC service instead of a standalone sidebar item", () => {
   const sidebar = read("app/playground/features/shell/workbench-sidebar.tsx");
+  const mockingTree = read("app/playground/features/services/mocking-sidebar-tree.tsx");
   const services = read("app/playground/features/services/services-workspace.tsx");
 
-  assert.match(sidebar, /id: "grpc-mock", label: "gRPC"/);
-  assert.doesNotMatch(sidebar, /id: "web-access", label: "Web Access"/);
-  assert.match(sidebar, /serviceProtocol === "web-access" \? "grpc-mock" : serviceProtocol/);
+  assert.match(sidebar, /<MockingSidebarTree/);
+  assert.match(mockingTree, />\s*gRPC\s*<\/Button>/);
+  assert.doesNotMatch(mockingTree, />\s*Web Access\s*<\/Button>/);
+  assert.match(mockingTree, /serviceProtocol === "grpc-mock" \|\| serviceProtocol === "web-access"/);
 
   assert.match(services, /const grpcMockTabs = \["scenarios", "proto", "web-access", "activity"\]/);
   assert.match(services, /label:\s*value === "scenarios"[\s\S]*?"Web access"/);
@@ -37,19 +39,18 @@ test("gRPC uses one persistent run-mode toolbar on every integrated tab", () => 
   assert.doesNotMatch(services, /Save & Start/);
 });
 
-test("legacy Web Access workspace state opens the integrated gRPC tab", () => {
+test("legacy Web Access workspace state opens the focused gRPC workspace", () => {
   const services = read("app/playground/features/services/services-workspace.tsx");
 
   assert.match(
     services,
-    /serviceProtocol === "grpc-mock" \|\| serviceProtocol === "web-access"[\s\S]*?initialTab=\{serviceProtocol === "web-access" \? "web-access" : "scenarios"\}/,
+    /serviceProtocol === "grpc-mock" \|\| serviceProtocol === "web-access"[\s\S]*?<GrpcFocusedMockWorkspace ctx=\{ctx\} \/>/,
   );
-  assert.match(services, /if \(tab === "web-access" \|\| !mockSelectedMethod\) return;/);
-  assert.doesNotMatch(
-    services,
-    /\}, \[tab, mockSelectedMethod, allScenarioRows, mockableMethods, mockServer\.selectedScenarioIds\]\);/,
-  );
-  assert.match(services, /Before starting: \{runModeIssues\.join\(" · "\)\}/);
+  assert.match(services, /function GrpcFocusedMockWorkspace/);
+  assert.match(services, /function MockRuntimeStrip/);
+  assert.match(services, /label: "Web Access"/);
+  assert.match(services, /Scenario/);
+  assert.match(services, /FeatureCodeTextField/);
 });
 
 test("portal layers keep notifications above dialogs, menus, and tooltips", () => {

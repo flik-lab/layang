@@ -16,6 +16,9 @@ function tryRequire(name) {
 const grpc = tryRequire("@grpc/grpc-js");
 const protoLoader = tryRequire("@grpc/proto-loader");
 const hasGrpcDeps = Boolean(grpc && protoLoader);
+if (process.env.LAYANG_REQUIRE_RUNTIME_DEPS === "1" && !hasGrpcDeps) {
+  throw new Error("Required gRPC runtime dependencies are unavailable. Run pnpm install --frozen-lockfile --prod=false.");
+}
 
 const protoText = `syntax = "proto3";
 package demo;
@@ -228,6 +231,104 @@ test("Web Access recovers requests sent during a fast local mock restart", {
   } finally {
     await stopGatewayProfile(profileId);
     await stopMockServer();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Web Access unary mock accepts external chunked grpc-web-text base64 and matches the request body", { skip: !hasGrpcDeps }, async () => {
+  const { startGatewayProfile, stopGatewayProfile } = require("../../electron/services/grpc-gateway-server.cjs");
+  const fs = require("node:fs/promises");
+  const os = require("node:os");
+  const path = require("node:path");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "layang-grpc-web-unary-matcher-"));
+  const protoPath = path.join(dir, "greeter.proto");
+  await fs.writeFile(protoPath, protoText);
+  const packageDefinition = protoLoader.loadSync(protoPath, {
+    defaults: true,
+    longs: String,
+    enums: String,
+    oneofs: true,
+  });
+  const loaded = grpc.loadPackageDefinition(packageDefinition);
+  const serviceDefinition = loaded.demo.Greeter.service;
+  const rpcDefinition = serviceDefinition.SayHello ?? serviceDefinition.sayHello;
+  const webPort = await getFreePort();
+  const profileId = `web-unary-matcher-${Date.now()}`;
+
+  try {
+    await startGatewayProfile({
+      profile: {
+        id: profileId,
+        mode: "mock",
+        listenHost: "127.0.0.1",
+        listenPort: 0,
+        noMatchBehavior: "not-found",
+        web: {
+          enabled: true,
+          host: "127.0.0.1",
+          port: webPort,
+          security: { type: "insecure" },
+          cors: { allowedOrigins: ["*"] },
+        },
+      },
+      protoFiles: [{ name: "greeter.proto", text: protoText }],
+      methods: [method],
+      scenarios: [
+        {
+          id: "ada",
+          service: "demo.Greeter",
+          method: "SayHello",
+          input: { equals: { name: "Ada" } },
+          response: { data: { message: "hello Ada" } },
+        },
+      ],
+      activeScenarioIds: { "demo.Greeter/SayHello": "ada" },
+      enabledMethods: { "demo.Greeter/SayHello": true },
+    });
+
+    const framed = grpcWebFrame(rpcDefinition.requestSerialize({ name: "Ada" }));
+    // External grpc-web-text implementations may flush independently padded
+    // base64 entities instead of one continuous entity. Joining those entities
+    // reproduces the interoperability case that used to decode only up to the
+    // first '=' and surface as an incomplete gRPC-Web frame.
+    const encodedBody = Buffer.from(
+      [framed.subarray(0, 2), framed.subarray(2, 7), framed.subarray(7)]
+        .map((chunk) => chunk.toString("base64"))
+        .join("\r\n"),
+      "ascii",
+    );
+    const response = await new Promise((resolve, reject) => {
+      const request = http.request(
+        {
+          host: "127.0.0.1",
+          port: webPort,
+          path: "/demo.Greeter/SayHello",
+          method: "POST",
+          headers: {
+            "content-type": "application/grpc-web-text+proto",
+            "x-grpc-web": "1",
+            "content-length": encodedBody.length,
+          },
+        },
+        (res) => {
+          const chunks = [];
+          res.on("data", (chunk) => chunks.push(chunk));
+          res.on("end", () => resolve({ statusCode: res.statusCode, body: Buffer.concat(chunks) }));
+        },
+      );
+      request.once("error", reject);
+      request.end(encodedBody);
+    });
+
+    assert.equal(response.statusCode, 200);
+    const decoded = Buffer.from(response.body.toString("ascii").replace(/[\r\n\t ]+/g, ""), "base64");
+    assert.equal(decoded[0], 0);
+    const payloadLength = decoded.readUInt32BE(1);
+    const message = rpcDefinition.responseDeserialize(decoded.subarray(5, 5 + payloadLength));
+    assert.equal(message.message, "hello Ada");
+    assert.match(decoded.toString("ascii"), /grpc-status: 0/);
+  } finally {
+    await stopGatewayProfile(profileId);
     await fs.rm(dir, { recursive: true, force: true });
   }
 });

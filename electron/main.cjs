@@ -14,6 +14,7 @@ const { registerLoggerIpc } = require("./ipc/logger-ipc.cjs");
 const { registerCertificateSettingsIpc } = require("./ipc/certificate-settings-ipc.cjs");
 const { registerAppZoomIpc } = require("./ipc/app-zoom-ipc.cjs");
 const { registerGitIpc } = require("./ipc/git-ipc.cjs");
+const { registerCliIpc, stopActiveCliRuns } = require("./ipc/cli-ipc.cjs");
 const {
   normalizeActiveScenarioIds,
   normalizeEnabledMethods,
@@ -35,6 +36,7 @@ const { createWindow } = require("./window/create-window.cjs");
 const { readJsonIfExists, walkDirectory, writeTextInside } = require("./utils/file-utils.cjs");
 const { windowFromEvent } = require("./utils/ipc-utils.cjs");
 const { safePathSegment } = require("./utils/path-utils.cjs");
+const { findWorkspaceArgument } = require("./utils/launch-args.cjs");
 const { ROOT_FILE: gitWorkspaceRootFile, readGitWorkspace, writeGitWorkspace } = require("../lib/git-workspace.cjs");
 const { exportBundleVersion: WORKSPACE_EXPORT_VERSION } = require("../lib/workspace-versions.json");
 const {
@@ -49,6 +51,7 @@ const workspaceSettingsFileName = "layang-settings.json";
 const mockWorkspaceWriteLockFileName = ".layang-mock-write-lock.json";
 const mainLogger = getLogger("main");
 let pendingDeepLink = findDeepLink(process.argv);
+let pendingWorkspaceOpen = findWorkspaceArgument(process.argv);
 const workspaceInternalWriteAt = new Map();
 const workspaceInternalFingerprint = new Map();
 const workspaceWriteInProgress = new Set();
@@ -77,6 +80,7 @@ function startApplication() {
   registerCertificateSettingsIpc();
   registerAppZoomIpc();
   registerGitIpc();
+  registerCliIpc();
 
   if (process.platform === "win32") {
     app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
@@ -86,6 +90,8 @@ function startApplication() {
   app.on("second-instance", (_event, commandLine) => {
     const deepLink = findDeepLink(commandLine);
     if (deepLink) dispatchDeepLink(deepLink);
+    const workspacePath = findWorkspaceArgument(commandLine);
+    if (workspacePath) dispatchWorkspaceOpen(workspacePath);
     const existingWindow = BrowserWindow.getAllWindows()[0];
     if (!existingWindow) return;
 
@@ -99,8 +105,15 @@ function startApplication() {
     dispatchDeepLink(url);
   });
 
-  app.on("certificate-error", (event, _webContents, url, error, certificate, callback) => {
-    const decision = shouldAllowCertificateError(certificate);
+  app.on("certificate-error", (event, webContents, url, error, certificate, callback) => {
+    const applicationWindow = BrowserWindow.fromWebContents(webContents);
+    if (!applicationWindow) {
+      mainLogger.warn("certificate error rejected outside Layang application window", { url, error });
+      callback(false);
+      return;
+    }
+
+    const decision = shouldAllowCertificateError(certificate, { url });
     if (decision.allow) {
       event.preventDefault();
       mainLogger.warn("desktop certificate error accepted by user policy", { url, error, reason: decision.reason });
@@ -112,7 +125,7 @@ function startApplication() {
     callback(false);
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     configureLogger({ app, appName: "Layang" });
     configureCertificateSettings({ app });
     configureSecureSecrets({ app });
@@ -120,12 +133,24 @@ function startApplication() {
     configureAppZoomSettings({ app });
     registerProcessErrorHandlers(getLogger("process"));
     mainLogger.info("app ready", { version: app.getVersion(), isPackaged: app.isPackaged });
+    if (pendingWorkspaceOpen) {
+      await writeWorkspacePreference({ workspaceDirectoryPath: pendingWorkspaceOpen }).catch((error) => {
+        mainLogger.warn("failed to persist CLI launch workspace", {
+          error: error?.message ? String(error.message) : String(error),
+        });
+      });
+    }
     configureAutoUpdates();
     const win = createWindow();
     win.webContents.once("did-finish-load", () => {
-      if (!pendingDeepLink) return;
-      win.webContents.send("layang:deep-link", pendingDeepLink);
-      pendingDeepLink = "";
+      if (pendingDeepLink) {
+        win.webContents.send("layang:deep-link", pendingDeepLink);
+        pendingDeepLink = "";
+      }
+      if (pendingWorkspaceOpen) {
+        win.webContents.send("workspace:open-request", pendingWorkspaceOpen);
+        pendingWorkspaceOpen = "";
+      }
     });
 
     app.on("activate", () => {
@@ -177,6 +202,20 @@ function dispatchDeepLink(url) {
   win.focus();
 }
 
+function dispatchWorkspaceOpen(directoryPath) {
+  if (!directoryPath) return;
+  const resolvedPath = path.resolve(directoryPath);
+  const win = BrowserWindow.getAllWindows()[0];
+  if (!win || win.webContents.isLoading()) {
+    pendingWorkspaceOpen = resolvedPath;
+    return;
+  }
+  win.webContents.send("workspace:open-request", resolvedPath);
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
 function handleWindowsSquirrelStartupEvent() {
   if (process.platform !== "win32") return false;
 
@@ -218,6 +257,7 @@ function handleWindowsSquirrelStartupEvent() {
 
 function stopRuntimeServices(reason) {
   mainLogger.info(`${reason}: stopping mock servers`);
+  stopActiveCliRuns();
   void stopMockServer();
   void stopAllGatewayProfiles();
   void stopWebSocketMockServer();
@@ -772,12 +812,39 @@ async function readWorkspaceFolder(directoryPath) {
   const snapshotPath = path.join(directoryPath, "layang.workspace.json");
   const snapshot = await readJsonIfExists(snapshotPath);
   if (snapshot && typeof snapshot === "object") {
+    // Older desktop releases wrote both a full snapshot and newer split files. The
+    // split files are the most recent source when present, so merge every persisted
+    // domain before converting instead of trusting a potentially stale snapshot.
+    const [
+      splitProtoFiles,
+      splitEnvironments,
+      splitExamples,
+      splitMethodDocs,
+      splitDocResults,
+      splitHistory,
+      splitRestMockServer,
+      splitCollections,
+    ] = await Promise.all([
+      readProtoFilesFromFolder(path.join(directoryPath, "protos")),
+      readJsonIfExists(path.join(directoryPath, "environments", "environments.json")),
+      readJsonIfExists(path.join(directoryPath, "examples", "examples.json")),
+      readJsonIfExists(path.join(directoryPath, "docs", "published-docs.json")),
+      readJsonIfExists(path.join(directoryPath, "docs", "saved-results.json")),
+      readJsonIfExists(path.join(directoryPath, "history", "history.json")),
+      readJsonIfExists(path.join(directoryPath, "mocks", "rest-mock-server.json")),
+      readJsonIfExists(path.join(directoryPath, "collections", "collections.json")),
+    ]);
     const splitMockServer = await readMockServerFromFolder(path.join(directoryPath, "mocks"));
-    const splitRestMockServer = await readJsonIfExists(path.join(directoryPath, "mocks", "rest-mock-server.json"));
     const splitRequestTabs = await readRequestSessionFiles(path.join(directoryPath, "requests"));
-    const splitCollections = await readJsonIfExists(path.join(directoryPath, "collections", "collections.json"));
+    snapshot.project = snapshot.project || {};
+
+    if (splitProtoFiles.length) snapshot.project.protoFiles = splitProtoFiles;
+    if (Array.isArray(splitEnvironments)) snapshot.project.environments = splitEnvironments;
+    if (Array.isArray(splitExamples)) snapshot.project.examples = splitExamples;
+    if (Array.isArray(splitMethodDocs)) snapshot.project.methodDocs = splitMethodDocs;
+    if (Array.isArray(splitDocResults)) snapshot.project.docResults = splitDocResults;
+    if (Array.isArray(splitHistory)) snapshot.project.history = splitHistory;
     if (splitMockServer) {
-      snapshot.project = snapshot.project || {};
       const currentMockServer = snapshot.project.mockServer || {};
       snapshot.project.mockServer = {
         ...currentMockServer,
@@ -786,17 +853,10 @@ async function readWorkspaceFolder(directoryPath) {
       };
     }
     if (splitRestMockServer && typeof splitRestMockServer === "object") {
-      snapshot.project = snapshot.project || {};
       snapshot.project.restMockServer = splitRestMockServer;
     }
-    if (splitRequestTabs.length) {
-      snapshot.project = snapshot.project || {};
-      snapshot.project.requestTabs = splitRequestTabs;
-    }
-    if (Array.isArray(splitCollections)) {
-      snapshot.project = snapshot.project || {};
-      snapshot.project.collections = splitCollections;
-    }
+    if (splitRequestTabs.length) snapshot.project.requestTabs = splitRequestTabs;
+    if (Array.isArray(splitCollections)) snapshot.project.collections = splitCollections;
     return normalizeWorkspaceBundle(snapshot);
   }
 
@@ -1443,24 +1503,26 @@ async function readMockServerFromFolder(mocksDir) {
   }
 
   const jsonPath = path.join(mocksDir, "scenarios.json");
-  const yamlPath = path.join(mocksDir, "scenarios.yaml");
-  try {
-    const legacyYamlText = await fs.readFile(yamlPath, "utf8");
-    const parsed = parseRuntimeScenarioText(legacyYamlText, "yaml", port);
-    return {
-      port,
-      bindHost,
-      format: "yaml",
-      streamDefaults,
-      selectedScenarioIds,
-      enabledMethods,
-      ...commonConfig,
-      scenarioText: stringifyWorkspaceYaml({ version: 1, scenarios: parsed.scenarios || [] }),
-      methodFiles: {},
-      updatedAt: persistedUpdatedAt,
-    };
-  } catch (error) {
-    if (!error || error.code !== "ENOENT") throw error;
+  const yamlPaths = [path.join(mocksDir, "scenarios.yaml"), path.join(mocksDir, "scenarios.yml")];
+  for (const yamlPath of yamlPaths) {
+    try {
+      const legacyYamlText = await fs.readFile(yamlPath, "utf8");
+      const parsed = parseRuntimeScenarioText(legacyYamlText, "yaml", port);
+      return {
+        port,
+        bindHost,
+        format: "yaml",
+        streamDefaults,
+        selectedScenarioIds,
+        enabledMethods,
+        ...commonConfig,
+        scenarioText: stringifyWorkspaceYaml({ version: 1, scenarios: parsed.scenarios || [] }),
+        methodFiles: {},
+        updatedAt: persistedUpdatedAt,
+      };
+    } catch (error) {
+      if (!error || error.code !== "ENOENT") throw error;
+    }
   }
   try {
     const legacyJsonText = await fs.readFile(jsonPath, "utf8");

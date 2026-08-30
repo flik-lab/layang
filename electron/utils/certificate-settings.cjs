@@ -113,8 +113,23 @@ function getCurrentCertificateSettings() {
   return cloneSettings(state.settings);
 }
 
-function shouldAllowCertificateError(certificate) {
+function shouldAllowCertificateError(certificate, context = {}) {
   ensureConfigured();
+  const targetUrl = typeof context.url === "string" ? context.url.trim() : "";
+  if (targetUrl) {
+    try {
+      const protocol = new URL(targetUrl).protocol;
+      if (protocol !== "https:" && protocol !== "wss:") {
+        return { allow: false, reason: "unsupported-protocol" };
+      }
+    } catch {
+      return { allow: false, reason: "invalid-url" };
+    }
+  }
+
+  // This remains an explicit user-controlled escape hatch for self-signed, expired,
+  // hostname-mismatched, or otherwise untrusted TLS certificates. It does not turn
+  // a non-TLS endpoint into TLS and cannot recover a server that sends no certificate.
   if (state.settings.bypassTlsErrors) {
     return { allow: true, reason: "bypass-enabled" };
   }

@@ -1,9 +1,10 @@
 "use strict";
 
-const { app, BrowserWindow, Menu } = require("electron");
+const { app, BrowserWindow, Menu, shell } = require("electron");
 const path = require("node:path");
 const { getLogger } = require("../utils/logger.cjs");
 const { attachAppZoomShortcuts } = require("../utils/app-zoom-settings.cjs");
+const { attachWindowNavigationGuards } = require("./navigation-policy.cjs");
 
 const windowLogger = getLogger("window");
 
@@ -23,23 +24,47 @@ function createWindow() {
       preload: path.join(__dirname, "..", "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
+      // Layang currently performs direct REST/browser transport requests from the renderer,
+      // so CORS enforcement remains disabled until those transports are fully moved to main-process IPC.
+      // Navigation is separately locked to the Layang renderer below.
       webSecurity: false,
-      allowRunningInsecureContent: true,
+      allowRunningInsecureContent: false,
+      webviewTag: false,
     },
   });
 
   attachRendererDiagnostics(win);
   attachAppZoomShortcuts(win, { logger: windowLogger });
+  attachRendererSecurity(win);
   loadRenderer(win);
   return win;
 }
 
-function loadRenderer(win) {
-  const isDev = !app.isPackaged;
+function rendererLocation() {
+  const isDev = !app.isPackaged && process.env.ELECTRON_LOAD_STATIC !== "1";
   const staticIndexPath = path.join(__dirname, "..", "..", "out", "playground.html");
-  if (isDev && process.env.ELECTRON_LOAD_STATIC !== "1") {
-    const startUrl = process.env.ELECTRON_START_URL || "http://localhost:3000/playground";
+  const startUrl = process.env.ELECTRON_START_URL || "http://localhost:3000/playground";
+  return { isDev, staticIndexPath, startUrl };
+}
+
+function attachRendererSecurity(win) {
+  const location = rendererLocation();
+  attachWindowNavigationGuards(win, {
+    ...location,
+    shell,
+    logger: windowLogger,
+  });
+  windowLogger.info("renderer navigation security enabled", {
+    mode: location.isDev ? "development-origin" : "packaged-file",
+    allowRunningInsecureContent: false,
+    corsCompatibilityMode: true,
+  });
+}
+
+function loadRenderer(win) {
+  const { isDev, staticIndexPath, startUrl } = rendererLocation();
+  if (isDev) {
     void win.loadURL(startUrl);
     return;
   }
@@ -56,7 +81,10 @@ function attachRendererDiagnostics(win) {
   win.webContents.on("did-finish-load", () => {
     windowLogger.info("renderer did-finish-load", { url: win.webContents.getURL() });
   });
-  windowLogger.info("transport browser fetch enabled", { cors: "disabled for trusted desktop window" });
+  windowLogger.info("transport browser fetch enabled", {
+    cors: "compatibility mode for direct desktop API transport",
+    externalNavigation: "blocked from trusted renderer",
+  });
 }
 
 module.exports = { createWindow };

@@ -8,6 +8,7 @@ const crypto = require("node:crypto");
 const grpc = require("@grpc/grpc-js");
 const protoLoader = require("@grpc/proto-loader");
 const { stringifyYaml } = require("../../lib/workspace-yaml.cjs");
+const { mockMatcherMatches } = require("./grpc-mock-server.cjs");
 const { normalizeGrpcWebConfig, startGrpcWebProxy, stopGrpcWebProxy } = require("./grpc-web-proxy-server.cjs");
 
 const gatewayRuntimes = new Map();
@@ -734,20 +735,10 @@ function findScenario(runtime, method, request, metadata) {
     .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0));
   const selectedId = runtime.activeScenarioIds[methodKey] || runtime.activeScenarioIds[methodKey.replace("/", ".")];
   const active = selectedId ? candidates.filter((item) => item.id === selectedId) : candidates;
-  return (
-    active.find((scenario) =>
-      matcherMatches(scenario.input || scenario.match, { ...request, headers: metadataToObject(metadata) }),
-    ) || null
-  );
-}
-
-function matcherMatches(matcher, value) {
-  if (!matcher || typeof matcher !== "object") return true;
-  if (matcher.any === true) return true;
-  if (Array.isArray(matcher.or) && matcher.or.some((item) => matcherMatches(item, value))) return true;
-  if (Object.hasOwn(matcher, "equals") && !deepEqual(matcher.equals, value)) return false;
-  if (Object.hasOwn(matcher, "contains") && !deepContains(value, matcher.contains)) return false;
-  return true;
+  const requestContext = { data: request || {}, headers: metadataToObject(metadata) };
+  // Reuse the native mock matcher so Web Access and native gRPC interpret unary
+  // request bodies, metadata, equals_unordered, regex/glob and OR blocks identically.
+  return active.find((scenario) => mockMatcherMatches(scenario.input || scenario.match, requestContext)) || null;
 }
 
 function selectUpstream(runtime) {
@@ -1318,17 +1309,6 @@ function stableJson(value) {
   } catch {
     return String(value);
   }
-}
-function deepEqual(a, b) {
-  return stableJson(a) === stableJson(b);
-}
-function deepContains(actual, expected) {
-  if (expected === undefined) return true;
-  if (expected === null || typeof expected !== "object") return String(actual).includes(String(expected));
-  if (Array.isArray(expected))
-    return Array.isArray(actual) && expected.every((item, index) => deepContains(actual[index], item));
-  if (!actual || typeof actual !== "object") return false;
-  return Object.entries(expected).every(([key, value]) => deepContains(actual[key], value));
 }
 function safeRelative(value) {
   const parts = String(value || "schema.proto")

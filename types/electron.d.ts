@@ -1,5 +1,11 @@
 import type { GrpcEvent, GrpcResult, MetadataPair, ProtoSourceFile, RpcMethodInfo } from "@/lib/types";
-import type { GrpcMockRequestLog, WebSocketMockLog } from "@/app/playground/shared/workbench-types";
+import type {
+  GrpcMockRequestLog,
+  MockServerStatus,
+  RestMockStatus,
+  WebSocketMockLog,
+  WebSocketMockStatus,
+} from "@/app/playground/shared/workbench-types";
 
 export type LayangLogLevel = "debug" | "info" | "warn" | "error";
 export interface LayangLoggerSettings {
@@ -315,6 +321,31 @@ export interface LayangGitCommitDetails extends LayangGitLogEntry {
 
 declare global {
   interface Window {
+    electronCli?: {
+      isAvailable: boolean;
+      run?: (
+        payload: { command: string; workspacePath?: string; runId?: string },
+        onEvent?: (event: { runId: string; type: "stdout" | "stderr" | "exit"; data: string }) => void,
+      ) => Promise<{ ok: boolean; code: number; signal?: string; runId?: string; error?: string }>;
+      cancel?: (runId?: string) => Promise<{ ok: boolean; cancelled: boolean }>;
+      mockRuntimeStatus?: (workspacePath?: string) => Promise<{
+        ok: boolean;
+        running: boolean;
+        pid?: number;
+        protocol?: "all" | "grpc" | "rest" | "websocket";
+        starting?: boolean;
+        updatedAt?: string;
+        message?: string;
+        statuses?: {
+          grpc?: MockServerStatus;
+          rest?: RestMockStatus;
+          websocket?: WebSocketMockStatus;
+        };
+        error?: string;
+      }>;
+      stopMockRuntime?: (workspacePath?: string) => Promise<{ ok: boolean; running: boolean; message?: string; error?: string }>;
+      onGuiCommand?: (callback: (entry: { command: string; label?: string; createdAt?: string; replayable?: boolean }) => void) => () => void;
+    };
     electronGrpc?: {
       isAvailable: boolean;
       invoke: (payload: {
@@ -460,6 +491,7 @@ declare global {
         writeInProgress?: boolean;
         error?: string;
       }>;
+      onOpenRequest?: (callback: (directoryPath: string) => void) => () => void;
     };
     electronGit?: {
       isAvailable: boolean;

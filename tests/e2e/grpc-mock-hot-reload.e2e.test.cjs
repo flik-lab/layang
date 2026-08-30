@@ -18,6 +18,9 @@ function tryRequire(name) {
 const grpc = tryRequire("@grpc/grpc-js");
 const protoLoader = tryRequire("@grpc/proto-loader");
 const hasGrpcDeps = Boolean(grpc && protoLoader);
+if (process.env.LAYANG_REQUIRE_RUNTIME_DEPS === "1" && !hasGrpcDeps) {
+  throw new Error("Required gRPC runtime dependencies are unavailable. Run pnpm install --frozen-lockfile --prod=false.");
+}
 
 const protoText = `syntax = "proto3";
 package demo;

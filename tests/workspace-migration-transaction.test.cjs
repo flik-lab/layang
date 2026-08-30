@@ -105,3 +105,92 @@ test("failed staged commit rolls back generated files and leaves legacy source i
   assert.equal(fsSync.existsSync(path.join(root, ".gitignore")), false, "created generated files must be rolled back");
   assert.equal(fsSync.statSync(path.join(root, "workspace-schemas", "request-v2.schema.json")).isDirectory(), true);
 });
+
+test("legacy protoFiles are promoted into managed proto revisions", async (t) => {
+  const root = await tempDir();
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const bundle = minimalBundle();
+  delete bundle.project.protoLibraries;
+  bundle.project.protoFiles = [
+    {
+      name: "demo/greeter.proto",
+      text: 'syntax = "proto3";\npackage demo;\nmessage HelloRequest { string name = 1; }\n',
+    },
+  ];
+
+  await writeGitWorkspace(root, bundle);
+  const workspace = await readGitWorkspace(root);
+  assert.equal(workspace.project.protoLibraries.length, 1);
+  const version = workspace.project.protoLibraries[0].versions[0];
+  assert.equal(version.files.length, 1);
+  assert.equal(version.files[0].name, "demo/greeter.proto");
+  assert.match(version.files[0].text, /message HelloRequest/);
+});
+
+test("migration backs up legacy proto and combined mock files while preserving converted data", async (t) => {
+  const root = await tempDir();
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+
+  const bundle = minimalBundle();
+  delete bundle.project.protoLibraries;
+  bundle.project.protoFiles = [
+    {
+      name: "greeter.proto",
+      text: 'syntax = "proto3";\npackage demo;\nservice Greeter { rpc SayHello (HelloRequest) returns (HelloReply); }\nmessage HelloRequest { string name = 1; }\nmessage HelloReply { string message = 1; }\n',
+    },
+  ];
+  bundle.project.mockServer = {
+    port: 50055,
+    format: "yaml",
+    selectedScenarioIds: { "demo.Greeter/SayHello": "hello" },
+    enabledMethods: { "demo.Greeter/SayHello": true },
+    scenarioText: [
+      "version: 1",
+      "scenarios:",
+      "  - id: hello",
+      "    service: demo.Greeter",
+      "    method: SayHello",
+      "    input:",
+      "      equals:",
+      "        name: Ada",
+      "    response:",
+      "      data:",
+      "        message: hello",
+      "",
+    ].join("\n"),
+  };
+
+  await fs.mkdir(path.join(root, "protos"), { recursive: true });
+  await fs.mkdir(path.join(root, "mocks"), { recursive: true });
+  await fs.writeFile(path.join(root, "protos", "greeter.proto"), bundle.project.protoFiles[0].text);
+  await fs.writeFile(path.join(root, "mocks", "scenarios.yml"), bundle.project.mockServer.scenarioText);
+  await fs.writeFile(path.join(root, "layang.workspace.json"), JSON.stringify(bundle));
+
+  const result = await migrateLegacyWorkspaceTransaction(root, bundle);
+  assert.ok(result.backupPath);
+  assert.equal(fsSync.existsSync(path.join(result.backupPath, "protos", "greeter.proto")), true);
+  assert.equal(fsSync.existsSync(path.join(result.backupPath, "mocks", "scenarios.yml")), true);
+  assert.equal(fsSync.existsSync(path.join(root, "mocks", "scenarios.yml")), false);
+
+  const workspace = await readGitWorkspace(root);
+  const version = workspace.project.protoLibraries[0].versions[0];
+  assert.equal(version.files[0].name, "greeter.proto");
+  assert.equal(workspace.project.mockServer.enabledMethods["demo.Greeter/SayHello"], true);
+  assert.equal(workspace.project.mockServer.selectedScenarioIds["demo.Greeter/SayHello"], "hello");
+  assert.equal(workspace.project.mockServer.methodFiles["demo.Greeter/SayHello"] !== undefined, true);
+});
+
+test("invalid legacy gRPC mock source aborts migration before layang.yml is committed", async (t) => {
+  const root = await tempDir();
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const bundle = minimalBundle();
+  bundle.project.mockServer = { port: 50055, format: "json", scenarioText: "{ definitely-not-valid-json" };
+  await fs.writeFile(path.join(root, "layang.workspace.json"), JSON.stringify(bundle));
+
+  await assert.rejects(
+    () => migrateLegacyWorkspaceTransaction(root, bundle),
+    /Invalid legacy gRPC mock scenario source/,
+  );
+  assert.equal(fsSync.existsSync(path.join(root, "layang.yml")), false);
+  assert.equal(fsSync.existsSync(path.join(root, "layang.workspace.json")), true);
+});

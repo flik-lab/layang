@@ -2060,6 +2060,7 @@ module.exports = {
   normalizeMockServerPort,
   normalizeRuntimeStreamSettings,
   calculateNextCadenceDeadline,
+  mockMatcherMatches,
   parseRuntimeScenarioText,
   startMockServer,
   stopMockServer,
