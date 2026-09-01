@@ -92,9 +92,7 @@ export function useCollectionActions(ctx: ActionContext) {
     requestNameDraft,
     requestGrpcLibraryIdDraft,
     requestGrpcVersionIdDraft,
-    requestGrpcMethodKeyDraft,
-    requestGrpcBatchMethodKeysDraft,
-    requestGrpcSelectionModeDraft,
+    requestGrpcMethodKeysDraft,
     requestGrpcSkipExistingDraft,
     requestRunner,
     requestSessions,
@@ -112,13 +110,13 @@ export function useCollectionActions(ctx: ActionContext) {
     setRequestGrpcLibraryIdDraft,
     setRequestGrpcVersionIdDraft,
     setRequestGrpcMethodKeyDraft,
-    setRequestGrpcBatchMethodKeysDraft,
-    setRequestGrpcSelectionModeDraft,
+    setRequestGrpcMethodKeysDraft,
     setRequestGrpcSkipExistingDraft,
     setRequestNameDialogOpen,
     setRequestNameDraft,
     setRequestSessions,
     setRequestTab,
+    setSideSection,
     setRequestTargetCollectionId,
     setRequestTargetFolderId,
     setRequestLocationEditable,
@@ -196,9 +194,8 @@ export function useCollectionActions(ctx: ActionContext) {
     setRequestTargetFolderId(parentId);
     setRequestLocationEditable(kind === "grpc" || !kind);
     const firstMethod = kind === "grpc" ? preferredMethods[0] ?? firstCompiled?.loaded.methods[0] : undefined;
-    setRequestGrpcSelectionModeDraft(kind === "grpc" ? "multi" : "single");
     setRequestGrpcSkipExistingDraft(true);
-    setRequestGrpcBatchMethodKeysDraft(firstMethod && kind === "grpc" ? [methodKey(firstMethod)] : []);
+    setRequestGrpcMethodKeysDraft(firstMethod ? [methodKey(firstMethod)] : []);
     setRequestKindDraft(kind);
     setRequestNameDraft(
       firstMethod
@@ -231,9 +228,8 @@ export function useCollectionActions(ctx: ActionContext) {
     setRequestGrpcLibraryIdDraft(activeProto.library.id);
     setRequestGrpcVersionIdDraft(activeProto.version.id);
     setRequestGrpcMethodKeyDraft(methodKey(method));
-    setRequestGrpcSelectionModeDraft("single");
     setRequestGrpcSkipExistingDraft(true);
-    setRequestGrpcBatchMethodKeysDraft([]);
+    setRequestGrpcMethodKeysDraft([methodKey(method)]);
     setRequestNameDraft(
       uniqueCollectionRequestName(
         method.methodName,
@@ -269,9 +265,8 @@ export function useCollectionActions(ctx: ActionContext) {
     setRequestGrpcLibraryIdDraft(activeProto.library.id);
     setRequestGrpcVersionIdDraft(activeProto.version.id);
     setRequestGrpcMethodKeyDraft("");
-    setRequestGrpcSelectionModeDraft("multi");
     setRequestGrpcSkipExistingDraft(true);
-    setRequestGrpcBatchMethodKeysDraft(uniqueMethods.map((method) => methodKey(method)));
+    setRequestGrpcMethodKeysDraft(uniqueMethods.map((method) => methodKey(method)));
     setRequestNameDraft("");
     setRequestNameDialogOpen(true);
   }
@@ -284,10 +279,10 @@ export function useCollectionActions(ctx: ActionContext) {
     skipExisting = true,
     groupByService = true,
   ) {
-    if (methods.length === 0) return { created: 0, skipped: 0 };
+    if (methods.length === 0) return { created: 0, skipped: 0, collectionId: collectionId === NEW_SCHEMA_COLLECTION_TARGET ? "" : collectionId, requestIds: [] as string[] };
     const createSchemaCollection = collectionId === NEW_SCHEMA_COLLECTION_TARGET;
     const existingCollection = collections.find((item) => item.id === collectionId);
-    if (!createSchemaCollection && !existingCollection) return { created: 0, skipped: 0 };
+    if (!createSchemaCollection && !existingCollection) return { created: 0, skipped: 0, collectionId, requestIds: [] as string[] };
 
     const now = new Date().toISOString();
     let workingCollection: ApiCollection = existingCollection
@@ -371,12 +366,20 @@ export function useCollectionActions(ctx: ActionContext) {
     } else if (skipped > 0) {
       showToast("All selected gRPC methods already exist in this collection.", "info");
     }
-    return { created: requests.length, skipped, collectionId: workingCollection.id };
+    if (requests.length > 0) {
+      selectCollectionRequest(workingCollection, requests[0]);
+      setSideSection("collections");
+    }
+    return {
+      created: requests.length,
+      skipped,
+      collectionId: workingCollection.id,
+      requestIds: requests.map((request) => request.id),
+    };
   }
 
   function confirmAddCollectionRequest() {
     const name = requestNameDraft.trim();
-    const isGrpcBatch = requestKindDraft === "grpc" && requestGrpcSelectionModeDraft === "multi";
     if (!requestTargetCollectionId) {
       setRequestNameDialogOpen(false);
       return;
@@ -385,93 +388,67 @@ export function useCollectionActions(ctx: ActionContext) {
       showToast("Select REST, WebSocket, or gRPC.", "warning");
       return;
     }
-    if (!isGrpcBatch && !name) {
-      const label = requestKindDraft === "grpc" ? "gRPC" : requestKindDraft === "rest" ? "REST" : "WebSocket";
+    if (requestKindDraft !== "grpc" && !name) {
+      const label = requestKindDraft === "rest" ? "REST" : "WebSocket";
       showToast(`${label} request name is required.`, "warning");
       return;
     }
 
     if (requestKindDraft === "grpc") {
       const compiled = protoRuntimeRegistry.resolveVersion(requestGrpcLibraryIdDraft, requestGrpcVersionIdDraft);
-      if (isGrpcBatch) {
-        if (!compiled) {
-          showToast("Select a global proto schema and revision.", "warning");
-          return;
-        }
-        const methodKeys = new Set(requestGrpcBatchMethodKeysDraft);
-        const methods = compiled.loaded.methods.filter((item) => methodKeys.has(methodKey(item)));
-        if (methods.length !== methodKeys.size) {
-          showToast("Some RPC methods are no longer available in this schema revision.", "warning");
-          return;
-        }
-        addGrpcMethodsToCollection(
-          requestTargetCollectionId,
-          methods,
-          compiled,
-          requestTargetFolderId,
-          requestGrpcSkipExistingDraft,
-          true,
-        );
-        setRequestNameDialogOpen(false);
-        setRequestTargetCollectionId("");
-        setRequestTargetFolderId(null);
-        setRequestLocationEditable(false);
-        setRequestGrpcLibraryIdDraft("");
-        setRequestGrpcVersionIdDraft("");
-        setRequestGrpcMethodKeyDraft("");
-        setRequestGrpcBatchMethodKeysDraft([]);
-        setRequestGrpcSelectionModeDraft("single");
-        setRequestGrpcSkipExistingDraft(true);
+      if (!compiled) {
+        showToast("Select a proto and revision.", "warning");
         return;
       }
-      const method = compiled?.loaded.methods.find((item) => methodKey(item) === requestGrpcMethodKeyDraft);
-      if (!compiled || !method) {
-        showToast("Select a global proto schema, revision, and method.", "warning");
+      const methodKeys = new Set(requestGrpcMethodKeysDraft);
+      const methods = compiled.loaded.methods.filter((item) => methodKeys.has(methodKey(item)));
+      if (methodKeys.size === 0) {
+        showToast("Select at least one RPC method.", "warning");
         return;
       }
-      if (requestTargetCollectionId === NEW_SCHEMA_COLLECTION_TARGET) {
-        addGrpcMethodsToCollection(
-          requestTargetCollectionId,
-          [method],
-          compiled,
-          requestTargetFolderId,
-          false,
-          true,
-        );
-      } else {
-        addCollectionRequest(requestTargetCollectionId, "grpc", {
-          name,
-          url: draftEffectiveBaseUrl,
-          grpcMethodKey: methodKey(method),
-          grpc: createPinnedGrpcBinding(compiled.library, compiled.version, method),
-          body: JSON.stringify(generateExampleFromType(compiled.loaded.root, method.requestType), null, 2),
-          headers: [],
-          parentId: requestTargetFolderId,
-        });
+      if (methods.length !== methodKeys.size) {
+        showToast("Some RPC methods are no longer available in this proto revision.", "warning");
+        return;
       }
-    } else {
-      addCollectionRequest(requestTargetCollectionId, requestKindDraft, {
-        name,
-        method: requestKindDraft === "rest" ? "GET" : undefined,
-        url: requestKindDraft === "rest" ? "http://127.0.0.1:3000" : undefined,
-        body: requestKindDraft === "rest" ? "" : undefined,
-        restBodyType: requestKindDraft === "rest" ? "none" : undefined,
-        restAuth: requestKindDraft === "rest" ? { type: "none" } : undefined,
-        parentId: requestTargetFolderId,
-        mockResponse:
-          requestKindDraft === "websocket" ? defaultWebSocketMockResponse(name) : defaultRestMockResponse(name),
-      });
+      addGrpcMethodsToCollection(
+        requestTargetCollectionId,
+        methods,
+        compiled,
+        requestTargetFolderId,
+        requestGrpcSkipExistingDraft,
+        true,
+      );
+      setRequestNameDialogOpen(false);
+      setRequestTargetCollectionId("");
+      setRequestTargetFolderId(null);
+      setRequestLocationEditable(false);
+      setRequestGrpcLibraryIdDraft("");
+      setRequestGrpcVersionIdDraft("");
+      setRequestGrpcMethodKeyDraft("");
+      setRequestGrpcMethodKeysDraft([]);
+      setRequestGrpcSkipExistingDraft(true);
+      return;
     }
+
+    addCollectionRequest(requestTargetCollectionId, requestKindDraft, {
+      name,
+      method: requestKindDraft === "rest" ? "GET" : undefined,
+      url: requestKindDraft === "rest" ? "http://127.0.0.1:3000" : undefined,
+      body: requestKindDraft === "rest" ? "" : undefined,
+      restBodyType: requestKindDraft === "rest" ? "none" : undefined,
+      restAuth: requestKindDraft === "rest" ? { type: "none" } : undefined,
+      parentId: requestTargetFolderId,
+      mockResponse:
+        requestKindDraft === "websocket"
+          ? defaultWebSocketMockResponse(name)
+          : requestKindDraft === "rest"
+            ? defaultRestMockResponse(name)
+            : undefined,
+    });
     setRequestNameDialogOpen(false);
     setRequestTargetCollectionId("");
     setRequestTargetFolderId(null);
     setRequestLocationEditable(false);
-    setRequestGrpcLibraryIdDraft("");
-    setRequestGrpcVersionIdDraft("");
-    setRequestGrpcMethodKeyDraft("");
-    setRequestGrpcBatchMethodKeysDraft([]);
-    setRequestGrpcSelectionModeDraft("single");
-    setRequestGrpcSkipExistingDraft(true);
   }
 
   function confirmAddCollection() {
@@ -951,6 +928,8 @@ export function useCollectionActions(ctx: ActionContext) {
       methodKey: request.id,
       sourceRequestId: request.id,
       grpc: request.grpc,
+      timeoutMs: request.timeoutMs,
+      streamIdleTimeoutMs: request.streamIdleTimeoutMs,
       title: request.name,
       serviceName: collection.name,
       requestJson: normalizeEditableText(request.body, request.kind === "grpc" ? "{}" : ""),
@@ -992,6 +971,8 @@ export function useCollectionActions(ctx: ActionContext) {
           sourceRequestId: request.id,
           requestKind: request.kind,
           grpc: request.grpc,
+          timeoutMs: request.timeoutMs ?? existing.timeoutMs,
+          streamIdleTimeoutMs: request.streamIdleTimeoutMs ?? existing.streamIdleTimeoutMs,
           title: request.name,
           serviceName: collection.name,
           requestUrl: request.url,
@@ -1021,6 +1002,7 @@ export function useCollectionActions(ctx: ActionContext) {
     moveCollectionTreeNode,
     createCollectionRequest,
     addCollectionRequest,
+    addGrpcMethodsToCollection,
     importGrpcRequestIntoCollection,
     saveGrpcMethodToCollection,
     openGrpcMethodRequestDialog,

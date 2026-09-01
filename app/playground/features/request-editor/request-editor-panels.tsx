@@ -6,6 +6,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type SyntheticEvent as ReactSyntheticEvent,
+  startTransition,
   useEffect,
   useId,
   useMemo,
@@ -39,6 +40,8 @@ import { designSystem } from "../../design-system";
 type CodeTextFieldProps = {
   value: string;
   onChange: (value: string) => void;
+  buffered?: boolean;
+  onBlur?: (value: string) => void;
   minRows: number;
   maxRows?: number;
   language?: string;
@@ -63,6 +66,8 @@ const exitFullscreenShortcutLabel = "Esc";
 export function CodeTextField({
   value,
   onChange,
+  buffered = true,
+  onBlur,
   minRows,
   maxRows,
   language = "json",
@@ -74,6 +79,7 @@ export function CodeTextField({
   fullHeight = false,
   resetKey,
 }: CodeTextFieldProps) {
+  const [bufferedValue, setBufferedValue] = useState(value);
   const [activeLine, setActiveLine] = useState(0);
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
   const [editorScrollTop, setEditorScrollTop] = useState(0);
@@ -81,14 +87,17 @@ export function CodeTextField({
   const gutterRef = useRef<HTMLPreElement | null>(null);
   const fullscreenTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fullscreenTransitionRef = useRef(false);
+  const editorFocusedRef = useRef(false);
+  const latestEditorValueRef = useRef(value);
   const editorViewStateRef = useRef({ selectionStart: 0, selectionEnd: 0, scrollTop: 0, scrollLeft: 0 });
   const helpTextId = useId();
+  const editorValue = buffered ? bufferedValue : value;
   const formatTooltip = `${formatAriaLabel} (${formatShortcutLabel})`;
   const fullscreenTooltip = fullscreenOpen
     ? `Exit full screen editor (${fullscreenShortcutLabel})`
     : `Open full screen editor (${fullscreenShortcutLabel})`;
   const codeEditorAriaLabel = `${language} code editor. Press Tab to insert 2 spaces, Shift+Tab to unindent, ${formatShortcutLabel} to format, ${fullscreenShortcutLabel} to toggle full screen, ${exitFullscreenShortcutLabel} to close full screen, and ${quoteWrapShortcutLabel} to wrap a selection.`;
-  const lineCount = Math.max(1, value.split("\n").length);
+  const lineCount = Math.max(1, editorValue.split("\n").length);
   const visualRows = Math.max(minRows, lineCount);
   const maxHeight = maxRows ? maxRows * editorLineHeightPx + editorPaddingYPx * 2 : undefined;
   const minHeight = minRows * editorLineHeightPx + editorPaddingYPx * 2;
@@ -119,7 +128,19 @@ export function CodeTextField({
     setActiveLine(0);
   }, [resetKey]);
 
-  function updateActiveLine(textarea: HTMLTextAreaElement, sourceValue = value) {
+  useEffect(() => {
+    if (!buffered || (editorFocusedRef.current && value !== latestEditorValueRef.current)) return;
+    latestEditorValueRef.current = value;
+    setBufferedValue(value);
+  }, [buffered, value]);
+
+  useEffect(() => {
+    if (!buffered) return;
+    latestEditorValueRef.current = value;
+    setBufferedValue(value);
+  }, [buffered, resetKey]);
+
+  function updateActiveLine(textarea: HTMLTextAreaElement, sourceValue = editorValue) {
     const cursor = textarea.selectionStart ?? 0;
     const nextLine = sourceValue.slice(0, cursor).split("\n").length - 1;
     setActiveLine(Math.max(0, nextLine));
@@ -167,8 +188,18 @@ export function CodeTextField({
       return;
     }
 
-    const nextValue = formatEditorValue(value, language);
-    if (nextValue !== value) onChange(nextValue);
+    const nextValue = formatEditorValue(editorValue, language);
+    if (nextValue !== editorValue) changeEditorValue(nextValue);
+  }
+
+  function changeEditorValue(nextValue: string) {
+    latestEditorValueRef.current = nextValue;
+    if (!buffered) {
+      onChange(nextValue);
+      return;
+    }
+    setBufferedValue(nextValue);
+    startTransition(() => onChange(nextValue));
   }
 
   function stopEditorBoundaryEvent(event: ReactMouseEvent<HTMLElement> | ReactPointerEvent<HTMLElement>) {
@@ -230,8 +261,8 @@ export function CodeTextField({
 
     if (!event.ctrlKey && !event.metaKey && !event.altKey && start !== end && isEditorQuoteKey(event.key)) {
       event.preventDefault();
-      const edit = wrapEditorSelection(value, start, end, event.key);
-      applyUndoableTextareaEdit(textarea, edit, onChange);
+      const edit = wrapEditorSelection(editorValue, start, end, event.key);
+      applyUndoableTextareaEdit(textarea, edit, changeEditorValue);
       updateActiveLine(textarea, textarea.value);
       restoreSelection(textarea, edit.selectionStart, edit.selectionEnd);
       return;
@@ -240,9 +271,9 @@ export function CodeTextField({
     if (event.key !== "Tab") return;
     event.preventDefault();
 
-    const edit = event.shiftKey ? unindentEditorSelection(value, start, end) : indentEditorSelection(value, start, end);
+    const edit = event.shiftKey ? unindentEditorSelection(editorValue, start, end) : indentEditorSelection(editorValue, start, end);
     if (!edit) return;
-    applyUndoableTextareaEdit(textarea, edit, onChange);
+    applyUndoableTextareaEdit(textarea, edit, changeEditorValue);
     updateActiveLine(textarea, textarea.value);
     restoreSelection(textarea, edit.selectionStart, edit.selectionEnd);
   }
@@ -413,10 +444,19 @@ export function CodeTextField({
             />
             <textarea
               ref={fullscreen ? fullscreenTextareaRef : inlineTextareaRef}
-              value={value}
+              value={editorValue}
               onChange={(event: ChangeEvent<HTMLTextAreaElement>) => {
-                onChange(event.target.value);
+                changeEditorValue(event.target.value);
                 updateActiveLine(event.target, event.target.value);
+              }}
+              onFocus={() => {
+                editorFocusedRef.current = true;
+              }}
+              onBlur={(event) => {
+                editorFocusedRef.current = false;
+                latestEditorValueRef.current = event.target.value;
+                if (buffered) onChange(event.target.value);
+                onBlur?.(event.target.value);
               }}
               onClick={(event: ReactMouseEvent<HTMLTextAreaElement>) => updateActiveLine(event.currentTarget)}
               onKeyUp={(event: ReactKeyboardEvent<HTMLTextAreaElement>) => updateActiveLine(event.currentTarget)}

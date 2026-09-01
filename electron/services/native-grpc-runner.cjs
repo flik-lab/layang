@@ -61,6 +61,27 @@ async function invokeNativeGrpc(payload, emit = () => undefined, registerCall = 
       "grpc.max_send_message_length": 50 * 1024 * 1024,
     });
 
+    const connectionTimeoutMs = Math.max(1, Number(payload.connectionTimeoutMs || 10_000));
+    emit({
+      type: "log",
+      level: "info",
+      message: "Connecting to native gRPC server...",
+      details: { target: target.address, timeoutMs: connectionTimeoutMs },
+    });
+    registerCall(null, client);
+    try {
+      await waitForClientReady(client, target.address, connectionTimeoutMs);
+    } catch (error) {
+      closeClient(client);
+      throw error;
+    }
+    emit({
+      type: "log",
+      level: "info",
+      message: "Native gRPC connection ready",
+      details: { target: target.address },
+    });
+
     const clientMethodName = findClientMethodName(client, payload.method.methodName);
     const metadata = metadataPairsToGrpcMetadata(payload.metadata || []);
     const deadlineMs = Number(payload.deadlineMs || 0);
@@ -89,6 +110,7 @@ async function invokeNativeGrpc(payload, emit = () => undefined, registerCall = 
           emit,
           registerCall,
           maxMessages,
+          normalizeTimeoutMs(payload.idleTimeoutMs, 60_000),
         )
       : await invokeUnary(
           client,
@@ -151,6 +173,26 @@ function normalizeMaxMessages(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return 500;
   return Math.max(1, Math.floor(numeric));
+}
+
+function normalizeTimeoutMs(value, fallback) {
+  const numeric = value === undefined || value === null ? fallback : Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) return fallback;
+  return Math.floor(numeric);
+}
+
+function waitForClientReady(client, target, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    client.waitForReady(Date.now() + timeoutMs, (error) => {
+      if (!error) {
+        resolve();
+        return;
+      }
+      const timeoutError = new Error(`Connection timed out after ${Math.ceil(timeoutMs / 1000)}s: ${target}`);
+      timeoutError.code = grpc.status.UNAVAILABLE;
+      reject(timeoutError);
+    });
+  });
 }
 
 /**
@@ -403,6 +445,7 @@ function invokeServerStreaming(
   emit = () => undefined,
   registerCall = () => undefined,
   maxMessages = 500,
+  idleTimeoutMs = 60000,
 ) {
   return new Promise((resolve) => {
     let headers = {};
@@ -412,6 +455,7 @@ function invokeServerStreaming(
     let droppedMessages = 0;
     let warnedLimit = false;
     let resolved = false;
+    let idleTimer = null;
 
     /**
      * Completes a native stream exactly once.
@@ -419,6 +463,7 @@ function invokeServerStreaming(
     function finish(finalTrailers) {
       if (resolved) return;
       resolved = true;
+      if (idleTimer) clearTimeout(idleTimer);
       resolve({
         headers,
         trailers: finalTrailers || trailers || { "grpc-status": String(grpc.status.OK), "grpc-message": "" },
@@ -433,6 +478,26 @@ function invokeServerStreaming(
     const call = client[methodName](requestJson, metadata, callOptions);
     registerCall(call, client);
 
+    function resetIdleTimer() {
+      if (idleTimer) clearTimeout(idleTimer);
+      if (idleTimeoutMs === 0) {
+        idleTimer = null;
+        return;
+      }
+      idleTimer = setTimeout(() => {
+        const idleTrailers = {
+          "grpc-status": String(grpc.status.DEADLINE_EXCEEDED),
+          "grpc-message": `Stream idle timeout after ${Math.ceil(idleTimeoutMs / 1000)}s`,
+        };
+        emit({ type: "error", message: idleTrailers["grpc-message"], details: { idleTimeoutMs } });
+        emit({ type: "trailers", trailers: idleTrailers });
+        finish(idleTrailers);
+        call.cancel();
+      }, idleTimeoutMs);
+    }
+
+    resetIdleTimer();
+
     call.on("metadata", (metadataEvent) => {
       headers = metadataToRecord(metadataEvent);
       emit({ type: "headers", httpStatus: 0, headers, contentType: "application/grpc" });
@@ -440,6 +505,7 @@ function invokeServerStreaming(
     });
 
     call.on("data", (message) => {
+      resetIdleTimer();
       totalMessages += 1;
       if (maxMessages > 0 && messages.length >= maxMessages) {
         droppedMessages += 1;

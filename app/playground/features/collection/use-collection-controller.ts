@@ -14,8 +14,7 @@ export function useCollectionController() {
   const [requestGrpcLibraryIdDraft, setRequestGrpcLibraryIdDraft] = useState("");
   const [requestGrpcVersionIdDraft, setRequestGrpcVersionIdDraft] = useState("");
   const [requestGrpcMethodKeyDraft, setRequestGrpcMethodKeyDraft] = useState("");
-  const [requestGrpcBatchMethodKeysDraft, setRequestGrpcBatchMethodKeysDraft] = useState<string[]>([]);
-  const [requestGrpcSelectionModeDraft, setRequestGrpcSelectionModeDraft] = useState<"single" | "multi">("single");
+  const [requestGrpcMethodKeysDraft, setRequestGrpcMethodKeysDraft] = useState<string[]>([]);
   const [requestGrpcSkipExistingDraft, setRequestGrpcSkipExistingDraft] = useState(true);
   const [requestTargetCollectionId, setRequestTargetCollectionId] = useState("");
   const [requestTargetFolderId, setRequestTargetFolderId] = useState<string | null>(null);
@@ -41,10 +40,8 @@ export function useCollectionController() {
     setRequestGrpcVersionIdDraft,
     requestGrpcMethodKeyDraft,
     setRequestGrpcMethodKeyDraft,
-    requestGrpcBatchMethodKeysDraft,
-    setRequestGrpcBatchMethodKeysDraft,
-    requestGrpcSelectionModeDraft,
-    setRequestGrpcSelectionModeDraft,
+    requestGrpcMethodKeysDraft,
+    setRequestGrpcMethodKeysDraft,
     requestGrpcSkipExistingDraft,
     setRequestGrpcSkipExistingDraft,
     requestTargetCollectionId,

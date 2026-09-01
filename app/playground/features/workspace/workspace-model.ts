@@ -493,6 +493,14 @@ function normalizeApiCollectionRequests(
         url: typeof request.url === "string" ? request.url : defaultCollectionRequestUrl(kind),
         grpcMethodKey,
         grpc,
+        timeoutMs:
+          Number.isFinite(Number(request.timeoutMs)) && Number(request.timeoutMs) >= 0
+            ? Math.trunc(Number(request.timeoutMs))
+            : undefined,
+        streamIdleTimeoutMs:
+          Number.isFinite(Number(request.streamIdleTimeoutMs)) && Number(request.streamIdleTimeoutMs) >= 0
+            ? Math.trunc(Number(request.streamIdleTimeoutMs))
+            : undefined,
         body: normalizeEditableText(request.body, kind === "websocket" || kind === "rest" ? "" : "{}"),
         headers: Array.isArray(request.headers) ? request.headers : [],
         restParams: Array.isArray(request.restParams) ? request.restParams : [],
@@ -638,6 +646,14 @@ export function normalizeRequestSession(session: RequestSession): RequestSession
     sourceRequestId:
       typeof session.sourceRequestId === "string" && session.sourceRequestId ? session.sourceRequestId : undefined,
     grpc: normalizeGrpcRequestBinding(session.grpc),
+    timeoutMs:
+      Number.isFinite(Number(session.timeoutMs)) && Number(session.timeoutMs) >= 0
+        ? Math.trunc(Number(session.timeoutMs))
+        : undefined,
+    streamIdleTimeoutMs:
+      Number.isFinite(Number(session.streamIdleTimeoutMs)) && Number(session.streamIdleTimeoutMs) >= 0
+        ? Math.trunc(Number(session.streamIdleTimeoutMs))
+        : undefined,
     metadata: Array.isArray(session.metadata) ? session.metadata : [],
     transportMode:
       session.transportMode === "native-grpc" ||

@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.1.3
+
+### Added
+
+- Added configurable per-request unary and stream-idle timeouts for native gRPC and gRPC-Web, including an unlimited stream option.
+- Added drag-and-drop gRPC Proto imports to Requests and Schemas.
+
+### Changed
+
+- Improved typing responsiveness across code editors by buffering local input and deprioritizing heavier workbench updates.
+- Kept the contextual sidebar docked at large zoom levels instead of switching to a temporary overlay.
+- Standardized runtime switchers with in-switch loading indicators and click locking while start or stop operations are pending.
+
+### Fixed
+
+- Prevented empty collection state from flashing during workspace hydration and preserved the latest mock scenario text during save.
+- Prevented repeated runtime switch clicks from starting overlapping operations.
+- Fixed stacked gRPC import behavior when selecting a service.
+
 ## 1.1.2
 
 ### Changed

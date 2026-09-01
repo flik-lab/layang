@@ -15,6 +15,11 @@ import { MoreHoriz, WarningIcon } from "@/components/shadcn/icons";
 import { WorkbenchTabs } from "@/components/ui/workbench";
 import { methodKey } from "../../shared/rpc-method-utils";
 import { uiCopy } from "../../shared/ui-copy";
+import {
+  defaultGrpcConnectionTimeoutMs,
+  defaultGrpcStreamIdleTimeoutMs,
+  defaultUnaryDeadlineMs,
+} from "../../shared/workbench-constants";
 import { MethodStatusIndicator } from "../../shared/components/method-status-indicator";
 import { mockScenarioDisplayName, rpcMethodKindLabel } from "../mock-server/mock-scenario-ui";
 import {
@@ -233,6 +238,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     protoPreview,
     protoLibraries,
     protoRuntimeRegistry,
+    patchActiveCollectionRequest,
     publishDocumentationPage,
     removeMetadataRow,
     removeRestMockScenarioPair,
@@ -294,6 +300,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     targetDraft,
     toggleRequestResponseLayout,
     updateActiveRestAuth,
+    updateActiveSession,
     updateActiveRestBodyType,
     updateActiveRestMethod,
     updateActiveRestMockResponse,
@@ -325,7 +332,24 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
   const [requestMockMenuAnchor, setRequestMockMenuAnchor] = useState<HTMLElement | null>(null);
   const [requestToolsMenuAnchor, setRequestToolsMenuAnchor] = useState<HTMLElement | null>(null);
   const [transportMenuAnchor, setTransportMenuAnchor] = useState<HTMLElement | null>(null);
-  const [requestUtilityDialog, setRequestUtilityDialog] = useState<"settings" | "examples" | "docs" | "benchmark" | null>(null);
+  const [requestUtilityDialog, setRequestUtilityDialog] = useState<
+    "settings" | "examples" | "docs" | "benchmark" | "proto" | null
+  >(null);
+  const activeRequestTimeoutMs = activeSession?.timeoutMs ?? activeCollectionRequest?.timeoutMs ?? defaultUnaryDeadlineMs;
+  const activeStreamIdleTimeoutMs =
+    activeSession?.streamIdleTimeoutMs ??
+    activeCollectionRequest?.streamIdleTimeoutMs ??
+    defaultGrpcStreamIdleTimeoutMs;
+
+  function updateActiveRequestTimeout(timeoutMs: number) {
+    updateActiveSession({ timeoutMs });
+    if (activeCollectionRequest?.kind === "grpc") patchActiveCollectionRequest({ timeoutMs });
+  }
+
+  function updateActiveStreamIdleTimeout(streamIdleTimeoutMs: number) {
+    updateActiveSession({ streamIdleTimeoutMs });
+    if (activeCollectionRequest?.kind === "grpc") patchActiveCollectionRequest({ streamIdleTimeoutMs });
+  }
   const [requestMockManagerOpen, setRequestMockManagerOpen] = useState(false);
   const [requestMockEditorScenarioId, setRequestMockEditorScenarioId] = useState("");
   const [requestMockEditorDirty, setRequestMockEditorDirty] = useState(false);
@@ -981,6 +1005,18 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
   const requestSchemaLabel = activeRequestProtoLibrary
     ? `${activeRequestProtoLibrary.name}${activeRequestProtoVersion?.version ? ` ${activeRequestProtoVersion.version}` : ""}`
     : "Schema";
+  const activeRequestProtoFiles = activeRequestProtoVersion?.files ?? [];
+  const activeRequestProtoSourceFile = (() => {
+    if (!activeRequestProtoFiles.length) return null;
+    const sourceName = selectedMethod?.sourceFile?.replace(/\\/g, "/");
+    if (!sourceName) return activeRequestProtoFiles[0] ?? null;
+    return (
+      activeRequestProtoFiles.find((file: any) => file.name.replace(/\\/g, "/") === sourceName) ??
+      activeRequestProtoFiles.find((file: any) => file.name.replace(/\\/g, "/").endsWith(`/${sourceName}`)) ??
+      activeRequestProtoFiles[0] ??
+      null
+    );
+  })();
   const requestMockLabel =
     activeRequestMockContext.state === "available" && activeRequestMockContext.selectedScenario && selectedMethod
       ? mockScenarioDisplayName(activeRequestMockContext.selectedScenario, selectedMethod)
@@ -2794,7 +2830,9 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
               ? "Documentation"
               : requestUtilityDialog === "benchmark"
                 ? "Benchmark"
-                : "Request settings"}
+                : requestUtilityDialog === "proto"
+                  ? "View Proto"
+                  : "Request settings"}
         </DialogTitle>
         <DialogContent sx={{ pt: 1, maxHeight: "76vh", overflow: "auto" }}>
           {requestUtilityDialog === "examples" ? (
@@ -2851,6 +2889,53 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                 onExportBenchmark={exportCurrentBenchmark}
               />
             )
+          ) : requestUtilityDialog === "proto" ? (
+            activeRequestProtoSourceFile ? (
+              <Stack spacing={1.2}>
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={0.75} justifyContent="space-between">
+                  <Stack spacing={0.15} sx={{ minWidth: 0 }}>
+                    <Typography variant="subtitle2" sx={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
+                      {activeRequestProtoSourceFile.name}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {activeRequestProtoLibrary?.name ?? "Proto"}
+                      {activeRequestProtoVersion?.version ? ` · ${activeRequestProtoVersion.version}` : ""}
+                      {selectedMethod ? ` · ${selectedMethod.serviceName}/${selectedMethod.methodName}` : ""}
+                    </Typography>
+                  </Stack>
+                  {activeRequestProtoFiles.length > 1 ? (
+                    <Typography variant="caption" color="text.secondary">
+                      {activeRequestProtoFiles.length} files in this revision
+                    </Typography>
+                  ) : null}
+                </Stack>
+                <Box
+                  component="pre"
+                  sx={{
+                    m: 0,
+                    p: 1.5,
+                    minHeight: 280,
+                    maxHeight: "62vh",
+                    overflow: "auto",
+                    border: "1px solid",
+                    borderColor: "divider",
+                    borderRadius: 1,
+                    bgcolor: "background.default",
+                    color: "text.primary",
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                    fontSize: 12.5,
+                    lineHeight: 1.65,
+                    whiteSpace: "pre",
+                  }}
+                >
+                  {activeRequestProtoSourceFile.text}
+                </Box>
+              </Stack>
+            ) : (
+              <Alert severity="warning" variant="outlined">
+                The Proto source for this request is unavailable. Rebind the request to an available Proto revision.
+              </Alert>
+            )
           ) : requestUtilityDialog === "settings" ? (
             <Stack spacing={0}>
               <Stack direction="row" spacing={1.5} sx={{ py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
@@ -2861,6 +2946,48 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                 <Typography variant="body2" color="text.secondary" sx={{ width: 120, flexShrink: 0 }}>Transport</Typography>
                 <Typography variant="body2">{activeTransportMode}</Typography>
               </Stack>
+              {!activeIsRest && !activeIsWebSocket ? (
+                <>
+                  <Stack direction="row" spacing={1.5} alignItems="center" sx={{ py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ width: 120, flexShrink: 0 }}>Unary timeout</Typography>
+                    <FormControl size="small" sx={{ minWidth: 150 }}>
+                      <Select
+                        value={activeRequestTimeoutMs}
+                        inputProps={{ "aria-label": "Unary gRPC request timeout" }}
+                        onChange={(event: any) => updateActiveRequestTimeout(Number(event.target.value))}
+                      >
+                        <MenuItem value={5000}>5 seconds</MenuItem>
+                        <MenuItem value={10000}>10 seconds</MenuItem>
+                        <MenuItem value={30000}>30 seconds</MenuItem>
+                        <MenuItem value={60000}>60 seconds</MenuItem>
+                        <MenuItem value={120000}>120 seconds</MenuItem>
+                        <MenuItem value={0}>No deadline</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Stack>
+                  <Stack direction="row" spacing={1.5} sx={{ py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ width: 120, flexShrink: 0 }}>Connection</Typography>
+                    <Typography variant="body2">{defaultGrpcConnectionTimeoutMs / 1000}s timeout</Typography>
+                  </Stack>
+                  <Stack direction="row" spacing={1.5} alignItems="center" sx={{ py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ width: 120, flexShrink: 0 }}>Stream idle</Typography>
+                    <FormControl size="small" sx={{ minWidth: 150 }}>
+                      <Select
+                        value={activeStreamIdleTimeoutMs}
+                        inputProps={{ "aria-label": "gRPC stream idle timeout" }}
+                        onChange={(event: any) => updateActiveStreamIdleTimeout(Number(event.target.value))}
+                      >
+                        <MenuItem value={10000}>10 seconds</MenuItem>
+                        <MenuItem value={30000}>30 seconds</MenuItem>
+                        <MenuItem value={60000}>60 seconds</MenuItem>
+                        <MenuItem value={120000}>120 seconds</MenuItem>
+                        <MenuItem value={300000}>5 minutes</MenuItem>
+                        <MenuItem value={0}>No timeout</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Stack>
+                </>
+              ) : null}
               <Stack direction="row" spacing={1.5} sx={{ py: 1 }}>
                 <Typography variant="body2" color="text.secondary" sx={{ width: 120, flexShrink: 0 }}>Endpoint</Typography>
                 <Typography variant="body2" sx={{ fontFamily: "monospace", wordBreak: "break-all" }}>{previewUrl}</Typography>
@@ -2923,6 +3050,17 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
             }}
           >
             Benchmark
+          </MenuItem>
+        ) : null}
+        {!activeIsRest && !activeIsWebSocket ? (
+          <MenuItem
+            disabled={!activeRequestProtoSourceFile}
+            onClick={() => {
+              setRequestToolsMenuAnchor(null);
+              setRequestUtilityDialog("proto");
+            }}
+          >
+            View Proto
           </MenuItem>
         ) : null}
         <Divider />

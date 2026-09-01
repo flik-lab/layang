@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Alert,
   Box,
@@ -182,6 +182,10 @@ export function ServicesWorkspace({ ctx }: { ctx: ViewContext }) {
   const [protocolTab, setProtocolTab] = useState<"scenarios" | "activity">("scenarios");
   const [grpcSettingsOpen, setGrpcSettingsOpen] = useState(false);
   const [grpcSettingsPage, setGrpcSettingsPage] = useState<GrpcMockSettingsPage>("server");
+  type RuntimeKind = "grpc" | "web" | "rest" | "websocket";
+  type RuntimeAction = "start" | "stop";
+  const [runtimeActions, setRuntimeActions] = useState<Partial<Record<RuntimeKind, RuntimeAction>>>({});
+  const pendingRuntimeKindsRef = useRef(new Set<RuntimeKind>());
 
   const isGrpc = serviceProtocol === "grpc-mock" || serviceProtocol === "web-access";
   const isRest = serviceProtocol === "rest";
@@ -289,30 +293,43 @@ export function ServicesWorkspace({ ctx }: { ctx: ViewContext }) {
     </WorkspaceFrame>
   );
 
-  const toggleRuntime = async (kind: "grpc" | "web" | "rest" | "websocket", checked: boolean) => {
-    if (kind === "grpc") {
-      if (checked) await startMockServer();
-      else await stopMockServer();
-      return;
+  const toggleRuntime = async (kind: RuntimeKind, checked: boolean) => {
+    if (pendingRuntimeKindsRef.current.has(kind)) return;
+    pendingRuntimeKindsRef.current.add(kind);
+    setRuntimeActions((current) => ({ ...current, [kind]: checked ? "start" : "stop" }));
+    try {
+      if (kind === "grpc") {
+        if (checked) await startMockServer();
+        else await stopMockServer();
+        return;
+      }
+      if (kind === "web") {
+        if (checked) await startWebAccess();
+        else await stopWebAccess();
+        return;
+      }
+      if (kind === "rest") {
+        if (checked) await startRestMockServer();
+        else await stopRestMockServer();
+        return;
+      }
+      if (checked) await startWebSocketMockServer();
+      else await stopWebSocketMockServer();
+    } finally {
+      pendingRuntimeKindsRef.current.delete(kind);
+      setRuntimeActions((current) => {
+        const next = { ...current };
+        delete next[kind];
+        return next;
+      });
     }
-    if (kind === "web") {
-      if (checked) await startWebAccess();
-      else await stopWebAccess();
-      return;
-    }
-    if (kind === "rest") {
-      if (checked) await startRestMockServer();
-      else await stopRestMockServer();
-      return;
-    }
-    if (checked) await startWebSocketMockServer();
-    else await stopWebSocketMockServer();
   };
 
   return (
     <Box sx={{ width: "100%", height: "100%", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <MockRuntimeStrip
         grpcRunning={Boolean(mockServerStatus?.running)}
+        runtimeActions={runtimeActions}
         webRunning={Boolean(webAccessStatus?.running)}
         restRunning={Boolean(restMockStatus?.running)}
         websocketRunning={Boolean(wsMockStatus?.running)}
@@ -351,6 +368,7 @@ export function ServicesWorkspace({ ctx }: { ctx: ViewContext }) {
 
 function MockRuntimeStrip({
   grpcRunning,
+  runtimeActions,
   webRunning,
   restRunning,
   websocketRunning,
@@ -358,6 +376,7 @@ function MockRuntimeStrip({
   onOpenSettings,
 }: {
   grpcRunning: boolean;
+  runtimeActions: Partial<Record<"grpc" | "web" | "rest" | "websocket", "start" | "stop">>;
   webRunning: boolean;
   restRunning: boolean;
   websocketRunning: boolean;
@@ -365,10 +384,10 @@ function MockRuntimeStrip({
   onOpenSettings: () => void;
 }) {
   const items = [
-    { kind: "grpc" as const, label: "gRPC Mock", checked: grpcRunning },
-    { kind: "web" as const, label: "Web Access", checked: webRunning },
-    { kind: "rest" as const, label: "REST Mock", checked: restRunning },
-    { kind: "websocket" as const, label: "WebSocket Mock", checked: websocketRunning },
+    { kind: "grpc" as const, label: "gRPC Mock", checked: grpcRunning, pending: runtimeActions.grpc },
+    { kind: "web" as const, label: "Web Access", checked: webRunning, pending: runtimeActions.web },
+    { kind: "rest" as const, label: "REST Mock", checked: restRunning, pending: runtimeActions.rest },
+    { kind: "websocket" as const, label: "WebSocket Mock", checked: websocketRunning, pending: runtimeActions.websocket },
   ];
   return (
     <Stack
@@ -389,11 +408,23 @@ function MockRuntimeStrip({
         RUNTIMES
       </Typography>
       {items.map((item) => (
-        <Stack key={item.kind} direction="row" alignItems="center" spacing={0.3} sx={{ flexShrink: 0 }}>
+        <Stack
+          key={item.kind}
+          direction="row"
+          alignItems="center"
+          spacing={0.3}
+          sx={{ flexShrink: 0 }}
+          aria-busy={Boolean(item.pending)}
+        >
           <Switch
             size="small"
             checked={item.checked}
-            inputProps={{ "aria-label": `${item.label} ${item.checked ? "active" : "inactive"}` }}
+            disabled={Boolean(item.pending)}
+            loading={Boolean(item.pending)}
+            sx={{ pointerEvents: item.pending ? "none" : "auto" }}
+            inputProps={{
+              "aria-label": `${item.label} ${item.pending ? "loading" : item.checked ? "active" : "inactive"}`,
+            }}
             onChange={(event: any) => onToggle(item.kind, event.target.checked)}
           />
           <Typography variant="caption" color={item.checked ? "text.primary" : "text.secondary"}>
@@ -417,7 +448,6 @@ function GrpcFocusedMockWorkspace({ ctx }: { ctx: ViewContext }) {
     currentMockFile,
     currentMockScenarios,
     discardMockScenarioEditorDraft,
-    formatMockScenarioEditor,
     handleMockFormatChange,
     handleMockMethodEnabledChange,
     handleMockScenarioSelectChange,
@@ -429,12 +459,118 @@ function GrpcFocusedMockWorkspace({ ctx }: { ctx: ViewContext }) {
     openMockScenarioFolder,
     openMockScenarioManager,
     saveMockScenarioEditorDraft,
+    setMockScenarioEditorDirty,
+    setMockScenarioEditorError,
   } = ctx;
   const [settingsAnchor, setSettingsAnchor] = useState<HTMLElement | null>(null);
   const method = mockSelectedMethod as RpcMethodInfo | null;
   const key = method ? methodKey(method) : "";
   const enabled = method ? mockServer.enabledMethods?.[key] !== false : false;
   const selectedScenarioId = currentMockActiveScenario?.id ?? currentMockScenarios?.[0]?.id ?? "";
+  const editorIdentity = `${key}:${selectedScenarioId}:${currentMockFile?.format ?? "yaml"}`;
+  const [editorText, setEditorText] = useState(currentMockEditorText ?? "");
+  const [editorBaseline, setEditorBaseline] = useState(currentMockEditorText ?? "");
+  const [editorDirty, setEditorDirty] = useState(Boolean(mockScenarioEditorDirty));
+  const [editorError, setEditorError] = useState(mockScenarioEditorError ?? "");
+  const [editorRevision, setEditorRevision] = useState(0);
+  const editorTextRef = useRef(currentMockEditorText ?? "");
+  const editorDirtyRef = useRef(Boolean(mockScenarioEditorDirty));
+  const editorValidationTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (editorValidationTimerRef.current !== null) window.clearTimeout(editorValidationTimerRef.current);
+    const nextText = currentMockEditorText ?? "";
+    editorTextRef.current = nextText;
+    editorDirtyRef.current = Boolean(mockScenarioEditorDirty);
+    setEditorText(nextText);
+    setEditorBaseline(nextText);
+    setEditorDirty(Boolean(mockScenarioEditorDirty));
+    setEditorError(mockScenarioEditorError ?? "");
+  }, [editorIdentity]);
+
+  useEffect(() => {
+    return () => {
+      if (editorValidationTimerRef.current !== null) window.clearTimeout(editorValidationTimerRef.current);
+    };
+  }, []);
+
+  function queueEditorValidation(nextText: string) {
+    if (!method) return;
+    if (editorValidationTimerRef.current !== null) window.clearTimeout(editorValidationTimerRef.current);
+    editorValidationTimerRef.current = window.setTimeout(() => {
+      editorValidationTimerRef.current = null;
+      const parsed = parseSingleMockScenarioText(nextText, currentMockFile.format, mockServer.port, method);
+      const nextError = parsed.ok ? "" : parsed.error;
+      setEditorError(nextError);
+      setMockScenarioEditorError(nextError);
+    }, 350);
+  }
+
+  function changeEditorText(nextText: string) {
+    editorTextRef.current = nextText;
+    if (!editorDirtyRef.current) {
+      editorDirtyRef.current = true;
+      setEditorDirty(true);
+      setMockScenarioEditorDirty(true);
+    }
+    queueEditorValidation(nextText);
+  }
+
+  function parseLocalEditor() {
+    if (!method) return null;
+    const parsed = parseSingleMockScenarioText(editorTextRef.current, currentMockFile.format, mockServer.port, method);
+    if (!parsed.ok) {
+      setEditorError(parsed.error);
+      setMockScenarioEditorError(parsed.error);
+      return null;
+    }
+    const scenario = parsed.bundle.scenarios[0] ?? null;
+    if (!scenario) {
+      const nextError = "No scenario found in the editor.";
+      setEditorError(nextError);
+      setMockScenarioEditorError(nextError);
+      return null;
+    }
+    setEditorError("");
+    setMockScenarioEditorError("");
+    return scenario;
+  }
+
+  function formatLocalEditor() {
+    const scenario = parseLocalEditor();
+    if (!scenario) return;
+    const formatted = formatSingleMockScenarioForEditor(scenario, currentMockFile.format);
+    editorTextRef.current = formatted;
+    setEditorText(formatted);
+    setEditorRevision((current) => current + 1);
+  }
+
+  function revertLocalEditor() {
+    if (editorValidationTimerRef.current !== null) window.clearTimeout(editorValidationTimerRef.current);
+    editorValidationTimerRef.current = null;
+    editorTextRef.current = editorBaseline;
+    editorDirtyRef.current = false;
+    setEditorText(editorBaseline);
+    setEditorRevision((current) => current + 1);
+    setEditorDirty(false);
+    setEditorError("");
+    discardMockScenarioEditorDraft();
+  }
+
+  function saveLocalEditor() {
+    const scenario = parseLocalEditor();
+    if (!scenario) return;
+    if (editorValidationTimerRef.current !== null) window.clearTimeout(editorValidationTimerRef.current);
+    editorValidationTimerRef.current = null;
+    const formatted = formatSingleMockScenarioForEditor(scenario, currentMockFile.format);
+    editorTextRef.current = formatted;
+    setEditorText(formatted);
+    setEditorBaseline(formatted);
+    setEditorRevision((current) => current + 1);
+    setEditorDirty(false);
+    editorDirtyRef.current = false;
+    saveMockScenarioEditorDraft(formatted);
+  }
   if (!method) {
     return (
       <WorkspaceFrame title="Mocking" description="Select a gRPC method from the Mocking sidebar.">
@@ -486,23 +622,28 @@ function GrpcFocusedMockWorkspace({ ctx }: { ctx: ViewContext }) {
 
       <Box sx={{ minHeight: 0, flex: 1, display: "flex", flexDirection: "column", p: 1.25, gap: 0.65 }}>
         <Stack direction="row" alignItems="center" spacing={0.45} sx={{ minHeight: 28 }}>
-          <Button size="small" variant={currentMockFile?.format === "yaml" ? "contained" : "text"} onClick={() => handleMockFormatChange("yaml")}>YAML</Button>
-          <Button size="small" variant={currentMockFile?.format === "json" ? "contained" : "text"} onClick={() => handleMockFormatChange("json")}>JSON</Button>
+          <Button size="small" variant={currentMockFile?.format === "yaml" ? "contained" : "text"} disabled={editorDirty} onClick={() => handleMockFormatChange("yaml")}>YAML</Button>
+          <Button size="small" variant={currentMockFile?.format === "json" ? "contained" : "text"} disabled={editorDirty} onClick={() => handleMockFormatChange("json")}>JSON</Button>
           <Box sx={{ flex: 1 }} />
-          {mockScenarioEditorError ? <Typography variant="caption" color="error.main" noWrap title={mockScenarioEditorError}>{mockScenarioEditorError}</Typography> : null}
-          <Button size="small" variant="text" onClick={() => formatMockScenarioEditor()} disabled={!currentMockScenarios?.length}>Format</Button>
-          <Button size="small" variant="text" onClick={() => discardMockScenarioEditorDraft()} disabled={!mockScenarioEditorDirty}>Revert</Button>
-          <Button size="small" variant="contained" onClick={() => saveMockScenarioEditorDraft()} disabled={!mockScenarioEditorDirty || Boolean(mockScenarioEditorError)}>Save</Button>
+          {editorError ? <Typography variant="caption" color="error.main" noWrap title={editorError}>{editorError}</Typography> : null}
+          <Button size="small" variant="text" onClick={formatLocalEditor} disabled={!currentMockScenarios?.length}>Format</Button>
+          <Button size="small" variant="text" onClick={revertLocalEditor} disabled={!editorDirty}>Revert</Button>
+          <Button size="small" variant="contained" onClick={saveLocalEditor} disabled={!editorDirty || Boolean(editorError)}>Save</Button>
         </Stack>
         <Box sx={{ minHeight: 0, flex: 1 }}>
           <FeatureCodeTextField
-            value={currentMockEditorText ?? ""}
-            onChange={handleMockScenarioTextChange}
+            value={editorText}
+            onChange={changeEditorText}
+            buffered
+            onBlur={(text) => {
+              if (editorDirtyRef.current) handleMockScenarioTextChange(text);
+            }}
             minRows={18}
             fullHeight
             language={currentMockFile?.format ?? "yaml"}
             showFormatAction={false}
             fullscreenTitle={`${method.methodName} scenario`}
+            resetKey={`${editorIdentity}:${editorRevision}`}
           />
         </Box>
       </Box>
@@ -1046,26 +1187,13 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
   const runModeIssues = runMode === "web-access" ? webStartIssues : nativeStartIssues;
   const canStartRuntime = runModeIssues.length === 0;
   const runtimeSetupRequired = runMode === "web-access" && webSetupRequired;
-  const runtimeStatusLabel =
-    runtimeAction === "start"
-      ? "Starting"
-      : runtimeAction === "stop"
-        ? "Stopping"
-        : runModeRunning
-          ? runMode === "native" && mockServerStatus.runtimeSource === "cli"
-            ? "Running · CLI"
-            : "Running"
-          : "Stopped";
+  const runtimeStatusLabel = runModeRunning
+    ? runMode === "native" && mockServerStatus.runtimeSource === "cli"
+      ? "Running · CLI"
+      : "Running"
+    : "Stopped";
   const runtimeActionLabel =
-    runtimeAction === "start"
-      ? "Starting…"
-      : runtimeAction === "stop"
-        ? "Stopping…"
-        : runModeRunning
-          ? "Stop"
-          : runtimeSetupRequired
-            ? "Set up"
-            : "Start";
+    runModeRunning ? "Stop" : runtimeSetupRequired ? "Set up" : "Start";
 
   function requestWebAccessSection(tab: "overview" | "logs" | "settings") {
     setWebAccessSectionRequest((current) => ({ id: current.id + 1, tab }));
@@ -1173,7 +1301,20 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
                 size="small"
                 color={runModeRunning ? "error" : "primary"}
                 variant="contained"
-                startIcon={runModeRunning || runtimeAction === "stop" ? <StopCircle /> : <PlayArrow />}
+                startIcon={
+                  runtimeAction ? (
+                    <Refresh
+                      sx={{
+                        animation: "runtime-action-spin 0.8s linear infinite",
+                        "@keyframes runtime-action-spin": { to: { transform: "rotate(360deg)" } },
+                      }}
+                    />
+                  ) : runModeRunning ? (
+                    <StopCircle />
+                  ) : (
+                    <PlayArrow />
+                  )
+                }
                 disabled={runtimeAction !== null || (!runModeRunning && !runtimeSetupRequired && !canStartRuntime)}
                 onClick={handleRuntimeAction}
                 sx={{
@@ -3167,9 +3308,23 @@ function ProtoSourcesPanel({
                   <Typography variant="h6" noWrap>
                     {selectedCompiled.library.name}
                   </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {selectedCompiled.version.version}
-                  </Typography>
+                  <FormControl size="small" sx={{ mt: 0.45, minWidth: 150 }}>
+                    <Select
+                      value={selectedCompiled.version.id}
+                      inputProps={{ "aria-label": `Mock Proto revision for ${selectedCompiled.library.name}` }}
+                      onChange={(event: any) =>
+                        replaceRevision(selectedSource, String(event.target.value))
+                      }
+                    >
+                      {(selectedCompiled.library.versions ?? [])
+                        .filter((version: any) => version.lifecycle !== "archived")
+                        .map((version: any) => (
+                          <MenuItem key={version.id} value={version.id}>
+                            {version.version}
+                          </MenuItem>
+                        ))}
+                    </Select>
+                  </FormControl>
                 </Box>
                 <Typography variant="caption" color="text.secondary">
                   {selectedMethods.length} method{selectedMethods.length === 1 ? "" : "s"}

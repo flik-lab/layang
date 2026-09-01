@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type DragEvent as ReactDragEvent, type ReactNode } from "react";
 import {
   Box,
   Button,
@@ -90,7 +90,6 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
     checkDocumentationBuild,
     collectionFilter,
     collections,
-    compactViewport,
     createCollectionFolder,
     createProtoLibraryFromImport,
     applyProtoVersionImportPlan,
@@ -99,6 +98,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
     documentationPages,
     exampleInputRef,
     handleProtoFiles,
+    hydrated,
     importExampleFile,
     importMockScenarioFile,
     importWorkspaceFiles,
@@ -151,6 +151,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
   const [deleteSchemaLibraryId, setDeleteSchemaLibraryId] = useState("");
   const [globalProtoImportReview, setGlobalProtoImportReview] = useState<GlobalProtoImportReview | null>(null);
   const [globalProtoImportError, setGlobalProtoImportError] = useState("");
+  const [protoDropTarget, setProtoDropTarget] = useState<"requests" | "schemas" | null>(null);
   const globalProtoFileInputRef = useRef<HTMLInputElement | null>(null);
   const globalProtoFolderInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -212,6 +213,37 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
       return;
     }
     openAddCollectionRequestDialog(destination.collectionId, kind, destination.folderId);
+  }
+
+  function isFileDrag(event: ReactDragEvent<HTMLElement>) {
+    return Array.from(event.dataTransfer.types).includes("Files");
+  }
+
+  function activateProtoDropTarget(event: ReactDragEvent<HTMLElement>, target: "requests" | "schemas") {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setProtoDropTarget(target);
+  }
+
+  function leaveProtoDropTarget(event: ReactDragEvent<HTMLElement>, target: "requests" | "schemas") {
+    const next = event.relatedTarget;
+    if (next instanceof Node && event.currentTarget.contains(next)) return;
+    setProtoDropTarget((current) => (current === target ? null : current));
+  }
+
+  async function dropProtoFiles(event: ReactDragEvent<HTMLElement>, target: "requests" | "schemas") {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setProtoDropTarget(null);
+    const files = event.dataTransfer.files;
+    if (target === "schemas") {
+      await reviewGlobalProtoFiles(files);
+      return;
+    }
+    const destination = quickRequestDestination();
+    await handleProtoFiles(files, destination?.collectionId ?? "");
   }
 
   useEffect(() => {
@@ -495,9 +527,8 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
           </Tooltip>
         </Box>
 
-      {(compactViewport || sidebarOpen) && sideSection !== "source-control" && (
+      {sidebarOpen && sideSection !== "source-control" && (
         <Sidebar
-          mobile={compactViewport}
           width={sidebarWidthPx}
           collapsedWidth={collapsedSidebarWidth}
           top={designSystem.size.titlebarHeight}
@@ -537,11 +568,6 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
                   Import
                 </Button>
               )}
-              {compactViewport ? (
-                <Button size="small" variant="text" aria-label="Close sidebar" onClick={() => setSidebarOpen(false)}>
-                  Close
-                </Button>
-              ) : null}
             </Stack>
 
           </SidebarHeader>
@@ -563,7 +589,27 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
 
           <SidebarContent className="p-0">
             {sideSection === "collections" && (
-              <Stack spacing={0} sx={{ minHeight: 0 }}>
+              <Stack
+                spacing={0}
+                onDragEnter={(event: ReactDragEvent<HTMLElement>) => activateProtoDropTarget(event, "requests")}
+                onDragOver={(event: ReactDragEvent<HTMLElement>) => activateProtoDropTarget(event, "requests")}
+                onDragLeave={(event: ReactDragEvent<HTMLElement>) => leaveProtoDropTarget(event, "requests")}
+                onDrop={(event: ReactDragEvent<HTMLElement>) => void dropProtoFiles(event, "requests")}
+                sx={{
+                  minHeight: 0,
+                  height: "100%",
+                  outlineWidth: protoDropTarget === "requests" ? 2 : 0,
+                  outlineStyle: "solid",
+                  outlineColor: "primary.main",
+                  outlineOffset: -2,
+                  bgcolor: protoDropTarget === "requests" ? "action.hover" : "transparent",
+                }}
+              >
+                {protoDropTarget === "requests" && (
+                  <Paper variant="outlined" sx={{ m: 0.6, p: 1, borderStyle: "dashed", textAlign: "center" }}>
+                    <Typography variant="caption">Drop Proto to create a gRPC request</Typography>
+                  </Paper>
+                )}
                 <Box sx={{ px: 0.6, pt: 0.55, pb: 0.55 }}>
                   <TextField
                     size="small"
@@ -581,33 +627,60 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
                     inputProps={{ "aria-label": "Search collections" }}
                   />
                 </Box>
-                <FeatureCollectionSidebar
-                  collections={collections}
-                  protoLibraries={protoLibraries}
-                  filterQuery={collectionFilter}
-                  selectedCollectionRequestId={activeCollectionRequestId}
-                  onSelectCollectionRequest={(collection: any, request: any) => {
-                    setProtoPreview(null);
-                    setActiveDocumentationPageId("");
-                    selectCollectionRequest(collection, request);
-                    if (compactViewport) setSidebarOpen(false);
-                  }}
-                  onAddCollectionRequest={openAddCollectionRequestDialog}
-                  onCreateFolder={createCollectionFolder}
-                  onRenameCollection={renameCollection}
-                  onRemoveCollection={removeCollection}
-                  onRenameFolder={renameCollectionFolder}
-                  onRemoveFolder={removeCollectionFolder}
-                  onRenameCollectionRequest={renameCollectionRequest}
-                  onRemoveCollectionRequest={removeCollectionRequest}
-                  onMoveNode={moveCollectionTreeNode}
-                  onRepairGrpcRequest={repairCollectionGrpcRequest}
-                />
+                {hydrated ? (
+                  <FeatureCollectionSidebar
+                    collections={collections}
+                    protoLibraries={protoLibraries}
+                    filterQuery={collectionFilter}
+                    selectedCollectionRequestId={activeCollectionRequestId}
+                    onSelectCollectionRequest={(collection: any, request: any) => {
+                      setProtoPreview(null);
+                      setActiveDocumentationPageId("");
+                      selectCollectionRequest(collection, request);
+                    }}
+                    onAddCollectionRequest={openAddCollectionRequestDialog}
+                    onCreateFolder={createCollectionFolder}
+                    onRenameCollection={renameCollection}
+                    onRemoveCollection={removeCollection}
+                    onRenameFolder={renameCollectionFolder}
+                    onRemoveFolder={removeCollectionFolder}
+                    onRenameCollectionRequest={renameCollectionRequest}
+                    onRemoveCollectionRequest={removeCollectionRequest}
+                    onMoveNode={moveCollectionTreeNode}
+                    onRepairGrpcRequest={repairCollectionGrpcRequest}
+                  />
+                ) : (
+                  <Paper variant="outlined" sx={{ m: 0.6, p: 1.25, textAlign: "center" }}>
+                    <Typography variant="caption" color="text.secondary">
+                      Loading workspace…
+                    </Typography>
+                  </Paper>
+                )}
               </Stack>
             )}
 
             {sideSection === "proto-schemas" && (
-              <Stack spacing={0} sx={{ minHeight: 0, height: "100%" }}>
+              <Stack
+                spacing={0}
+                onDragEnter={(event: ReactDragEvent<HTMLElement>) => activateProtoDropTarget(event, "schemas")}
+                onDragOver={(event: ReactDragEvent<HTMLElement>) => activateProtoDropTarget(event, "schemas")}
+                onDragLeave={(event: ReactDragEvent<HTMLElement>) => leaveProtoDropTarget(event, "schemas")}
+                onDrop={(event: ReactDragEvent<HTMLElement>) => void dropProtoFiles(event, "schemas")}
+                sx={{
+                  minHeight: 0,
+                  height: "100%",
+                  outlineWidth: protoDropTarget === "schemas" ? 2 : 0,
+                  outlineStyle: "solid",
+                  outlineColor: "primary.main",
+                  outlineOffset: -2,
+                  bgcolor: protoDropTarget === "schemas" ? "action.hover" : "transparent",
+                }}
+              >
+                {protoDropTarget === "schemas" && (
+                  <Paper variant="outlined" sx={{ m: 0.6, p: 1, borderStyle: "dashed", textAlign: "center" }}>
+                    <Typography variant="caption">Drop Proto to import a schema</Typography>
+                  </Paper>
+                )}
                 <Box sx={{ px: 0.6, pt: 0.55, pb: 0.55 }}>
                   <TextField
                     size="small"
@@ -635,7 +708,6 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
                       setProtoPreview(null);
                       selectProtoLibraryVersion(libraryId, versionId);
                       window.setTimeout(() => window.dispatchEvent(new CustomEvent("layang:schema-select", { detail: { libraryId, versionId } })), 0);
-                      if (compactViewport) setSidebarOpen(false);
                     }}
                     onSelectMethod={(libraryId, versionId, method) => {
                       setProtoPreview(null);
@@ -647,7 +719,6 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
                           }),
                         );
                       }, 0);
-                      if (compactViewport) setSidebarOpen(false);
                     }}
                   />
                 </Box>
@@ -667,13 +738,11 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
                     setMockSelectedMethodKey(`${method.serviceName}/${method.methodName}`);
                     setServicesSection("mock-servers");
                     setServiceProtocol("grpc-mock");
-                    if (compactViewport) setSidebarOpen(false);
                   }}
                   onSelectProtocol={(protocol) => {
                     setServicesSection("mock-servers");
                     if (protocol === "grpc-mock") setMockSelectedMethodKey(grpcMockOverviewMethodKey);
                     setServiceProtocol(protocol);
-                    if (compactViewport) setSidebarOpen(false);
                   }}
                 />
               </Box>
@@ -686,7 +755,6 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
                   activePageId={activeDocumentationPageId}
                   onOpen={(page: any) => {
                     openDocumentationPage(page);
-                    if (compactViewport) setSidebarOpen(false);
                   }}
                   onBuildAll={() => void buildAllDocumentation()}
                   onCheck={() => void checkDocumentationBuild()}
@@ -707,7 +775,6 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
                         isActive={settingsSection === item.value}
                         onClick={() => {
                           setSettingsSection(item.value);
-                          if (compactViewport) setSidebarOpen(false);
                         }}
                       >
                         {item.label}
@@ -719,7 +786,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
             )}
           </SidebarContent>
 
-          {!compactViewport && sidebarOpen && (
+          {sidebarOpen && (
             <Box
               onMouseDown={beginSidebarResize}
               onKeyDown={(event: any) => {

@@ -27,7 +27,9 @@ export const configuredLogLevel = (
   process?.env?.NEXT_PUBLIC_GRPC_LAB_LOG_LEVEL ??
   "info"
 ).toLowerCase();
-export const defaultUnaryDeadlineMs = 120000;
+export const defaultUnaryDeadlineMs = 30000;
+export const defaultGrpcConnectionTimeoutMs = 10000;
+export const defaultGrpcStreamIdleTimeoutMs = 60000;
 // Large streaming responses can be hundreds of KB each. Keep a bounded recent
 // window while totalMessages continues tracking the complete stream count.
 export const maxMessagesPerRequest = 50;

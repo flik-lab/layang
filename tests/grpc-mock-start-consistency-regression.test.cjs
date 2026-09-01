@@ -33,6 +33,12 @@ test("gRPC mock starts only from the workspace and verifies runtime readiness", 
     "the runtime should start before background workspace persistence",
   );
   assert.match(actions, /gRPC Mock did not become ready with the latest scenario configuration/);
+  assert.match(actions, /message: "Starting gRPC Mock\.\.\."/);
+  assert.ok(
+    actions.indexOf('message: "Starting gRPC Mock..."') < actions.indexOf("const schema = resolveRuntimeSchema(effectiveMockServer)"),
+    "the renderer should expose pending state before synchronous schema/scenario work",
+  );
+  assert.match(actions, /await yieldForRuntimeUiPaint\(\)/);
 });
 
 test("running gRPC mock receives live editor revisions and Web Access waits for that snapshot", () => {
@@ -55,6 +61,14 @@ test("running gRPC mock receives live editor revisions and Web Access waits for 
   assert.match(actions, /const runtime = await ensureMockRuntimeSnapshot\(effectiveMockServer\)/);
   assert.match(actions, /await window\.electronGateway\.status\(\{ profileId: profile\.id \}\)/);
   assert.match(actions, /Web Access did not become ready/);
+  assert.match(actions, /message: "Starting Web Access\.\.\."/);
+  const webStart = actions.slice(actions.indexOf("async function startWebAccess"), actions.indexOf("/** Stops only the browser bridge."));
+  assert.doesNotMatch(webStart, /await persistProjectSnapshotNow\?\.\(projectSnapshot\)/);
+  assert.match(webStart, /const persistence = persistProjectSnapshotNow\?\.\(projectSnapshot\)/);
+  assert.ok(
+    webStart.indexOf("await window.electronGateway.start") < webStart.indexOf("const persistence = persistProjectSnapshotNow?.(projectSnapshot)"),
+    "Web Access readiness should not be serialized behind workspace disk persistence",
+  );
 });
 
 test("workspace scenario editor owns scenario content and folder opening flushes first", () => {

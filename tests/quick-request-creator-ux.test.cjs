@@ -8,7 +8,7 @@ const test = require("node:test");
 const root = path.resolve(__dirname, "..");
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
 
-test("collection quick create keeps destination context and opens gRPC multi-select", () => {
+test("collection quick create keeps destination context and seeds unified gRPC method selection", () => {
   const actions = read("app/playground/features/collection/use-collection-actions.ts");
   const collectionSidebar = read("app/playground/features/collection/collection-sidebar.tsx");
 
@@ -16,7 +16,8 @@ test("collection quick create keeps destination context and opens gRPC multi-sel
   assert.match(actions, /setRequestTargetCollectionId\(collectionId \|\| NEW_SCHEMA_COLLECTION_TARGET\)/);
   assert.match(actions, /setRequestTargetFolderId\(parentId\)/);
   assert.match(actions, /setRequestLocationEditable\(kind === "grpc" \|\| !kind\)/);
-  assert.match(actions, /setRequestGrpcSelectionModeDraft\(kind === "grpc" \? "multi" : "single"\)/);
+  assert.doesNotMatch(actions, /SelectionModeDraft/);
+  assert.match(actions, /setRequestGrpcMethodKeysDraft\(firstMethod \? \[methodKey\(firstMethod\)\] : \[\]\)/);
   assert.match(actions, /layang:last-request-schema-id/);
   assert.match(actions, /layang:last-request-service-name/);
 });
@@ -30,7 +31,7 @@ test("gRPC quick creator supports search, multi-select, service/schema select-al
   assert.match(dialogs, /Select all \{selectedRequestMethods\.length\}/);
   assert.match(dialogs, /Skip existing requests/);
   assert.match(dialogs, /Already exists/);
-  assert.match(dialogs, /Requests stay pinned to the selected schema revision/);
+  assert.match(dialogs, /Requests stay pinned to the selected proto revision/);
   assert.match(dialogs, /Hide options/);
   assert.match(dialogs, /Proto revision/);
   assert.match(dialogs, /Import Proto/);
@@ -80,7 +81,7 @@ test("quick creator can target a collection or auto-create a schema collection g
   const sidebar = read("app/playground/features/shell/workbench-sidebar.tsx");
 
   assert.match(dialogs, /New collection · \$\{newSchemaCollectionName\}/);
-  assert.match(dialogs, /Service folders are created automatically for batch requests/);
+  assert.match(dialogs, /Selected methods are grouped into service folders automatically/);
   assert.match(actions, /uniqueSchemaCollectionName\(compiled\.library\.name, collections\)/);
   assert.match(actions, /serviceFolderIds = new Map/);
   assert.match(actions, /createFolderEntity\(workingCollection, parentId, serviceName, now\)/);
@@ -97,4 +98,14 @@ test("quick creator stores recent schemas and services", () => {
   assert.match(dialogs, /layang:recent-request-services/);
   assert.match(dialogs, /orderedGlobalProtoSchemas/);
   assert.match(dialogs, /orderedRequestServices/);
+});
+
+test("proto upload from request flow creates a schema collection and opens the created request", () => {
+  const actions = read("app/playground/features/collection/use-collection-actions.ts");
+  const io = read("app/playground/features/workspace/use-workspace-io-actions.ts");
+
+  assert.match(io, /addGrpcMethodsToCollection\(\s*pendingCollectionId \|\| NEW_SCHEMA_COLLECTION_TARGET,\s*\[method\]/);
+  assert.match(actions, /selectCollectionRequest\(workingCollection, requests\[0\]\)/);
+  assert.match(actions, /setSideSection\("collections"\)/);
+  assert.match(actions, /requestIds: requests\.map\(\(request\) => request\.id\)/);
 });

@@ -191,7 +191,7 @@ export function trailerHint(status: string, message: string) {
   if (status === "12") return "Method is not implemented or the route points to the wrong service.";
   if (status === "14") return "Backend or proxy is unavailable. Check target URL, route, upstream, and TLS.";
   if (status === "4")
-    return "The server/proxy did not finish before the deadline. Native unary calls now use 120s; native streams run without a client deadline. If the error shows remote_addr=[::1], try 127.0.0.1:PORT when your backend only listens on IPv4.";
+    return "The server/proxy did not finish before the deadline. Unary calls default to 30s, connection attempts to 10s, and stream idle defaults to 60s. Unary and stream idle timeouts can be changed or disabled in Request Settings.";
   if (status === "3")
     return "Request reached the service, but payload validation failed. Compare the body with the proto schema.";
   if (message.toLowerCase().includes("cors"))

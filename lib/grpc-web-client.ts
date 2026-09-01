@@ -10,6 +10,9 @@ type InvokeGrpcWebTextParams = {
   requestJson: unknown;
   metadata?: MetadataPair[];
   signal?: AbortSignal;
+  timeoutMs?: number;
+  connectionTimeoutMs?: number;
+  idleTimeoutMs?: number;
   maxMessages?: number;
   onEvent?: (event: GrpcEvent) => void;
 };
@@ -39,6 +42,8 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
   const requestBody = base64Encode(requestFrame);
   const responseStream = params.method.responseStream;
   const headers = buildGrpcWebHeaders(params.metadata ?? [], responseStream);
+  const timeoutMs = Math.max(0, Number(params.timeoutMs ?? 30_000));
+  if (!responseStream && timeoutMs > 0) headers["grpc-timeout"] = `${Math.ceil(timeoutMs)}m`;
   const firstResult = await invokeGrpcWebTextAttempt({
     ...params,
     method: params.method,
@@ -133,6 +138,24 @@ async function invokeGrpcWebTextAttempt(params: InvokeGrpcWebTextAttemptParams):
   const requestUrl = upstreamUrl;
   const startedTimestamp = new Date();
   const startedAt = performance.now();
+  const connectionTimeoutMs = Math.max(1, Number(params.connectionTimeoutMs ?? 10_000));
+  const requestTimeoutMs = Math.max(0, Number(params.timeoutMs ?? 30_000));
+  const idleTimeoutMs = normalizeTimeoutMs(params.idleTimeoutMs, 60_000);
+  const requestController = new AbortController();
+  let timeoutMessage = "";
+  const relayExternalAbort = () => requestController.abort(params.signal?.reason);
+  if (params.signal?.aborted) relayExternalAbort();
+  else params.signal?.addEventListener("abort", relayExternalAbort, { once: true });
+  const connectionTimer = window.setTimeout(() => {
+    timeoutMessage = `Connection timed out after ${Math.ceil(connectionTimeoutMs / 1000)}s.`;
+    requestController.abort(new Error(timeoutMessage));
+  }, connectionTimeoutMs);
+  const requestTimer = !params.method.responseStream && requestTimeoutMs > 0
+    ? window.setTimeout(() => {
+        timeoutMessage = `Request timed out after ${Math.ceil(requestTimeoutMs / 1000)}s.`;
+        requestController.abort(new Error(timeoutMessage));
+      }, requestTimeoutMs)
+    : null;
 
   params.emit({
     type: "log",
@@ -176,16 +199,21 @@ async function invokeGrpcWebTextAttempt(params: InvokeGrpcWebTextAttemptParams):
       method: "POST",
       headers: params.headers,
       body: params.requestBody,
-      signal: params.signal,
+      signal: requestController.signal,
     });
   } catch (error) {
+    window.clearTimeout(connectionTimer);
+    if (requestTimer !== null) window.clearTimeout(requestTimer);
+    params.signal?.removeEventListener("abort", relayExternalAbort);
     params.emit({
       type: "error",
       message: "Network request failed before gRPC headers were received.",
       details: errorToPlainObject(error),
     });
+    if (timeoutMessage) throw new Error(timeoutMessage);
     throw error;
   }
+  window.clearTimeout(connectionTimer);
 
   const responseHeaders = headersToRecord(response.headers);
   const contentType = response.headers.get("content-type") ?? "";
@@ -327,7 +355,13 @@ async function invokeGrpcWebTextAttempt(params: InvokeGrpcWebTextAttemptParams):
       level: "warn",
       message: "ReadableStream is not available; response will be processed after completion.",
     });
-    const text = await response.text();
+    let text: string;
+    try {
+      text = await response.text();
+    } catch (error) {
+      if (!timeoutMessage) throw error;
+      text = "";
+    }
     rawTextBytes += text.length;
     for (const bytes of base64Stream.push(text, true)) {
       processBytes(bytes);
@@ -339,13 +373,15 @@ async function invokeGrpcWebTextAttempt(params: InvokeGrpcWebTextAttemptParams):
       void reader.cancel("Request cancelled by user").catch(() => undefined);
     };
 
-    if (params.signal?.aborted) cancelReader();
-    params.signal?.addEventListener("abort", cancelReader, { once: true });
+    if (requestController.signal.aborted) cancelReader();
+    requestController.signal.addEventListener("abort", cancelReader, { once: true });
 
     try {
       while (true) {
-        if (params.signal?.aborted) break;
-        const chunk = await reader.read();
+        if (requestController.signal.aborted) break;
+        const chunk = params.method.responseStream && idleTimeoutMs > 0
+          ? await readGrpcWebStreamChunk(reader, idleTimeoutMs)
+          : await reader.read();
         if (chunk.done) break;
 
         const text = textDecoder.decode(chunk.value, { stream: true });
@@ -361,8 +397,15 @@ async function invokeGrpcWebTextAttempt(params: InvokeGrpcWebTextAttemptParams):
           processBytes(bytes);
         }
       }
+    } catch (error) {
+      if (error instanceof GrpcWebIdleTimeoutError) {
+        timeoutMessage = error.message;
+        await reader.cancel(error.message).catch(() => undefined);
+      } else if (!requestController.signal.aborted) {
+        throw error;
+      }
     } finally {
-      params.signal?.removeEventListener("abort", cancelReader);
+      requestController.signal.removeEventListener("abort", cancelReader);
       reader.releaseLock();
     }
 
@@ -381,7 +424,18 @@ async function invokeGrpcWebTextAttempt(params: InvokeGrpcWebTextAttemptParams):
     }
   }
 
-  if (params.signal?.aborted && !trailers["grpc-status"]) {
+  if (requestTimer !== null) window.clearTimeout(requestTimer);
+  params.signal?.removeEventListener("abort", relayExternalAbort);
+
+  if (timeoutMessage && !trailers["grpc-status"]) {
+    trailers = {
+      ...trailers,
+      "grpc-status": "4",
+      "grpc-message": timeoutMessage,
+    };
+    params.emit({ type: "error", message: timeoutMessage, details: { requestTimeoutMs, idleTimeoutMs } });
+    params.emit({ type: "trailers", trailers });
+  } else if (params.signal?.aborted && !trailers["grpc-status"]) {
     trailers = {
       ...trailers,
       "grpc-status": "1",
@@ -458,6 +512,36 @@ async function invokeGrpcWebTextAttempt(params: InvokeGrpcWebTextAttemptParams):
   });
   params.emit({ type: "end", summary });
   return summary;
+}
+
+class GrpcWebIdleTimeoutError extends Error {}
+
+function normalizeTimeoutMs(value: number | undefined, fallback: number): number {
+  const numeric = value === undefined ? fallback : Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) return fallback;
+  return Math.floor(numeric);
+}
+
+function readGrpcWebStreamChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array<ArrayBufferLike>>,
+  idleTimeoutMs: number,
+) {
+  return new Promise<ReadableStreamReadResult<Uint8Array<ArrayBufferLike>>>((resolve, reject) => {
+    const timer = window.setTimeout(
+      () => reject(new GrpcWebIdleTimeoutError(`Stream idle timeout after ${Math.ceil(idleTimeoutMs / 1000)}s.`)),
+      idleTimeoutMs,
+    );
+    reader.read().then(
+      (result) => {
+        window.clearTimeout(timer);
+        resolve(result);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 /**

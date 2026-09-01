@@ -4,21 +4,19 @@ import type { LoadedProto, ProtoSourceFile, RpcMethodInfo } from "@/lib/types";
 import type { SavedExample, WorkspaceExportBundle, WorkspaceImportRecord } from "../../shared/workbench-types";
 import { WORKSPACE_EXPORT_VERSION } from "../../shared/workspace-versions";
 import { defaultProjectData } from "./workspace-model";
+import { NEW_SCHEMA_COLLECTION_TARGET } from "../collection/quick-request-creator-domain";
 import {
   appendProtoLibraryVersion,
-  createPinnedGrpcBinding,
   findProtoVersion,
 } from "../proto-library/proto-library-domain";
 
 export function useWorkspaceIoActions(scope: any) {
   const {
-    addCollectionRequest,
+    addGrpcMethodsToCollection,
     applyProject,
     applyWorkspaceBundle,
     applyWorkspaceLayout,
     downloadTextFile,
-    draftEffectiveBaseUrl,
-    generateExampleFromType,
     getLayoutSnapshot,
     getProjectSnapshot,
     getWorkspaceExportBundle,
@@ -44,6 +42,7 @@ export function useWorkspaceIoActions(scope: any) {
     projectInputRef,
     protoFiles,
     protoLibraries,
+    protoRuntimeRegistryFor,
     protoInputRef,
     sampleProto,
     selectMethod,
@@ -393,7 +392,7 @@ export function useWorkspaceIoActions(scope: any) {
     }
   }
 
-  async function handleProtoFiles(files: FileList | null) {
+  async function handleProtoFiles(files: FileList | null, targetCollectionId = "") {
     setError("");
     setEvents([]);
     setLastResult(null);
@@ -444,20 +443,27 @@ export function useWorkspaceIoActions(scope: any) {
               .includes(file.name.toLowerCase().replace(/\.proto$/, "")),
           ),
         ) ?? result.methods[0];
-      const pendingCollectionId = pendingCollectionImportRef.current;
+      const pendingCollectionId = targetCollectionId || pendingCollectionImportRef.current;
       pendingCollectionImportRef.current = "";
-      if (pendingCollectionId) {
-        const activeProto = findProtoVersion(nextProtoLibraries);
-        const library = activeProto?.library;
-        const version = activeProto?.version;
-        addCollectionRequest(pendingCollectionId, "grpc", {
-          name: method.methodName,
-          url: draftEffectiveBaseUrl,
-          grpcMethodKey: methodKey(method),
-          grpc: library && version ? createPinnedGrpcBinding(library, version, method) : undefined,
-          body: JSON.stringify(generateExampleFromType(result.root, method.requestType), null, 2),
-        });
-        setSideSection("collections");
+      const activeProto = findProtoVersion(nextProtoLibraries);
+      const library = activeProto?.library;
+      const version = activeProto?.version;
+      // Resolve against the just-registered library snapshot. The registry from the
+      // previous React render can briefly miss the imported revision,
+      // which used to leave the method list empty until the dialog was closed/reopened.
+      const compiled = library && version
+        ? protoRuntimeRegistryFor(nextProtoLibraries).resolveVersion(library.id, version.id)
+        : null;
+
+      if (compiled) {
+        addGrpcMethodsToCollection(
+          pendingCollectionId || NEW_SCHEMA_COLLECTION_TARGET,
+          [method],
+          compiled,
+          null,
+          false,
+          true,
+        );
       } else {
         selectMethod(result.root, method);
         setSideSection("collections");

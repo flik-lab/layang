@@ -8,6 +8,8 @@ type NativeGrpcPayload = {
   requestJson: unknown;
   metadata: MetadataPair[];
   deadlineMs?: number;
+  connectionTimeoutMs?: number;
+  idleTimeoutMs?: number;
   maxMessages?: number;
   onEvent?: (event: GrpcEvent) => void;
 };

@@ -40,6 +40,16 @@ type MockRuntimeFailure = {
   error: string;
 };
 
+function yieldForRuntimeUiPaint() {
+  return new Promise<void>((resolve) => {
+    if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+      setTimeout(resolve, 0);
+      return;
+    }
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
 type ActionContext = Record<string, any> & {
   loaded: LoadedProto | null;
   selectedMethod: RpcMethodInfo | null;
@@ -173,7 +183,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
     setMockScenarioEditorError(parsed.ok ? "" : parsed.error);
   }
 
-  function saveMockScenarioEditorDraft() {
+  function saveMockScenarioEditorDraft(editorTextOverride?: string) {
     if (!selectedMethod) return;
     const key = methodKey(selectedMethod);
     const draftMatches =
@@ -181,7 +191,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
       mockScenarioEditorDraft.methodKey === key &&
       mockScenarioEditorDraft.scenarioId === currentMockSelectedScenarioId &&
       mockScenarioEditorDraft.format === currentMockFile.format;
-    const editorText = draftMatches ? mockScenarioEditorDraft.text : currentMockEditorText;
+    const editorText = editorTextOverride ?? (draftMatches ? mockScenarioEditorDraft.text : currentMockEditorText);
     const parsed = parseSingleMockScenarioText(editorText, currentMockFile.format, mockServer.port, selectedMethod);
     if (!parsed.ok) {
       setMockScenarioEditorError(parsed.error);
@@ -1184,6 +1194,15 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
   async function startMockRuntime(projectOverride?: MockServerProject): Promise<MockRuntimeReady | MockRuntimeFailure> {
     try {
       if (!ensureMockScenarioEditorSaved()) return { ok: false, error: "Save the mock scenario before starting." };
+      setMockServerStatus((current) => ({
+        ...current,
+        running: false,
+        runtimeKind: "mock",
+        message: "Starting gRPC Mock...",
+      }));
+      // Give React/Electron one frame to paint the pending state before schema
+      // resolution and scenario parsing do synchronous work on large projects.
+      await yieldForRuntimeUiPaint();
       // The editor state is authoritative when Start is pressed. Disk reload is an
       // explicit Fetch action; doing it implicitly here can restore stale files and
       // make a newly edited scenario disappear.
@@ -1380,13 +1399,21 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
   async function startWebAccess(profileOverride?: GrpcGatewayProfile, projectOverride?: MockServerProject) {
     try {
       if (!ensureMockScenarioEditorSaved()) return false;
+      setWebAccessStatus((current: MockServerStatus) => ({
+        ...current,
+        running: false,
+        runtimeKind: "gateway",
+        message: "Starting Web Access...",
+      }));
+      // Web Access can need to synchronize/start the native mock first. Paint the
+      // pending state before that work so the click always feels immediate.
+      await yieldForRuntimeUiPaint();
       const effectiveMockServer: MockServerProject = projectOverride ?? mockServerRef?.current ?? mockServer;
       const projectSnapshot = {
         ...getProjectSnapshot(),
         mockServer: effectiveMockServer,
         updatedAt: new Date().toISOString(),
       };
-      await persistProjectSnapshotNow?.(projectSnapshot);
       const schema = resolveRuntimeSchema(effectiveMockServer);
       if (!schema.protoFiles.length || !schema.methods.length) {
         const message = "Attach at least one Proto source before starting Web Access.";
@@ -1525,6 +1552,14 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
         updatedAt: new Date().toISOString(),
         message: `Web Access forwarding to ${upstreamTarget}.`,
       });
+      // Runtime readiness is the foreground action. Workspace persistence must not
+      // extend the perceived startup time or serialize the click behind disk I/O.
+      const persistence = persistProjectSnapshotNow?.(projectSnapshot);
+      if (persistence) {
+        void persistence.catch((error: unknown) => {
+          console.warn("Persisting the running Web Access snapshot failed.", error);
+        });
+      }
       showToast(`Web Access running at ${confirmed.webUrl}`, "success");
       return true;
     } catch (err) {

@@ -156,6 +156,10 @@ export type ApiCollectionRequest = {
   url: string;
   grpcMethodKey?: string;
   grpc?: GrpcRequestBinding;
+  /** Unary request deadline in milliseconds. Zero disables the deadline. */
+  timeoutMs?: number;
+  /** Server-stream idle timeout in milliseconds. Zero disables the idle timeout. */
+  streamIdleTimeoutMs?: number;
   body: string;
   headers: MetadataPair[];
   restParams?: MetadataPair[];
@@ -586,6 +590,8 @@ export type RequestSession = {
   methodKey: string;
   sourceRequestId?: string;
   grpc?: GrpcRequestBinding;
+  timeoutMs?: number;
+  streamIdleTimeoutMs?: number;
   title: string;
   serviceName: string;
   requestJson: string;

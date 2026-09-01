@@ -533,10 +533,8 @@ export function useWorkbenchContainerModel() {
     setRequestGrpcVersionIdDraft,
     requestGrpcMethodKeyDraft,
     setRequestGrpcMethodKeyDraft,
-    requestGrpcBatchMethodKeysDraft,
-    setRequestGrpcBatchMethodKeysDraft,
-    requestGrpcSelectionModeDraft,
-    setRequestGrpcSelectionModeDraft,
+    requestGrpcMethodKeysDraft,
+    setRequestGrpcMethodKeysDraft,
     requestGrpcSkipExistingDraft,
     setRequestGrpcSkipExistingDraft,
     requestTargetCollectionId,
@@ -2187,9 +2185,9 @@ export function useWorkbenchContainerModel() {
   }, [compactViewport, setRequestResponseLayout]);
 
   const contextSidebarVisible = sidebarOpen && sideSection !== "source-control";
-  // The activity rail remains fixed at every effective viewport width (including browser/Electron zoom).
-  // Compact context sidebars overlay the workbench to the right of the rail instead of replacing the rail with a top strip.
-  const shellLeft = railWidth + (!compactViewport && contextSidebarVisible ? sidebarWidthPx : 0);
+  // Keep the context sidebar docked at every effective viewport width, including
+  // browser/Electron zoom levels that trigger the compact content layout.
+  const shellLeft = railWidth + (contextSidebarVisible ? sidebarWidthPx : 0);
 
   const viewDerived = useWorkbenchViewDerived({
     activeCollectionRequest,
@@ -2370,6 +2368,41 @@ export function useWorkbenchContainerModel() {
       setProtoLibraries(next.libraries);
       setCollections(next.collections);
       syncRequestSessionsToCollections(next.collections);
+      if (setAsDefault) {
+        // A mock service attached to the imported base revision should follow the
+        // new default revision as part of the same import. Leaving these references
+        // pinned to the base made Services (and a running mock runtime) consistently
+        // display the Proto from the upload immediately before this one.
+        setMockServer((current) => {
+          const followsImportedBase = (binding: { libraryId: string; versionId: string }) =>
+            binding.libraryId === plan.libraryId && binding.versionId === plan.baseVersionId;
+          const hasAttachedBase = (current.protoSources ?? []).some(followsImportedBase);
+          const hasBoundBase = Object.values(current.methodBindings ?? {}).some(followsImportedBase);
+          if (!hasAttachedBase && !hasBoundBase) return current;
+
+          return {
+            ...current,
+            protoSources: (current.protoSources ?? []).map((source) =>
+              followsImportedBase(source) ? { ...source, versionId: plan.candidateVersion.id } : source,
+            ),
+            methodBindings: Object.fromEntries(
+              (Object.entries(current.methodBindings ?? {}) as Array<[string, GrpcRequestBinding]>).map(
+                ([key, binding]) => [
+                  key,
+                  followsImportedBase(binding)
+                    ? {
+                        ...binding,
+                        versionId: plan.candidateVersion.id,
+                        schemaChecksum: plan.candidateVersion.checksum,
+                      }
+                    : binding,
+                ],
+              ),
+            ),
+            updatedAt: new Date().toISOString(),
+          };
+        });
+      }
       if (setAsDefault) {
         const nextLoaded = loadProtoFiles(plan.candidateVersion.files);
         setActiveProtoLibraryId(plan.libraryId);
@@ -3106,6 +3139,7 @@ export function useWorkbenchContainerModel() {
     protoFiles,
     protoLibraries,
     protoRuntimeRegistry,
+    protoRuntimeRegistryFor,
     activeProtoLibraryId,
     activeProtoVersionId,
     protoInputRef,
@@ -3123,8 +3157,7 @@ export function useWorkbenchContainerModel() {
     requestGrpcLibraryIdDraft,
     requestGrpcVersionIdDraft,
     requestGrpcMethodKeyDraft,
-    requestGrpcBatchMethodKeysDraft,
-    requestGrpcSelectionModeDraft,
+    requestGrpcMethodKeysDraft,
     requestGrpcSkipExistingDraft,
     requestRunner,
     requestSessions,
@@ -3179,8 +3212,7 @@ export function useWorkbenchContainerModel() {
     setRequestGrpcLibraryIdDraft,
     setRequestGrpcVersionIdDraft,
     setRequestGrpcMethodKeyDraft,
-    setRequestGrpcBatchMethodKeysDraft,
-    setRequestGrpcSelectionModeDraft,
+    setRequestGrpcMethodKeysDraft,
     setRequestGrpcSkipExistingDraft,
     setRequestNameDialogOpen,
     setRequestNameDraft,
@@ -3246,10 +3278,12 @@ export function useWorkbenchContainerModel() {
     openGrpcMethodRequestDialog,
     openGrpcMethodsRequestDialog,
     addCollectionRequest,
+    addGrpcMethodsToCollection,
   } = collectionActions;
 
   const workspaceIoActions = useWorkspaceIoActions({
     addCollectionRequest,
+    addGrpcMethodsToCollection,
     applyProject,
     applyWorkspaceBundle,
     applyWorkspaceLayout,
@@ -3283,6 +3317,7 @@ export function useWorkbenchContainerModel() {
     protoFiles,
     protoLibraries,
     protoRuntimeRegistry,
+    protoRuntimeRegistryFor,
     activeProtoLibraryId,
     activeProtoVersionId,
     selectProtoLibraryVersion,
@@ -3647,6 +3682,7 @@ export function useWorkbenchContainerModel() {
     saveMockScenarioEditorDraft,
     discardMockScenarioEditorDraft,
     handleProtoFiles,
+    hydrated,
     handleRequestJsonChange,
     handleResponseBodyScroll,
     handleResponseFilterChange,
@@ -3762,8 +3798,7 @@ export function useWorkbenchContainerModel() {
     requestGrpcLibraryIdDraft,
     requestGrpcVersionIdDraft,
     requestGrpcMethodKeyDraft,
-    requestGrpcBatchMethodKeysDraft,
-    requestGrpcSelectionModeDraft,
+    requestGrpcMethodKeysDraft,
     requestGrpcSkipExistingDraft,
     requestTargetCollectionId,
     requestTargetFolderId,
@@ -3828,6 +3863,8 @@ export function useWorkbenchContainerModel() {
     setExamples,
     setMockScenarioDialogOpen,
     setMockScenarioDraftId,
+    setMockScenarioEditorDirty,
+    setMockScenarioEditorError,
     setMockSettingsOpen,
     setNativeTarget,
     setProtoPreview,
@@ -3838,8 +3875,7 @@ export function useWorkbenchContainerModel() {
     setRequestGrpcLibraryIdDraft,
     setRequestGrpcVersionIdDraft,
     setRequestGrpcMethodKeyDraft,
-    setRequestGrpcBatchMethodKeysDraft,
-    setRequestGrpcSelectionModeDraft,
+    setRequestGrpcMethodKeysDraft,
     setRequestGrpcSkipExistingDraft,
     setRequestTargetCollectionId,
     setRequestTargetFolderId,

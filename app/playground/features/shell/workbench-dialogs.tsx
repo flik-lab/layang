@@ -97,8 +97,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
     requestGrpcLibraryIdDraft,
     requestGrpcVersionIdDraft,
     requestGrpcMethodKeyDraft,
-    requestGrpcBatchMethodKeysDraft,
-    requestGrpcSelectionModeDraft,
+    requestGrpcMethodKeysDraft,
     requestGrpcSkipExistingDraft,
     requestNameDialogOpen,
     requestNameDraft,
@@ -124,8 +123,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
     setRequestGrpcLibraryIdDraft,
     setRequestGrpcVersionIdDraft,
     setRequestGrpcMethodKeyDraft,
-    setRequestGrpcBatchMethodKeysDraft,
-    setRequestGrpcSelectionModeDraft,
+    setRequestGrpcMethodKeysDraft,
     setRequestGrpcSkipExistingDraft,
     setRequestTargetCollectionId,
     setRequestTargetFolderId,
@@ -220,11 +218,11 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
   const selectedServiceMethods = selectedRequestMethods.filter(
     (method) => method.serviceName === selectedRequestServiceName,
   );
-  const requestGrpcBatchMethodKeys = new Set<string>(requestGrpcBatchMethodKeysDraft ?? []);
-  const requestGrpcBatchMethods = selectedRequestMethods.filter((method) =>
-    requestGrpcBatchMethodKeys.has(methodKey(method)),
+  const requestGrpcMethodKeys = new Set<string>(requestGrpcMethodKeysDraft ?? []);
+  const requestGrpcMethods = selectedRequestMethods.filter((method) =>
+    requestGrpcMethodKeys.has(methodKey(method)),
   );
-  const isGrpcBatch = requestKindDraft === "grpc" && requestGrpcSelectionModeDraft === "multi";
+  const isGrpcRequest = requestKindDraft === "grpc";
   const [grpcMethodFilter, setGrpcMethodFilter] = useState("");
   const [grpcServiceFilter, setGrpcServiceFilter] = useState("*");
   const [grpcAdvancedOpen, setGrpcAdvancedOpen] = useState(false);
@@ -244,10 +242,10 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
       .map((request: any) => request.grpc?.methodFullName)
       .filter(Boolean),
   );
-  const selectedExistingCount = requestGrpcBatchMethods.filter((method) =>
+  const selectedExistingCount = requestGrpcMethods.filter((method) =>
     existingRequestMethodNames.has(`${method.serviceName}/${method.methodName}`),
   ).length;
-  const selectedNewCount = requestGrpcBatchMethods.length - selectedExistingCount;
+  const selectedNewCount = requestGrpcMethods.length - selectedExistingCount;
 
   const existingRequestNames = requestTargetCollection?.requests.map((request: { name: string }) => request.name) ?? [];
 
@@ -271,7 +269,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
     const preferredService = selectedRequestServices.includes(rememberedService)
       ? rememberedService
       : selectedRequestMethod?.serviceName ?? selectedRequestServices[0] ?? "*";
-    setGrpcServiceFilter(isGrpcBatch && requestGrpcBatchMethodKeys.size > 1 ? "*" : preferredService);
+    setGrpcServiceFilter(isGrpcRequest && requestGrpcMethodKeys.size > 1 ? "*" : preferredService);
   }, [requestNameDialogOpen]);
 
   useEffect(() => {
@@ -303,6 +301,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
   const selectGrpcMethodDraft = (nextMethod: { methodName: string } | undefined, nextMethodKey: string) => {
     const previousMethodName = selectedRequestMethod?.methodName;
     setRequestGrpcMethodKeyDraft(nextMethodKey);
+    setRequestGrpcMethodKeysDraft(nextMethodKey ? [nextMethodKey] : []);
     if (nextMethod && canReplaceGrpcRequestName(requestNameDraft, previousMethodName)) {
       setRequestNameDraft(uniqueCollectionRequestName(nextMethod.methodName, existingRequestNames));
     }
@@ -408,10 +407,9 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
 
   const selectRequestKind = (kind: "rest" | "websocket" | "grpc") => {
     setRequestKindDraft(kind);
-    setRequestGrpcBatchMethodKeysDraft([]);
+    setRequestGrpcMethodKeysDraft([]);
     setRequestGrpcSkipExistingDraft(true);
     if (kind !== "grpc") {
-      setRequestGrpcSelectionModeDraft("single");
       setRequestGrpcLibraryIdDraft("");
       setRequestGrpcVersionIdDraft("");
       setRequestGrpcMethodKeyDraft("");
@@ -422,7 +420,6 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
       }
       return;
     }
-    setRequestGrpcSelectionModeDraft("multi");
     const rememberedSchemaId = window.localStorage.getItem("layang:last-request-schema-id") ?? "";
     const schema = globalProtoSchemas.find((item) => item.id === rememberedSchemaId) ?? globalProtoSchemas[0];
     const version = schema?.versions.find((item) => item.id === schema.defaultVersionId) ?? schema?.versions[0];
@@ -438,8 +435,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
       setRequestTargetFolderId(null);
       setRequestLocationEditable(true);
     }
-    setRequestGrpcMethodKeyDraft(firstMethod ? methodKey(firstMethod) : "");
-    setRequestGrpcBatchMethodKeysDraft(firstMethod ? [methodKey(firstMethod)] : []);
+    selectGrpcMethodDraft(firstMethod, firstMethod ? methodKey(firstMethod) : "");
   };
 
   return (
@@ -524,8 +520,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
         onClose={() => {
           setRequestNameDialogOpen(false);
           setRequestLocationEditable(false);
-          setRequestGrpcBatchMethodKeysDraft([]);
-          setRequestGrpcSelectionModeDraft("single");
+          setRequestGrpcMethodKeysDraft([]);
           setRequestGrpcSkipExistingDraft(true);
         }}
         fullWidth
@@ -539,11 +534,9 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
               </Typography>
               {requestKindDraft ? (
                 <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.8 }}>
-                  {isGrpcBatch
-                    ? "gRPC batch"
-                    : requestKindDraft === "grpc"
-                      ? "gRPC request"
-                      : requestKindDraft === "rest"
+                  {requestKindDraft === "grpc"
+                    ? "gRPC request"
+                    : requestKindDraft === "rest"
                         ? "HTTP request"
                         : "WebSocket request"}
                 </Typography>
@@ -611,7 +604,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
 
             {requestKindDraft ? (
               <Box
-                className={isGrpcBatch ? "grid min-w-0 grid-cols-1 gap-2" : "grid min-w-0 grid-cols-1 gap-2 md:grid-cols-2"}
+                className={isGrpcRequest ? "grid min-w-0 grid-cols-1 gap-2" : "grid min-w-0 grid-cols-1 gap-2 md:grid-cols-2"}
               >
                 {requestLocationEditable ? (
                   <Box className="quick-create-field" sx={{ minWidth: 0, overflow: "visible" }}>
@@ -636,9 +629,9 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
                         </MenuItem>
                       ))}
                     </Select>
-                    {requestKindDraft === "grpc" && isGrpcBatch ? (
+                    {requestKindDraft === "grpc" && isGrpcRequest ? (
                       <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.4 }}>
-                        Service folders are created automatically for batch requests.
+                        Selected methods are grouped into service folders automatically.
                       </Typography>
                     ) : null}
                   </Box>
@@ -658,7 +651,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
                   </Box>
                 )}
 
-                {!isGrpcBatch ? (
+                {!isGrpcRequest ? (
                   <Box className="quick-create-field" sx={{ minWidth: 0, overflow: "visible" }}>
                     <Typography
                       component="label"
@@ -699,7 +692,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
                   <Box className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
                     <Box sx={{ minWidth: 0 }}>
                       <Typography variant="caption" color="text.secondary">
-                        Schema
+                        Proto
                       </Typography>
                       <Select
                         value={selectedRequestSchema?.id ?? ""}
@@ -720,12 +713,11 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
                           if (requestTargetCollectionId === NEW_SCHEMA_COLLECTION_TARGET) setRequestTargetFolderId(null);
                           setGrpcServiceFilter(firstMethod?.serviceName ?? "*");
                           setRequestGrpcMethodKeyDraft(firstMethod ? methodKey(firstMethod) : "");
-                          setRequestGrpcBatchMethodKeysDraft(isGrpcBatch && firstMethod ? [methodKey(firstMethod)] : []);
-                          if (!isGrpcBatch) selectGrpcMethodDraft(firstMethod, firstMethod ? methodKey(firstMethod) : "");
+                          selectGrpcMethodDraft(firstMethod, firstMethod ? methodKey(firstMethod) : "");
                         }}
                         fullWidth
                         size="small"
-                        aria-label="Schema"
+                        aria-label="Proto"
                       >
                         {orderedGlobalProtoSchemas.map((library) => (
                           <MenuItem key={library.id} value={library.id}>
@@ -750,8 +742,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
                           setRequestGrpcVersionIdDraft(versionId);
                           setGrpcServiceFilter(firstMethod?.serviceName ?? "*");
                           setRequestGrpcMethodKeyDraft(firstMethod ? methodKey(firstMethod) : "");
-                          setRequestGrpcBatchMethodKeysDraft(isGrpcBatch && firstMethod ? [methodKey(firstMethod)] : []);
-                          if (!isGrpcBatch) selectGrpcMethodDraft(firstMethod, firstMethod ? methodKey(firstMethod) : "");
+                          selectGrpcMethodDraft(firstMethod, firstMethod ? methodKey(firstMethod) : "");
                         }}
                         fullWidth
                         size="small"
@@ -766,7 +757,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
                       </Select>
                     </Box>
 
-                    {isGrpcBatch ? (
+                    {isGrpcRequest ? (
                       <Box sx={{ minWidth: 0 }}>
                         <Typography variant="caption" color="text.secondary">
                           Service
@@ -791,7 +782,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
 
                   <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap" useFlexGap>
                     <Typography variant="caption" color="text.secondary">
-                      Requests stay pinned to the selected schema revision.
+                      Requests stay pinned to the selected proto revision.
                     </Typography>
                     <Button size="small" variant="text" onClick={() => setGrpcAdvancedOpen((value: boolean) => !value)}>
                       {grpcAdvancedOpen ? "Hide options" : "More options"}
@@ -837,7 +828,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
                             setSideSection("proto-schemas");
                           }}
                         >
-                          Manage schemas
+                          Manage protos
                         </Button>
                       </Stack>
                     </Paper>
@@ -846,13 +837,13 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
                   {globalProtoSchemas.length === 0 ? (
                     <Paper variant="outlined" sx={{ p: 1, bgcolor: "action.hover" }}>
                       <Typography variant="body2" fontWeight={600}>
-                        No global proto schema yet
+                        No proto file available yet
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
                         Use Import Proto or More options to upload a proto file or folder.
                       </Typography>
                     </Paper>
-                  ) : isGrpcBatch ? (
+                  ) : isGrpcRequest ? (
                     <>
                       <TextField
                         size="small"
@@ -867,8 +858,8 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
                           size="small"
                           variant="text"
                           onClick={() =>
-                            setRequestGrpcBatchMethodKeysDraft(
-                              Array.from(new Set([...requestGrpcBatchMethodKeysDraft, ...visibleRequestMethods.map(methodKey)])),
+                            setRequestGrpcMethodKeysDraft(
+                              Array.from(new Set([...requestGrpcMethodKeysDraft, ...visibleRequestMethods.map(methodKey)])),
                             )
                           }
                           disabled={visibleRequestMethods.length === 0}
@@ -880,7 +871,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
                             size="small"
                             variant="text"
                             onClick={() =>
-                              setRequestGrpcBatchMethodKeysDraft(
+                              setRequestGrpcMethodKeysDraft(
                                 selectedRequestMethods
                                   .filter((method) => method.serviceName === grpcServiceFilter)
                                   .map(methodKey),
@@ -893,7 +884,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
                         <Button
                           size="small"
                           variant="text"
-                          onClick={() => setRequestGrpcBatchMethodKeysDraft(selectedRequestMethods.map(methodKey))}
+                          onClick={() => setRequestGrpcMethodKeysDraft(selectedRequestMethods.map(methodKey))}
                           disabled={selectedRequestMethods.length === 0}
                         >
                           Select all {selectedRequestMethods.length}
@@ -901,8 +892,8 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
                         <Button
                           size="small"
                           variant="text"
-                          onClick={() => setRequestGrpcBatchMethodKeysDraft([])}
-                          disabled={requestGrpcBatchMethodKeys.size === 0}
+                          onClick={() => setRequestGrpcMethodKeysDraft([])}
+                          disabled={requestGrpcMethodKeys.size === 0}
                         >
                           Clear
                         </Button>
@@ -917,7 +908,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
                           ) : (
                             visibleRequestMethods.map((method) => {
                               const key = methodKey(method);
-                              const checked = requestGrpcBatchMethodKeys.has(key);
+                              const checked = requestGrpcMethodKeys.has(key);
                               const alreadyExists = existingRequestMethodNames.has(`${method.serviceName}/${method.methodName}`);
                               return (
                                 <Box
@@ -940,7 +931,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
                                   <Checkbox
                                     checked={checked}
                                     onChange={(_event: unknown, nextChecked: boolean) => {
-                                      setRequestGrpcBatchMethodKeysDraft((current: string[]) => {
+                                      setRequestGrpcMethodKeysDraft((current: string[]) => {
                                         const next = new Set(current);
                                         if (nextChecked) next.add(key);
                                         else next.delete(key);
@@ -968,7 +959,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
                       <Paper variant="outlined" sx={{ p: 1, bgcolor: "action.hover" }}>
                         <Stack spacing={0.7}>
                           <Typography variant="body2" fontWeight={600}>
-                            {requestGrpcBatchMethods.length} selected · {selectedNewCount} new
+                            {requestGrpcMethods.length} selected · {selectedNewCount} new
                             {selectedExistingCount ? ` · ${selectedExistingCount} already exist` : ""}
                           </Typography>
                           <Stack direction="row" spacing={0.8} alignItems="center">
@@ -1048,9 +1039,8 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
             onClick={() => {
               setRequestNameDialogOpen(false);
               setRequestLocationEditable(false);
-              setRequestGrpcBatchMethodKeysDraft([]);
-              setRequestGrpcSelectionModeDraft("single");
-              setRequestGrpcSkipExistingDraft(true);
+              setRequestGrpcMethodKeysDraft([]);
+                  setRequestGrpcSkipExistingDraft(true);
             }}
           >
             Cancel
@@ -1059,21 +1049,19 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
             <Button
               variant="contained"
               disabled={
-                isGrpcBatch
+                isGrpcRequest
                   ? !selectedRequestSchema ||
                     !selectedRequestSchemaVersion ||
-                    requestGrpcBatchMethods.length !== requestGrpcBatchMethodKeys.size ||
-                    requestGrpcBatchMethodKeys.size === 0 ||
+                    requestGrpcMethods.length !== requestGrpcMethodKeys.size ||
+                    requestGrpcMethodKeys.size === 0 ||
                     (requestGrpcSkipExistingDraft && selectedNewCount === 0)
-                  : !requestNameDraft.trim() ||
-                    (requestKindDraft === "grpc" &&
-                      (!selectedRequestSchema || !selectedRequestSchemaVersion || !requestGrpcMethodKeyDraft))
+                  : !requestNameDraft.trim()
               }
               onClick={confirmAddCollectionRequest}
             >
-              {isGrpcBatch
-                ? `Create ${requestGrpcSkipExistingDraft ? selectedNewCount : requestGrpcBatchMethodKeys.size} ${
-                    (requestGrpcSkipExistingDraft ? selectedNewCount : requestGrpcBatchMethodKeys.size) === 1
+              {isGrpcRequest
+                ? `Create ${requestGrpcSkipExistingDraft ? selectedNewCount : requestGrpcMethodKeys.size} ${
+                    (requestGrpcSkipExistingDraft ? selectedNewCount : requestGrpcMethodKeys.size) === 1
                       ? "Request"
                       : "Requests"
                   }`

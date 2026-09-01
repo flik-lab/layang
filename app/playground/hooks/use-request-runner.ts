@@ -21,7 +21,12 @@ import { toErrorMessage } from "../shared/error-utils";
 import { formatTimestampShort } from "../shared/formatters";
 import { methodKey } from "../shared/rpc-method-utils";
 import { quoteCliArg, recordGuiCliCommand } from "../features/cli/cli-command-history";
-import { defaultUnaryDeadlineMs, maxMessagesPerRequest } from "../shared/workbench-constants";
+import {
+  defaultGrpcConnectionTimeoutMs,
+  defaultGrpcStreamIdleTimeoutMs,
+  defaultUnaryDeadlineMs,
+  maxMessagesPerRequest,
+} from "../shared/workbench-constants";
 import type {
   ApiCollectionRequest,
   AssertionResult,
@@ -219,6 +224,11 @@ export function useRequestRunner(options: UseRequestRunnerOptions) {
           : createdSession);
       const targetSessionId = runSession.id;
       const targetTransportMode = reusableSession?.transportMode ?? activeTransportMode;
+      const targetTimeoutMs = reusableSession?.timeoutMs ?? collectionGrpcRequest?.timeoutMs ?? defaultUnaryDeadlineMs;
+      const targetStreamIdleTimeoutMs =
+        reusableSession?.streamIdleTimeoutMs ??
+        collectionGrpcRequest?.streamIdleTimeoutMs ??
+        defaultGrpcStreamIdleTimeoutMs;
       const targetEnvironmentKey = reusableSession?.environmentKey ?? activeEnvironmentKey;
       const activeDraftBaseUrl = activeTransportMode === "grpc-web" ? targetDraft : activeBaseUrl;
       const activeDraftNativeTarget = activeTransportMode === "native-grpc" ? targetDraft : activeNativeTarget;
@@ -249,6 +259,8 @@ export function useRequestRunner(options: UseRequestRunnerOptions) {
         nativeTarget: targetNativeTarget,
         assertionJson: assertionToRun,
         environmentKey: targetEnvironmentKey,
+        timeoutMs: targetTimeoutMs,
+        streamIdleTimeoutMs: targetStreamIdleTimeoutMs,
         events: [],
         lastResult: null,
         assertionResults: [],
@@ -279,7 +291,9 @@ export function useRequestRunner(options: UseRequestRunnerOptions) {
             method: methodToRun,
             requestJson: parsedJson,
             metadata: metadataToRun,
-            deadlineMs: methodToRun.responseStream ? 0 : defaultUnaryDeadlineMs,
+            deadlineMs: methodToRun.responseStream ? 0 : targetTimeoutMs,
+            connectionTimeoutMs: defaultGrpcConnectionTimeoutMs,
+            idleTimeoutMs: targetStreamIdleTimeoutMs,
             maxMessages: maxMessagesPerRequest,
             onEvent: (event: GrpcEvent) => appendLiveEventToSession(targetSessionId, event),
           });
@@ -291,6 +305,9 @@ export function useRequestRunner(options: UseRequestRunnerOptions) {
             requestJson: parsedJson,
             metadata: metadataToRun,
             signal: abortController.signal,
+            timeoutMs: targetTimeoutMs,
+            connectionTimeoutMs: defaultGrpcConnectionTimeoutMs,
+            idleTimeoutMs: targetStreamIdleTimeoutMs,
             maxMessages: maxMessagesPerRequest,
             onEvent: (event: GrpcEvent) => appendLiveEventToSession(targetSessionId, event),
           });

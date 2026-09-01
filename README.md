@@ -5,7 +5,7 @@
 # Layang
 
 [![Website](https://img.shields.io/badge/website-layang.mff.web.id-blue)](https://layang.mff.web.id/)
-[![Version](https://img.shields.io/badge/version-1.1.2-blue)](https://github.com/flik-lab/layang/releases)
+[![Version](https://img.shields.io/badge/version-1.1.3-blue)](https://github.com/flik-lab/layang/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Layang is a workspace-based API workbench for testing, mocking, benchmarking, documenting, and automating APIs across REST, WebSocket, gRPC, and gRPC-Web.
@@ -50,16 +50,16 @@ The desktop UI uses a permanent icon rail for **Requests**, **Schemas**, **Servi
 - Use the WebSocket workbench for live connections, message sending, local mock responses, benchmark exports, and generated docs.
 - Use the REST workbench for params, headers, auth, bodies, docs, examples, local mocks, scenario matching, and templates.
 
-## Release 1.1.2
+## Release 1.1.3
 
-The `1.1.2` release focuses on release hardening after the 1.1 workflow update.
+The `1.1.3` release focuses on smoother editing, predictable runtime controls, and configurable gRPC timeouts.
 
 Highlights:
 
-- Electron renderer navigation guards and safer external-link handling without removing the explicit TLS bypass used for local/self-signed development endpoints.
-- Required Windows and Linux runtime CI for gRPC Mock and Web Access before release packaging.
-- Standalone CLI artifacts remain mandatory for both Windows and Linux GitHub Releases.
-- UI rendering, zoom/rail behavior, Quick Create, and gRPC Mock manager hardening from the current workbench phase.
+- Responsive buffered editors for request bodies and mock scenarios.
+- Per-request unary and stream-idle timeouts across native gRPC and gRPC-Web, including unlimited streams.
+- Locked runtime switchers with compact in-switch loading indicators.
+- A consistently docked contextual sidebar at every zoom level.
 
 ## Release 1.1.0
 

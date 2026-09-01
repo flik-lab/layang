@@ -92,9 +92,9 @@ pnpm run cli:dist
 
 ## GitHub Release checklist
 
-1. Bump `package.json` version, for example `1.1.2`.
+1. Bump `package.json` version, for example `1.1.3`.
 2. Open **Actions → Release → Run workflow**. The workflow reads `package.json` and creates/publishes tag `v${package.version}` automatically.
-3. Alternatively, push a SemVer tag manually, for example `v1.1.2`; the workflow validates that the tag matches `package.json`.
+3. Alternatively, push a SemVer tag manually, for example `v1.1.3`; the workflow validates that the tag matches `package.json`.
 4. Let the release workflow build Windows and Linux desktop packages plus the standalone CLI.
 5. Confirm the GitHub Release contains the Windows installer/portable archive, Linux packages, and both CLI archives with SHA-256 files.
 6. Tell normal Windows users to install from `LayangSetup.exe`; CLI-only users can use the standalone CLI archive.

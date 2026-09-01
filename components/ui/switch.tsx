@@ -5,10 +5,11 @@ import { cn } from "@/lib/utils";
 
 export interface SwitchProps extends Omit<InputHTMLAttributes<HTMLInputElement>, "type" | "role"> {
   onCheckedChange?: (checked: boolean) => void;
+  loading?: boolean;
 }
 
 export const Switch = forwardRef<HTMLInputElement, SwitchProps>(function Switch(
-  { className, onChange, onCheckedChange, style, ...props },
+  { className, loading = false, onChange, onCheckedChange, style, ...props },
   ref,
 ) {
   const fixedSizeStyle: CSSProperties = {
@@ -22,7 +23,11 @@ export const Switch = forwardRef<HTMLInputElement, SwitchProps>(function Switch(
   };
 
   return (
-    <span data-slot="switch-wrapper" className="relative inline-flex h-6 w-11 shrink-0 self-center align-middle">
+    <span
+      data-slot="switch-wrapper"
+      data-loading={loading ? "true" : "false"}
+      className={cn("relative inline-flex h-6 w-11 shrink-0 self-center align-middle", loading && "pointer-events-none")}
+    >
       <input
         ref={ref}
         data-slot="switch"
@@ -43,8 +48,10 @@ export const Switch = forwardRef<HTMLInputElement, SwitchProps>(function Switch(
       />
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute left-0.5 top-0.5 block size-5 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-5 peer-disabled:bg-muted-foreground/50"
-      />
+        className="pointer-events-none absolute left-0.5 top-0.5 flex size-5 items-center justify-center rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-5 peer-disabled:bg-muted-foreground/50"
+      >
+        {loading ? <span className="size-2 animate-pulse rounded-full bg-primary" /> : null}
+      </span>
     </span>
   );
 });
