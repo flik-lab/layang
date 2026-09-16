@@ -4,12 +4,9 @@ import type { LoadedProto, ProtoSourceFile, RpcMethodInfo } from "@/lib/types";
 import type { ProtoRuntimeRegistry } from "@/lib/proto-runtime-registry";
 import type { MockServerProject, MockServerStatus } from "../../shared/workbench-types";
 import { defaultMockPort } from "../../shared/workbench-constants";
-import {
-  normalizeMockBindHost,
-  normalizeMockPort,
-  parseAllMockScenarioFiles,
-  resolveMockActiveScenarioIds,
-} from "./mock-scenario-model";
+import { performanceStats } from "../../shared/performance/performance-stats.store";
+import { normalizeMockBindHost, normalizeMockPort } from "./mock-scenario-model";
+import { mockRuntimeStore } from "./runtime/mockRuntime.store";
 
 type UseMockRuntimeSyncOptions = {
   delayMs: number;
@@ -54,7 +51,6 @@ function resolveRuntimeSchema(
 
 export async function syncRunningMockServerFromEditor({
   mockServer,
-  mockServerStatus,
   setMockServerStatus,
   loaded,
   protoFiles,
@@ -66,6 +62,7 @@ export async function syncRunningMockServerFromEditor({
   appliedSeqRef,
   lastSyncSignatureRef,
 }: Omit<UseMockRuntimeSyncOptions, "delayMs">) {
+  const mockServerStatus = mockRuntimeStore.getGrpc();
   if (!mockServerStatus.running || mockServerStatus.runtimeKind === "gateway") return null;
   const mockUpdate = window.electronMock?.update;
   if (!mockUpdate) return null;
@@ -78,67 +75,44 @@ export async function syncRunningMockServerFromEditor({
     activeProtoVersionId,
   });
   if (!schema.methods.length || !schema.protoFiles.length) return null;
-  const parsed = parseAllMockScenarioFiles(mockServer, schema.methods);
-  if (!parsed.ok) {
-    setMockServerStatus((current) =>
-      current.running ? { ...current, message: `Live reload paused: ${parsed.error}` } : current,
-    );
-    return null;
-  }
-  const activeScenarioIds = resolveMockActiveScenarioIds(parsed.bundle, schema.methods, mockServer.selectedScenarioIds);
-  const syncSignature = JSON.stringify({
-    port: normalizeMockPort(mockServer.port, defaultMockPort),
-    bindHost: normalizeMockBindHost(mockServer.bindHost),
-    protoFiles: schema.protoFiles.map((file) => [file.name, file.text]),
-    methods: schema.methods.map((method) => [
-      method.serviceName,
-      method.methodName,
-      method.requestStream,
-      method.responseStream,
-      method.requestType,
-      method.responseType,
-    ]),
-    scenarios: parsed.bundle.scenarios,
-    streamDefaults: mockServer.streamDefaults,
-    security: mockServer.security,
-    limits: mockServer.limits,
-    activeScenarioIds,
-    enabledMethods: mockServer.enabledMethods,
-  });
+
+  const syncSignature = createMockRuntimeSyncSignature(mockServer, schema.methods);
   if (syncSignature === lastSyncSignatureRef.current) return null;
-  lastSyncSignatureRef.current = syncSignature;
+
   updateSeqRef.current += 1;
   const uiRuntimeRevision = updateSeqRef.current;
+  const mockUpdateStartedAt = performance.now();
   const result = await mockUpdate({
     port: normalizeMockPort(mockServer.port, defaultMockPort),
     bindHost: normalizeMockBindHost(mockServer.bindHost),
     protoFiles: schema.protoFiles,
     methods: schema.methods,
-    scenarios: parsed.bundle.scenarios,
+    methodFiles: mockServer.methodFiles,
     streamDefaults: mockServer.streamDefaults,
     security: mockServer.security,
     limits: mockServer.limits,
-    activeScenarioIds,
+    activeScenarioIds: mockServer.selectedScenarioIds,
     enabledMethods: mockServer.enabledMethods,
     workspaceDirectory: workspaceFolderPath || undefined,
     uiRuntimeRevision,
     mockServerUpdatedAt: mockServer.updatedAt,
   });
+  performanceStats.recordMockDuration("server-update", performance.now() - mockUpdateStartedAt);
   if (uiRuntimeRevision < appliedSeqRef.current) return result;
   appliedSeqRef.current = uiRuntimeRevision;
   if (!result.ok) {
-    setMockServerStatus((current) =>
+    setMockServerStatus((current: MockServerStatus) =>
       current.running ? { ...current, message: result.error ?? "Live reload failed." } : current,
     );
     return result;
   }
-  setMockServerStatus((current) => {
+  lastSyncSignatureRef.current = syncSignature;
+  setMockServerStatus((current: MockServerStatus) => {
     if (!current.running) return current;
-    return {
+    const next: MockServerStatus = {
       ...current,
-      scenarioCount: result.scenarioCount ?? parsed.bundle.scenarios.length,
-      activeScenarioIds: result.activeScenarioIds ?? activeScenarioIds,
-      requestLog: result.requestLog ?? current.requestLog,
+      scenarioCount: result.scenarioCount ?? current.scenarioCount,
+      activeScenarioIds: result.activeScenarioIds ?? current.activeScenarioIds,
       configVersion: result.configVersion ?? current.configVersion,
       updatedAt: result.updatedAt ?? current.updatedAt,
       port: result.port ?? current.port,
@@ -150,20 +124,58 @@ export async function syncRunningMockServerFromEditor({
       methodCount: result.methodCount ?? current.methodCount,
       message: result.message ?? (result.restarted ? "gRPC Mock reloaded." : "gRPC Mock updated."),
     };
+    return mockRuntimeStatusEqual(current, next) ? current : next;
   });
   return result;
 }
 
+function createMockRuntimeSyncSignature(mockServer: MockServerProject, methods: RpcMethodInfo[]): string {
+  const fileRevision = Object.entries(mockServer.methodFiles ?? {})
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, file]) => `${key}:${file.format}:${file.scenarioText.length}`)
+    .join("|");
+  return JSON.stringify({
+    updatedAt: mockServer.updatedAt ?? "",
+    port: normalizeMockPort(mockServer.port, defaultMockPort),
+    bindHost: normalizeMockBindHost(mockServer.bindHost),
+    protoSources: mockServer.protoSources,
+    methods: methods.map((method) => [method.serviceName, method.methodName, method.requestStream, method.responseStream]),
+    methodFileRevision: fileRevision,
+    streamDefaults: mockServer.streamDefaults,
+    security: mockServer.security,
+    limits: mockServer.limits,
+    activeScenarioIds: mockServer.selectedScenarioIds,
+    enabledMethods: mockServer.enabledMethods,
+  });
+}
+
+function mockRuntimeStatusEqual(left: MockServerStatus, right: MockServerStatus): boolean {
+  return left.running === right.running &&
+    left.runtimeKind === right.runtimeKind &&
+    left.port === right.port &&
+    left.url === right.url &&
+    left.bindHost === right.bindHost &&
+    left.bindAddress === right.bindAddress &&
+    left.localTarget === right.localTarget &&
+    left.methodCount === right.methodCount &&
+    left.scenarioCount === right.scenarioCount &&
+    left.configVersion === right.configVersion &&
+    left.updatedAt === right.updatedAt &&
+    left.message === right.message &&
+    left.activeScenarioIds === right.activeScenarioIds &&
+    left.reachableTargets === right.reachableTargets;
+}
+
 export function useMockRuntimeSync(options: UseMockRuntimeSyncOptions) {
-  const { delayMs, mockServerStatus, loaded, protoFiles, mockServer, activeProtoLibraryId, activeProtoVersionId } =
-    options;
+  const { delayMs, loaded, protoFiles, mockServer, activeProtoLibraryId, activeProtoVersionId } = options;
   const latestOptionsRef = useRef(options);
   const syncInFlightRef = useRef(false);
   const syncPendingRef = useRef(false);
   latestOptionsRef.current = options;
 
   useEffect(() => {
-    if (!mockServerStatus.running || mockServerStatus.runtimeKind === "gateway") return;
+    const runtimeStatus = mockRuntimeStore.getGrpc();
+    if (!runtimeStatus.running || runtimeStatus.runtimeKind === "gateway") return;
     const timer = window.setTimeout(() => {
       if (syncInFlightRef.current) {
         syncPendingRef.current = true;
@@ -175,10 +187,13 @@ export function useMockRuntimeSync(options: UseMockRuntimeSyncOptions) {
         try {
           do {
             syncPendingRef.current = false;
-            await syncRunningMockServerFromEditor(latestOptionsRef.current);
+            await syncRunningMockServerFromEditor({
+              ...latestOptionsRef.current,
+              mockServerStatus: mockRuntimeStore.getGrpc(),
+            });
           } while (syncPendingRef.current);
         } catch (error) {
-          latestOptionsRef.current.setMockServerStatus((current) =>
+          latestOptionsRef.current.setMockServerStatus((current: MockServerStatus) =>
             current.running
               ? { ...current, message: `Live reload failed: ${error instanceof Error ? error.message : String(error)}` }
               : current,
@@ -193,8 +208,6 @@ export function useMockRuntimeSync(options: UseMockRuntimeSyncOptions) {
     mockServer,
     loaded,
     protoFiles,
-    mockServerStatus.running,
-    mockServerStatus.runtimeKind,
     delayMs,
     activeProtoLibraryId,
     activeProtoVersionId,

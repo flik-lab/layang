@@ -2,6 +2,18 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 const activeRunIds = new Set();
 
+const nativeGrpcPayloadChannel = new MessageChannel();
+let nativeGrpcPayloadPortForMainWorld = nativeGrpcPayloadChannel.port2;
+ipcRenderer.postMessage("native-grpc:payload-port", null, [nativeGrpcPayloadChannel.port1]);
+
+function transferNativeGrpcPayloadPortToMainWorld() {
+  const port = nativeGrpcPayloadPortForMainWorld;
+  if (!port) return false;
+  nativeGrpcPayloadPortForMainWorld = null;
+  window.postMessage({ type: "layang-native-grpc-payload-port" }, "*", [port]);
+  return true;
+}
+
 function createRunId(explicitRunId) {
   if (explicitRunId) return String(explicitRunId);
   try {
@@ -80,6 +92,7 @@ contextBridge.exposeInMainWorld("electronCli", {
 });
 
 contextBridge.exposeInMainWorld("electronGrpc", {
+  requestPayloadPort: () => transferNativeGrpcPayloadPortToMainWorld(),
   invoke: (payload) => {
     const runId = createRunId(payload?.runId);
     activeRunIds.add(runId);
@@ -104,6 +117,30 @@ contextBridge.exposeInMainWorld("electronGrpc", {
       ? ipcRenderer.invoke("native-grpc:cancel", { runId: targetRunId })
       : Promise.resolve({ cancelled: false });
   },
+  isAvailable: true,
+});
+
+contextBridge.exposeInMainWorld("electronGrpcWebTransport", {
+  invoke: (payload, onEvents) => {
+    const runId = createRunId(payload?.runId);
+    activeRunIds.add(runId);
+    const listener = typeof onEvents === "function"
+      ? (_event, events) => onEvents(Array.isArray(events) ? events : [])
+      : null;
+    if (listener) ipcRenderer.on(`grpc-web-transport:event-batch:${runId}`, listener);
+    return ipcRenderer.invoke("grpc-web-transport:invoke", { ...(payload || {}), runId }).finally(() => {
+      if (listener) ipcRenderer.removeListener(`grpc-web-transport:event-batch:${runId}`, listener);
+      activeRunIds.delete(runId);
+    });
+  },
+  cancel: (runId) => {
+    const targetRunId = runId ? String(runId) : Array.from(activeRunIds).at(-1);
+    return targetRunId
+      ? ipcRenderer.invoke("grpc-web-transport:cancel", { runId: targetRunId })
+      : Promise.resolve({ cancelled: false });
+  },
+  payload: (type, payload) => ipcRenderer.invoke("grpc-web-transport:payload", { type, payload }),
+  status: () => ipcRenderer.invoke("grpc-web-transport:status"),
   isAvailable: true,
 });
 
@@ -300,6 +337,20 @@ contextBridge.exposeInMainWorld("electronDeepLink", {
 contextBridge.exposeInMainWorld("electronDocs", {
   build: (payload) => ipcRenderer.invoke("docs:build", payload),
   check: (payload) => ipcRenderer.invoke("docs:check", payload),
+  isAvailable: true,
+});
+
+contextBridge.exposeInMainWorld("electronRuntime", {
+  mode: process.env.LAYANG_RUNTIME_MODE === "main" ? "main" : "utility",
+  ping: () => ipcRenderer.invoke("runtime:ping"),
+  getStatus: () => ipcRenderer.invoke("runtime:status"),
+  invoke: (type, payload) => ipcRenderer.invoke("runtime:invoke", { type, payload }),
+  onEvent: (callback) => {
+    if (typeof callback !== "function") return () => undefined;
+    const listener = (_event, runtimeEvent) => callback(runtimeEvent);
+    ipcRenderer.on("runtime:event", listener);
+    return () => ipcRenderer.removeListener("runtime:event", listener);
+  },
   isAvailable: true,
 });
 

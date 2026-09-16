@@ -2,6 +2,7 @@
 
 import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { colorTokens, designSystem, paletteMode, type ColorMode } from "../../design-system";
+import { getWorkbenchSideSection, setWorkbenchSideSection } from "./workbench-navigation-store";
 import {
   Add,
   Api,
@@ -184,12 +185,6 @@ import {
   safeMockScenarioRelativePath,
   updateMockMethodScenarioFile,
 } from "../mock-server/mock-scenario-model";
-import {
-  HistoryTable as FeatureHistoryTable,
-  JsonBlock as FeatureJsonBlock,
-  LatestResponseJsonViewer as FeatureLatestResponseJsonViewer,
-  MessageTable as FeatureMessageTable,
-} from "../response-viewer/response-viewer";
 import { ResponseToolbar, ResponseWorkbenchTabs } from "../response-viewer/response-toolbar";
 import { evaluateAssertions, eventToUiEvent, writeConsoleLog } from "../request-runner/request-result-utils";
 import { createRequestSession } from "../request-runner/request-session-model";
@@ -249,9 +244,12 @@ import { useWorkspaceIoActions } from "../workspace/use-workspace-io-actions";
 import { useWorkspaceBundleActions } from "../workspace/use-workspace-bundle-actions";
 import { useWorkspaceLayoutPersistence } from "../workspace/use-workspace-layout-persistence";
 import { useGrpcMockController } from "../mock-server/use-grpc-mock-controller";
+import { useMockRuntimePolling } from "../mock-server/runtime/useMockRuntimePolling";
+import { useMockRuntimeEvents } from "../mock-server/runtime/useMockRuntimeEvents";
+import { mockRuntimeStore } from "../mock-server/runtime/mockRuntime.store";
 import { useGrpcMockEditorActions } from "../mock-server/use-grpc-mock-editor-actions";
 import { useWorkspaceFolderAutosave } from "../mock-server/use-mock-workspace-sync";
-import { useMockRuntimeSync } from "../mock-server/use-mock-runtime-sync";
+import { syncRunningMockServerFromEditor, useMockRuntimeSync } from "../mock-server/use-mock-runtime-sync";
 import { useRequestSessionController } from "../request-editor/use-request-session-controller";
 import { useRequestSessionActions } from "../request-editor/use-request-session-actions";
 import {
@@ -292,7 +290,6 @@ import type {
   ServiceProtocol,
   ServicesSection,
   SettingsSection,
-  SideSection,
   TransportMode,
   WebSocketMockProject,
   WebSocketMockScenario,
@@ -346,7 +343,7 @@ export function useWorkbenchContainerModel() {
   const [themeMode, setThemeMode] = useState<ColorMode>("dark");
   const [densityMode, setDensityMode] = useState<"compact" | "comfortable">("compact");
   const [hydrated, setHydrated] = useState(false);
-  const [sideSection, setSideSection] = useState<SideSection>("collections");
+  const setSideSection = setWorkbenchSideSection;
   const [servicesSection, setServicesSection] = useState<ServicesSection>("mock-servers");
   const [serviceProtocol, setServiceProtocol] = useState<ServiceProtocol>("grpc-mock");
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
@@ -444,27 +441,6 @@ export function useWorkbenchContainerModel() {
   const [documentation, setDocumentation] = useState(() => normalizeDocumentationState());
   const [activeDocumentationPageId, setActiveDocumentationPageId] = useState("");
   const [assertionJson, setAssertionJson] = useState(defaultAssertion);
-  const responseController = useResponseController();
-  const {
-    events,
-    setEvents,
-    lastResult,
-    setLastResult,
-    history,
-    setHistory,
-    assertionResults,
-    setAssertionResults,
-    responseFilter,
-    setResponseFilter,
-    responseSearchScope,
-    setResponseSearchScope,
-    pendingMessageCount,
-    setPendingMessageCount,
-    deferredResponseFilter,
-    responseBodyRef,
-    showMessageTopButton,
-    setShowMessageTopButton,
-  } = responseController;
   const restController = useRestController();
   const {
     restMockServer,
@@ -561,6 +537,22 @@ export function useWorkbenchContainerModel() {
     targetDraft,
     setTargetDraft,
   } = requestSessionController;
+  const responseController = useResponseController(activeRequestId || "__unbound__");
+  const {
+    getResponseEvents,
+    setEvents,
+    lastResult,
+    setLastResult,
+    history,
+    setHistory,
+    assertionResults,
+    setAssertionResults,
+    setResponseFilter,
+    setResponseSearchScope,
+    setPendingMessageCount,
+    responseBodyRef,
+    setShowMessageTopButton,
+  } = responseController;
   const [isNativeBridgeAvailable, setIsNativeBridgeAvailable] = useState(false);
   const _abortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const _cancelledRunIdsRef = useRef<Set<string>>(new Set());
@@ -806,6 +798,8 @@ export function useWorkbenchContainerModel() {
     clearMockServerLocalDirty,
     refreshGrpcMockServerFromWorkspace,
   } = grpcMock;
+  useMockRuntimeEvents();
+  useMockRuntimePolling({ mockServer });
 
   // Keep CLI daemon runtime state in sync only after all protocol controllers are
   // initialized. Referencing setMockServerStatus before useGrpcMockController runs
@@ -923,8 +917,30 @@ export function useWorkbenchContainerModel() {
 
   const flushRunningMockServersBeforeRequest = useCallback(async () => {
     const tasks: Array<Promise<unknown>> = [];
+    const currentGrpcStatus = mockRuntimeStore.getGrpc();
+    const currentRestStatus = mockRuntimeStore.getRest();
+    const currentWebSocketStatus = mockRuntimeStore.getWebSocket();
 
-    if (restMockStatus.running && window.electronRestMock?.update) {
+    if (currentGrpcStatus.running && currentGrpcStatus.runtimeSource !== "cli") {
+      tasks.push(
+        syncRunningMockServerFromEditor({
+          mockServer: mockServerRef.current,
+          mockServerStatus: currentGrpcStatus,
+          setMockServerStatus,
+          loaded,
+          protoFiles,
+          protoRuntimeRegistry,
+          workspaceFolderPath,
+          activeProtoLibraryId,
+          activeProtoVersionId,
+          updateSeqRef: mockRuntimeUpdateSeqRef,
+          appliedSeqRef: mockRuntimeAppliedSeqRef,
+          lastSyncSignatureRef: mockRuntimeLastSyncSignatureRef,
+        }),
+      );
+    }
+
+    if (currentRestStatus.running && window.electronRestMock?.update) {
       tasks.push(
         window.electronRestMock.update(buildRestMockPayloadSnapshot()).then((result) => {
           if (result?.ok) {
@@ -935,7 +951,7 @@ export function useWorkbenchContainerModel() {
       );
     }
 
-    if (wsMockStatus.running && window.electronWsMock?.update) {
+    if (currentWebSocketStatus.running && window.electronWsMock?.update) {
       tasks.push(
         window.electronWsMock.update(buildWebSocketMockPayloadSnapshot()).then((result) => {
           if (result?.ok) {
@@ -948,10 +964,15 @@ export function useWorkbenchContainerModel() {
 
     if (tasks.length) await Promise.allSettled(tasks);
   }, [
-    restMockStatus.running,
+    setMockServerStatus,
+    loaded,
+    protoFiles,
+    protoRuntimeRegistry,
+    workspaceFolderPath,
+    activeProtoLibraryId,
+    activeProtoVersionId,
     buildRestMockPayloadSnapshot,
     setRestMockStatus,
-    wsMockStatus.running,
     buildWebSocketMockPayloadSnapshot,
     setWsMockStatus,
   ]);
@@ -1006,7 +1027,7 @@ export function useWorkbenchContainerModel() {
   }, [hydrated, activeRequestId, requestSessions]);
 
   useEffect(() => {
-    if (!hydrated || !activeRequestId || sideSection === "proto-schemas") return;
+    if (!hydrated || !activeRequestId || getWorkbenchSideSection() === "proto-schemas") return;
     const session = requestSessions.find((item) => item.id === activeRequestId);
     if (!session || session.requestKind !== "grpc") return;
 
@@ -1082,7 +1103,6 @@ export function useWorkbenchContainerModel() {
     activeProtoLibraryId,
     activeProtoVersionId,
     protoRuntimeRegistry,
-    sideSection,
   ]);
 
   useEffect(() => {
@@ -1146,31 +1166,70 @@ export function useWorkbenchContainerModel() {
   );
 
   const selectedMethod = useMemo(() => {
-    if (!loaded || !selectedMethodKey) return null;
+    if (!selectedMethodKey) return null;
+    const sessionBinding = activeSession?.grpc;
+    if (sessionBinding) {
+      const boundCompiled = protoRuntimeRegistry.resolveVersion(sessionBinding.libraryId, sessionBinding.versionId);
+      const boundMethod = boundCompiled?.loaded.methods.find((method) => methodKey(method) === selectedMethodKey) ?? null;
+      if (boundMethod) return boundMethod;
+    }
+    if (!loaded) return null;
     return loaded.methods.find((method) => methodKey(method) === selectedMethodKey) ?? null;
-  }, [loaded, selectedMethodKey]);
+  }, [activeSession?.grpc, loaded, protoRuntimeRegistry, selectedMethodKey]);
 
   const mockSelectedMethod = useMemo(() => {
     const explicitKey = mockSelectedMethodKey.trim();
     if (explicitKey === grpcMockOverviewMethodKey) return null;
+
+    const activeCompiled =
+      activeProtoLibraryId && activeProtoVersionId
+        ? protoRuntimeRegistry.resolveVersion(activeProtoLibraryId, activeProtoVersionId)
+        : null;
+
     if (explicitKey) {
-      const activeMatch = loaded?.methods.find((method) => methodKey(method) === explicitKey);
-      if (activeMatch) return activeMatch;
+      const activeRevisionMatch = activeCompiled?.loaded.methods.find((method) => methodKey(method) === explicitKey);
+      if (activeRevisionMatch) return activeRevisionMatch;
+
+      const binding = mockServer.methodBindings?.[explicitKey];
+      if (binding) {
+        const boundCompiled = protoRuntimeRegistry.resolveVersion(binding.libraryId, binding.versionId);
+        const boundMatch = boundCompiled?.loaded.methods.find((method) => methodKey(method) === explicitKey);
+        if (boundMatch) return boundMatch;
+      }
+
       for (const source of mockServer.protoSources ?? []) {
         const compiled = protoRuntimeRegistry.resolveVersion(source.libraryId, source.versionId);
         const attachedMatch = compiled?.loaded.methods.find((method) => methodKey(method) === explicitKey);
         if (attachedMatch) return attachedMatch;
       }
+
+      const loadedMatch = loaded?.methods.find((method) => methodKey(method) === explicitKey);
+      if (loadedMatch) return loadedMatch;
     }
-    const selectedMatch = loaded?.methods.find((method) => methodKey(method) === selectedMethodKey);
+
+    const selectedMatch = activeCompiled?.loaded.methods.find((method) => methodKey(method) === selectedMethodKey);
     if (selectedMatch) return selectedMatch;
+    if (activeCompiled?.loaded.methods[0]) return activeCompiled.loaded.methods[0];
+
+    const loadedSelectedMatch = loaded?.methods.find((method) => methodKey(method) === selectedMethodKey);
+    if (loadedSelectedMatch) return loadedSelectedMatch;
     if (loaded?.methods[0]) return loaded.methods[0];
+
     for (const source of mockServer.protoSources ?? []) {
       const compiled = protoRuntimeRegistry.resolveVersion(source.libraryId, source.versionId);
       if (compiled?.loaded.methods[0]) return compiled.loaded.methods[0];
     }
     return null;
-  }, [loaded, mockSelectedMethodKey, selectedMethodKey, mockServer.protoSources, protoRuntimeRegistry]);
+  }, [
+    activeProtoLibraryId,
+    activeProtoVersionId,
+    loaded,
+    mockSelectedMethodKey,
+    selectedMethodKey,
+    mockServer.methodBindings,
+    mockServer.protoSources,
+    protoRuntimeRegistry,
+  ]);
 
   useEffect(() => {
     if (mockSelectedMethodKey || !mockSelectedMethod) return;
@@ -1337,7 +1396,7 @@ export function useWorkbenchContainerModel() {
   }
 
   async function updateRunningRestMockServerSnapshot() {
-    if (!restMockStatus.running || !window.electronRestMock?.update) return;
+    if (!mockRuntimeStore.getRest().running || !window.electronRestMock?.update) return;
     const result = await window.electronRestMock.update(buildRestMockPayloadSnapshot());
     if (result?.ok)
       setRestMockStatus((current) => ({ ...current, ...result, running: result.running ?? current.running }));
@@ -1419,11 +1478,6 @@ export function useWorkbenchContainerModel() {
             grpcBindingIdentity(item.grpc, item.methodKey) ===
             grpcBindingIdentity(activeSelectedGrpcBinding, activeMethodKey),
         )?.result ??
-      requestSessions.find(
-        (session) =>
-          grpcBindingIdentity(session.grpc, session.methodKey) ===
-          grpcBindingIdentity(activeSelectedGrpcBinding, activeMethodKey),
-      )?.lastResult ??
       savedDocResultByMethod.get(activeMethodKey) ??
       latestResultByMethod.get(activeMethodKey) ??
       null)
@@ -1678,7 +1732,7 @@ export function useWorkbenchContainerModel() {
             method,
             examples: methodExamples,
             protoFiles: compiled?.version.files ?? protoFiles,
-            latestResult: savedResult ?? session?.lastResult ?? null,
+            latestResult: savedResult ?? null,
             mockScenarios: methodMocks,
             currentRequestJson: session?.requestJson,
             currentMetadata: session?.metadata,
@@ -1702,7 +1756,7 @@ export function useWorkbenchContainerModel() {
             url: session?.baseUrl || request.url,
             message: session?.requestJson || request.body || "",
             examples: requestExamples,
-            latestResult: session?.lastResult ?? null,
+            latestResult: null,
           }),
         };
       });
@@ -1721,7 +1775,7 @@ export function useWorkbenchContainerModel() {
           generatedMarkdown: renderRestDocsMarkdown({
             collectionRequest: request,
             url: session?.requestUrl || buildRestRequestUrl(request, session?.baseUrl || request.url),
-            latestResult: session?.lastResult ?? null,
+            latestResult: null,
             examples: requestExamples,
           }),
         };
@@ -1893,31 +1947,7 @@ export function useWorkbenchContainerModel() {
   ]);
 
   useEffect(() => {
-    if (!mockServerStatus.running || !window.electronMock?.status) return;
-    const timer = window.setInterval(() => {
-      void window.electronMock?.status?.().then((result) => {
-        if (!result?.running) return;
-        setMockServerStatus((current) => {
-          if (!current.running) return current;
-          const currentLogs = current.requestLog ?? [];
-          const nextLogs = result.requestLog ?? currentLogs;
-          const currentLastLog = currentLogs.at(-1);
-          const nextLastLog = nextLogs.at(-1);
-          const unchanged =
-            current.updatedAt === result.updatedAt &&
-            current.configVersion === result.configVersion &&
-            currentLogs.length === nextLogs.length &&
-            currentLastLog?.id === nextLastLog?.id &&
-            currentLastLog?.status === nextLastLog?.status;
-          return unchanged ? current : { ...current, ...result };
-        });
-      });
-    }, 1500);
-    return () => window.clearInterval(timer);
-  }, [mockServerStatus.running]);
-
-  useEffect(() => {
-    if (!wsMockStatus.running || !window.electronWsMock?.update) return;
+    if (!mockRuntimeStore.getWebSocket().running || !window.electronWsMock?.update) return;
     const timer = window.setTimeout(() => {
       void window.electronWsMock?.update?.(buildWebSocketMockPayloadSnapshot()).then((result) => {
         if (result?.ok)
@@ -1925,35 +1955,15 @@ export function useWorkbenchContainerModel() {
       });
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [collections, wsMockServer, wsMockStatus.running]);
+  }, [collections, wsMockServer]);
 
   useEffect(() => {
-    if (!wsMockStatus.running || !window.electronWsMock?.status) return;
-    const timer = window.setInterval(() => {
-      void window.electronWsMock?.status?.().then((result) => {
-        setWsMockStatus((current) => (current.running || result?.running ? { ...current, ...result } : current));
-      });
-    }, 1500);
-    return () => window.clearInterval(timer);
-  }, [wsMockStatus.running]);
-
-  useEffect(() => {
-    if (!restMockStatus.running || !window.electronRestMock?.update) return;
+    if (!mockRuntimeStore.getRest().running || !window.electronRestMock?.update) return;
     const timer = window.setTimeout(() => {
       void updateRunningRestMockServerSnapshot();
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [collections, restMockServer, restMockStatus.running]);
-
-  useEffect(() => {
-    if (!restMockStatus.running || !window.electronRestMock?.status) return;
-    const timer = window.setInterval(() => {
-      void window.electronRestMock?.status?.().then((result) => {
-        setRestMockStatus((current) => (current.running || result?.running ? { ...current, ...result } : current));
-      });
-    }, 1500);
-    return () => window.clearInterval(timer);
-  }, [restMockStatus.running]);
+  }, [collections, restMockServer]);
 
   useEffect(() => {
     setMockScenarioEditorDraft(null);
@@ -1976,10 +1986,8 @@ export function useWorkbenchContainerModel() {
   });
   const liveSessionEvents = useLiveSessionEvents({
     activeRequestIdRef,
-    setEvents,
-    setRequestSessions,
   });
-  const { appendLiveEventToSession } = liveSessionEvents;
+  const { appendLiveEventToSession, compactUiEventsForResponse } = liveSessionEvents;
 
   const requestSessionActions = useRequestSessionActions({
     activeBaseUrl,
@@ -2000,7 +2008,7 @@ export function useWorkbenchContainerModel() {
     currentMockActiveScenario,
     currentMockScenarios,
     environmentKey,
-    events,
+    getResponseEvents,
     findCollectionRequestById,
     getProjectSnapshot,
     getWorkspaceExportBundle,
@@ -2137,6 +2145,7 @@ export function useWorkbenchContainerModel() {
     setHistory,
     showToast,
     appendLiveEventToSession,
+    compactUiEventsForResponse,
     upsertRequestSessionPreservingOrder,
     activateRequestSession,
     updateRequestSession,
@@ -2184,10 +2193,11 @@ export function useWorkbenchContainerModel() {
     setRequestResponseLayout("vertical");
   }, [compactViewport, setRequestResponseLayout]);
 
-  const contextSidebarVisible = sidebarOpen && sideSection !== "source-control";
-  // Keep the context sidebar docked at every effective viewport width, including
-  // browser/Electron zoom levels that trigger the compact content layout.
-  const shellLeft = railWidth + (contextSidebarVisible ? sidebarWidthPx : 0);
+
+  // Navigation section changes live in a tiny external store so switching the
+  // activity rail does not invalidate this giant model. This value only depends
+  // on layout state and represents the normal request/sidebar dock position.
+  const shellLeft = railWidth + (sidebarOpen ? sidebarWidthPx : 0);
 
   const viewDerived = useWorkbenchViewDerived({
     activeCollectionRequest,
@@ -2197,7 +2207,7 @@ export function useWorkbenchContainerModel() {
     currentExamples,
     draftEffectiveBaseUrl,
     draftEffectiveNativeTarget,
-    events,
+    getResponseEvents,
     hydrated,
     isNativeTransport,
     lastResult,
@@ -2211,8 +2221,6 @@ export function useWorkbenchContainerModel() {
     targetDraft,
   });
   const {
-    latestResponsePayload,
-    messageEvents,
     previewUrl,
     reportPayload,
     requestFields,
@@ -2221,13 +2229,23 @@ export function useWorkbenchContainerModel() {
     showEmptyWorkbench,
   } = viewDerived;
 
-  function selectProtoLibraryVersion(libraryId: string, versionId: string) {
+  function selectProtoLibraryVersion(
+    libraryId: string,
+    versionId: string,
+    options?: { persistDefault?: boolean },
+  ) {
     const compiled = protoRuntimeRegistry.resolveVersion(libraryId, versionId);
     if (!compiled) {
       showToast("Proto library version could not be resolved.", "error");
       return;
     }
-    if (compiled.library.lifecycle !== "archived" && compiled.version.lifecycle !== "archived") {
+    const persistDefault = options?.persistDefault !== false;
+    if (
+      persistDefault &&
+      compiled.library.lifecycle !== "archived" &&
+      compiled.version.lifecycle !== "archived" &&
+      compiled.library.defaultVersionId !== versionId
+    ) {
       setProtoLibraries((current) =>
         current.map((library) =>
           library.id === libraryId
@@ -2236,10 +2254,10 @@ export function useWorkbenchContainerModel() {
         ),
       );
     }
-    setActiveProtoLibraryId(libraryId);
-    setActiveProtoVersionId(versionId);
-    setProtoFiles(compiled.version.files);
-    setLoaded(compiled.loaded);
+    if (activeProtoLibraryId !== libraryId) setActiveProtoLibraryId(libraryId);
+    if (activeProtoVersionId !== versionId) setActiveProtoVersionId(versionId);
+    if (protoFiles !== compiled.version.files) setProtoFiles(compiled.version.files);
+    if (loaded !== compiled.loaded) setLoaded(compiled.loaded);
   }
 
   function createProtoLibraryFromImport(name: string, versionLabel: string, files: ProtoSourceFile[]) {
@@ -3481,11 +3499,7 @@ export function useWorkbenchContainerModel() {
     FeatureCodeTextField,
     UnifiedDocumentationPanel,
     UnifiedDocsSidebar,
-    FeatureHistoryTable,
-    FeatureJsonBlock,
-    FeatureLatestResponseJsonViewer,
     FeatureMarkdownPreview,
-    FeatureMessageTable,
     FeatureProtoSourceBlock,
     FeatureCollectionSidebar,
     FeatureSchemaTable,
@@ -3614,7 +3628,6 @@ export function useWorkbenchContainerModel() {
     currentWebSocketDoc,
     documentation,
     documentationPages,
-    deferredResponseFilter,
     deleteCurrentMethodDoc,
     deleteEditingMockScenario,
     designSystem,
@@ -3630,7 +3643,6 @@ export function useWorkbenchContainerModel() {
     envDraftWebSocketUrl,
     envMenuAnchor,
     environments,
-    events,
     exampleInputRef,
     exportCurrentBenchmark,
     exportCurrentMethodExamples,
@@ -3700,15 +3712,14 @@ export function useWorkbenchContainerModel() {
     saveGrpcMethodToCollection,
     openGrpcMethodRequestDialog,
     openGrpcMethodsRequestDialog,
+    addGrpcMethodsToCollection,
     importMockScenarioFile,
     importWorkspaceFiles,
     isNativeBridgeAvailable,
     lastResult,
-    latestResponsePayload,
     loadExample,
     loadSample,
     loaded,
-    messageEvents,
     metadata,
     methodTypeLabel,
     minResponseHeight,
@@ -3746,6 +3757,7 @@ export function useWorkbenchContainerModel() {
     openWorkspaceImporter,
     paletteMode,
     panelSx,
+    patchActiveCollectionRequest,
     parsedMockConfig,
     prettifyRequestJson,
     previewCurrentMethodDoc,
@@ -3815,10 +3827,7 @@ export function useWorkbenchContainerModel() {
     requestTabItems,
     responseBodyRef,
     responseFields,
-    responseFilter,
-    responseSearchScope,
     setResponseSearchScope,
-    pendingMessageCount,
     setPendingMessageCount,
     responseHeight,
     responseTab,
@@ -3887,12 +3896,11 @@ export function useWorkbenchContainerModel() {
     setSideSection,
     setSidebarOpen,
     setSidebarWidthPx,
+    shellLeft,
     setToast,
     setWorkspaceMenuAnchor,
     setWsBenchmarkIterations,
-    shellLeft,
     showEmptyWorkbench,
-    showMessageTopButton,
     serviceProtocol,
     servicesSection,
     settingsSection,
@@ -3900,7 +3908,6 @@ export function useWorkbenchContainerModel() {
     setServiceProtocol,
     setServicesSection,
     setSettingsSection,
-    sideSection,
     sidebarOpen,
     sidebarWidthPx,
     slugify,

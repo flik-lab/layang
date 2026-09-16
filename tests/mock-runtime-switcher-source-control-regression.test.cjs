@@ -28,7 +28,8 @@ test("Source Control does not render a duplicate outer Git changes sidebar", () 
   const git = read("app/playground/features/git/git-source-control-v2.tsx");
 
   assert.doesNotMatch(sidebar, /GitSourceControlSidebar/);
-  assert.match(model, /sideSection !== "source-control"/);
+  assert.doesNotMatch(model, /useState<SideSection>\("collections"\)/);
+  assert.match(sidebar, /sideSection !== "source-control"/);
   assert.match(main, /<GitSourceControlWorkspace/);
   assert.match(git, /<GitPageTabs/);
   assert.match(git, /<ChangesPage/);

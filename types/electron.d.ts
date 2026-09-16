@@ -7,6 +7,24 @@ import type {
   WebSocketMockStatus,
 } from "@/app/playground/shared/workbench-types";
 
+export type RuntimeProcessStatus = {
+  status?: "ready" | "disposed" | "unavailable";
+  running?: boolean;
+  ready?: boolean;
+  startedAt?: string;
+  pid?: number;
+  processType?: string;
+  generation?: string;
+  restartCount?: number;
+};
+
+export type RuntimeEventEnvelope = {
+  protocolVersion: 1;
+  type: "event";
+  event: string;
+  payload: unknown;
+};
+
 export type LayangLogLevel = "debug" | "info" | "warn" | "error";
 export interface LayangLoggerSettings {
   level: LayangLogLevel;
@@ -321,6 +339,14 @@ export interface LayangGitCommitDetails extends LayangGitLogEntry {
 
 declare global {
   interface Window {
+    electronRuntime?: {
+      isAvailable: boolean;
+      mode: "main" | "utility";
+      ping: () => Promise<RuntimeProcessStatus>;
+      getStatus: () => Promise<RuntimeProcessStatus>;
+      invoke: <T = unknown>(type: string, payload?: unknown) => Promise<T>;
+      onEvent: (callback: (event: RuntimeEventEnvelope) => void) => () => void;
+    };
     electronCli?: {
       isAvailable: boolean;
       run?: (
@@ -346,8 +372,32 @@ declare global {
       stopMockRuntime?: (workspacePath?: string) => Promise<{ ok: boolean; running: boolean; message?: string; error?: string }>;
       onGuiCommand?: (callback: (entry: { command: string; label?: string; createdAt?: string; replayable?: boolean }) => void) => () => void;
     };
+    electronGrpcWebTransport?: {
+      isAvailable: boolean;
+      invoke: (
+        payload: {
+          runId?: string;
+          url: string;
+          headers: Record<string, string>;
+          body: string;
+          rootJson: unknown;
+          responseType: string;
+          responseStream: boolean;
+          responseEncoding?: "text" | "binary";
+          timeoutMs?: number;
+          connectionTimeoutMs?: number;
+          idleTimeoutMs?: number;
+          maxMessages?: number;
+        },
+        onEvents?: (events: GrpcEvent[]) => void,
+      ) => Promise<GrpcResult>;
+      cancel: (runId?: string) => Promise<{ cancelled: boolean }>;
+      payload: <T = unknown>(type: string, payload?: unknown) => Promise<T>;
+      status: () => Promise<{ runCount: number; documentCount: number; runs: RuntimeProcessStatus[] }>;
+    };
     electronGrpc?: {
       isAvailable: boolean;
+      requestPayloadPort?: () => boolean;
       invoke: (payload: {
         runId?: string;
         targetUrl: string;
@@ -789,7 +839,12 @@ declare global {
         bindHost?: string;
         protoFiles: ProtoSourceFile[];
         methods: RpcMethodInfo[];
-        scenarios: unknown[];
+        scenarios?: unknown[];
+        methodFiles?: Record<string, {
+          format?: "json" | "yaml";
+          scenarioText?: string;
+          updatedAt?: string;
+        }>;
         streamDefaults?: { intervalMs?: number; loop?: boolean; maxLoops?: number };
         activeScenarioIds?: Record<string, string>;
         enabledMethods?: Record<string, boolean>;
@@ -833,7 +888,12 @@ declare global {
         bindHost?: string;
         protoFiles?: ProtoSourceFile[];
         methods?: RpcMethodInfo[];
-        scenarios: unknown[];
+        scenarios?: unknown[];
+        methodFiles?: Record<string, {
+          format?: "json" | "yaml";
+          scenarioText?: string;
+          updatedAt?: string;
+        }>;
         streamDefaults?: { intervalMs?: number; loop?: boolean; maxLoops?: number };
         activeScenarioIds?: Record<string, string>;
         enabledMethods?: Record<string, boolean>;

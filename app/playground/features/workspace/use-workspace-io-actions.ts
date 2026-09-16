@@ -458,7 +458,7 @@ export function useWorkspaceIoActions(scope: any) {
       if (compiled) {
         addGrpcMethodsToCollection(
           pendingCollectionId || NEW_SCHEMA_COLLECTION_TARGET,
-          [method],
+          compiled.loaded.methods,
           compiled,
           null,
           false,

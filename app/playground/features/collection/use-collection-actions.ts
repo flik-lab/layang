@@ -103,9 +103,6 @@ export function useCollectionActions(ctx: ActionContext) {
     setCollectionMenuAnchor,
     setCollectionNameDraft,
     setCollections,
-    setLoaded,
-    setActiveProtoLibraryId,
-    setActiveProtoVersionId,
     setRequestKindDraft,
     setRequestGrpcLibraryIdDraft,
     setRequestGrpcVersionIdDraft,
@@ -921,10 +918,12 @@ export function useCollectionActions(ctx: ActionContext) {
 
   function createCollectionRequestSession(collection: ApiCollection, request: ApiCollectionRequest): RequestSession {
     const now = new Date().toISOString();
+    const id = createId();
     const mode: TransportMode =
       request.kind === "websocket" ? "websocket" : request.kind === "rest" ? "rest" : "grpc-web";
     return {
-      id: createId(),
+      id,
+      responseSessionId: id,
       methodKey: request.id,
       sourceRequestId: request.id,
       grpc: request.grpc,
@@ -943,9 +942,6 @@ export function useCollectionActions(ctx: ActionContext) {
       environmentKey: request.environmentKey ?? activeEnvironmentKey,
       assertionJson,
       responseTab: "messages",
-      events: [],
-      lastResult: null,
-      assertionResults: [],
       running: false,
       status: "idle",
       openedAt: now,
@@ -954,33 +950,39 @@ export function useCollectionActions(ctx: ActionContext) {
   }
 
   function selectCollectionRequest(collection: ApiCollection, request: ApiCollectionRequest) {
-    if (request.kind === "grpc" && request.grpc) {
-      const compiled = protoRuntimeRegistry.resolveVersion(request.grpc.libraryId, request.grpc.versionId);
-      const resolved = compiled?.loaded.methods.find((method) => methodKey(method) === request.grpc?.methodFullName);
-      if (compiled && resolved) {
-        setActiveProtoLibraryId(compiled.library.id);
-        setActiveProtoVersionId(compiled.version.id);
-        setLoaded(compiled.loaded);
-      }
-    }
     const existing = findReusableCollectionRequestSession(requestSessions, request);
+    const existingNeedsRefresh = Boolean(
+      existing &&
+        (existing.methodKey !== request.id ||
+          existing.sourceRequestId !== request.id ||
+          existing.requestKind !== request.kind ||
+          existing.grpc !== request.grpc ||
+          existing.timeoutMs !== request.timeoutMs ||
+          existing.streamIdleTimeoutMs !== request.streamIdleTimeoutMs ||
+          existing.title !== request.name ||
+          existing.serviceName !== collection.name ||
+          existing.requestUrl !== request.url ||
+          existing.httpMethod !== request.method),
+    );
     const session = existing
-      ? {
-          ...existing,
-          methodKey: request.id,
-          sourceRequestId: request.id,
-          requestKind: request.kind,
-          grpc: request.grpc,
-          timeoutMs: request.timeoutMs ?? existing.timeoutMs,
-          streamIdleTimeoutMs: request.streamIdleTimeoutMs ?? existing.streamIdleTimeoutMs,
-          title: request.name,
-          serviceName: collection.name,
-          requestUrl: request.url,
-          httpMethod: request.method,
-          updatedAt: new Date().toISOString(),
-        }
+      ? existingNeedsRefresh
+        ? {
+            ...existing,
+            methodKey: request.id,
+            sourceRequestId: request.id,
+            requestKind: request.kind,
+            grpc: request.grpc,
+            timeoutMs: request.timeoutMs ?? existing.timeoutMs,
+            streamIdleTimeoutMs: request.streamIdleTimeoutMs ?? existing.streamIdleTimeoutMs,
+            title: request.name,
+            serviceName: collection.name,
+            requestUrl: request.url,
+            httpMethod: request.method,
+            updatedAt: new Date().toISOString(),
+          }
+        : existing
       : createCollectionRequestSession(collection, request);
-    upsertRequestSessionPreservingOrder(session);
+    if (!existing || existingNeedsRefresh) upsertRequestSessionPreservingOrder(session);
     activateRequestSession(session);
     setRequestTab("body");
   }

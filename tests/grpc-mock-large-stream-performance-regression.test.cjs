@@ -14,10 +14,14 @@ test("large looping gRPC streams reuse snapshots and bound retained messages", (
   const liveEvents = read("app/playground/features/request-runner/use-live-session-events.ts");
 
   const cacheGuard = runtime.indexOf("if (cachedSnapshotVersion === runtime.configVersion) return cachedSnapshot");
-  const responseSignature = runtime.indexOf(
-    "const responseSignature = createRuntimeStreamResponsesSignature(responses)",
+  const responseFingerprints = runtime.indexOf(
+    "const fingerprints = createRuntimeStreamResponseFingerprints(responses)",
   );
-  assert.ok(cacheGuard >= 0 && responseSignature > cacheGuard);
+  const responseSignature = runtime.indexOf('const responseSignature = fingerprints.join("\\n")');
+  assert.ok(cacheGuard >= 0 && responseFingerprints > cacheGuard && responseSignature > responseFingerprints);
   assert.match(constants, /maxMessagesPerRequest = 50/);
-  assert.match(liveEvents, /Keeps the full value only for the newest stream message/);
+  assert.match(constants, /maxRetainedMessagesPerRequest = 10/);
+  assert.match(liveEvents, /MAX_FINAL_MESSAGE_EVENTS = maxRetainedMessagesPerRequest/);
+  assert.match(liveEvents, /large full payloads live in the bounded external cache/);
+  assert.doesNotMatch(liveEvents, /events\.map\(stripFullPayloadFromMessage\)/);
 });

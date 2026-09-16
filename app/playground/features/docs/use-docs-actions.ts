@@ -436,7 +436,7 @@ export function useDocsActions(ctx: ActionContext) {
               url: session?.baseUrl || request.url,
               message: session?.requestJson || request.body || "",
               examples: requestExamples,
-              latestResult: session?.lastResult ?? null,
+              latestResult: null,
             })
           : doc.generatedMarkdown || "# WebSocket docs\n\nRequest not found in this workspace.",
       });
@@ -456,7 +456,7 @@ export function useDocsActions(ctx: ActionContext) {
           ? renderRestDocsMarkdown({
               collectionRequest: request,
               url: session?.requestUrl || buildRestRequestUrl(request, session?.baseUrl || request.url),
-              latestResult: session?.lastResult ?? null,
+              latestResult: null,
               examples: requestExamples,
             })
           : doc.generatedMarkdown || "# REST docs\n\nRequest not found in this workspace.",

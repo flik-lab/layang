@@ -65,14 +65,28 @@ export function ResizableTable({ columns, children, tableSx, containerSx }: Resi
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
 
-      const handleMouseMove = (moveEvent: MouseEvent) => {
-        const delta = moveEvent.clientX - startX;
-        setColumnWidths((current: any) => ({
+      let resizeFrame: number | null = null;
+      let latestClientX = startX;
+
+      const commitWidth = () => {
+        resizeFrame = null;
+        const delta = latestClientX - startX;
+        setColumnWidths((current: Record<string, number>) => ({
           ...current,
           [column.id]: clampWidth(startWidth + delta, column),
         }));
       };
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        latestClientX = moveEvent.clientX;
+        if (resizeFrame !== null) return;
+        resizeFrame = window.requestAnimationFrame(commitWidth);
+      };
       const handleMouseUp = () => {
+        if (resizeFrame !== null) {
+          window.cancelAnimationFrame(resizeFrame);
+          resizeFrame = null;
+        }
+        commitWidth();
         document.body.style.cursor = previousCursor;
         document.body.style.userSelect = previousUserSelect;
         window.removeEventListener("mousemove", handleMouseMove);

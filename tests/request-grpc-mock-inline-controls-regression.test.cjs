@@ -26,8 +26,8 @@ test("request workspace reuses the Workspace Mock settings menu, manager, and so
   assert.match(source, /<GrpcMockScenarioActionsMenu/);
   assert.match(source, /<GrpcMockScenarioManagerDialog/);
   assert.match(source, /<GrpcScenarioSourceDialog/);
-  assert.match(services, /<GrpcMockScenarioActionsMenu/);
-  assert.match(services, /<GrpcMockScenarioManagerDialog/);
+  assert.match(services, /onManageScenario=\{openMockScenarioManager\}/);
+  assert.match(services, /onAddScenario=\{addMockScenarioForMethod\}/);
   assert.match(controls, /Scenario settings/);
   assert.match(controls, /Edit source/);
   assert.match(controls, /Manage scenarios/);

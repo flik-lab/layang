@@ -39,6 +39,12 @@ export type GrpcFrame =
       trailers: Record<string, string>;
     };
 
+export type ResponseDocumentRef = {
+  id: string;
+  preview: string;
+  originalChars: number;
+};
+
 export type GrpcEvent =
   | {
       type: "log";
@@ -56,6 +62,24 @@ export type GrpcEvent =
       type: "message";
       index: number;
       value: unknown;
+      documentRef?: never;
+      serializedValueUtf8?: never;
+    }
+  | {
+      type: "message";
+      index: number;
+      documentRef: ResponseDocumentRef;
+      value?: never;
+      serializedValueUtf8?: never;
+    }
+  | {
+      type: "message";
+      index: number;
+      serializedValueUtf8: Uint8Array<ArrayBufferLike>;
+      preview: string;
+      originalChars: number;
+      value?: never;
+      documentRef?: never;
     }
   | {
       type: "trailers";
@@ -76,6 +100,8 @@ export type GrpcResult = {
   headers: Record<string, string>;
   trailers: Record<string, string>;
   messages: unknown[];
+  /** Worker-owned documents aligned with retained gRPC-Web messages. */
+  messageDocumentRefs?: ResponseDocumentRef[];
   totalMessages?: number;
   droppedMessages?: number;
   durationMs: number;

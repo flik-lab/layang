@@ -1,24 +1,24 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Profiler, memo, useEffect, useRef, useState } from "react";
 import type {
   ChangeEvent,
-  CSSProperties,
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   ReactNode,
 } from "react";
-import { createPortal } from "react-dom";
 import type { MetadataPair } from "@/lib/types";
-import { copyTextWithAnnouncement } from "@/lib/accessibility";
 import { MoreHoriz, WarningIcon } from "@/components/shadcn/icons";
+import { Box as ShellBox } from "@/components/shadcn/compat";
 import { WorkbenchTabs } from "@/components/ui/workbench";
 import { methodKey } from "../../shared/rpc-method-utils";
 import { uiCopy } from "../../shared/ui-copy";
+import { performanceStats } from "../../shared/performance/performance-stats.store";
 import {
   defaultGrpcConnectionTimeoutMs,
   defaultGrpcStreamIdleTimeoutMs,
   defaultUnaryDeadlineMs,
+  railWidth,
 } from "../../shared/workbench-constants";
 import { MethodStatusIndicator } from "../../shared/components/method-status-indicator";
 import { mockScenarioDisplayName, rpcMethodKindLabel } from "../mock-server/mock-scenario-ui";
@@ -43,8 +43,10 @@ import {
 } from "../services/services-workspace";
 import { SettingsWorkspace } from "../settings/settings-workspace";
 import { ProtoSchemaWorkspace } from "../proto-registry/proto-schema-workspace";
+import { WorkbenchResponsePanel } from "../response-viewer/response-workbench-panel";
 import { GitSourceControlWorkspace } from "../git/git-source-control";
 import { ExampleEditorDialog, type ExampleEditorTab } from "../examples/examples-panel";
+import { useWorkbenchSideSection } from "./workbench-navigation-store";
 import type {
   EnvironmentConfig,
   MockScenario,
@@ -53,7 +55,9 @@ import type {
   RestAuthConfig,
   RestBodyType,
   SavedExample,
+  SideSection,
 } from "../../shared/workbench-types";
+import type { WorkbenchMainPanelModel, WorkbenchMainPanelRuntimeModel } from "./workbenchShell.types";
 
 type ButtonClickEvent = ReactMouseEvent<HTMLButtonElement>;
 type ElementClickEvent = ReactMouseEvent<HTMLElement>;
@@ -61,7 +65,6 @@ type TextInputChangeEvent = ChangeEvent<HTMLInputElement | HTMLTextAreaElement>;
 type SelectInputChangeEvent = ChangeEvent<HTMLSelectElement>;
 type TextInputKeyboardEvent = ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>;
 
-type WorkbenchViewContext = Record<string, any>;
 type RequestContextView = "request" | "mock" | "schema" | "settings" | "tool";
 
 type GrpcBindingIssue = {
@@ -89,7 +92,8 @@ function grpcBindingIssue(status?: string | null): GrpcBindingIssue | null {
   }
 }
 
-export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
+function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeModel }) {
+  performanceStats.recordRenderInvocation("collections");
   const {
     Add,
     Alert,
@@ -109,16 +113,12 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     ExamplesPanel,
     FeatureBenchmarkPanel,
     FeatureCodeTextField,
-    FeatureJsonBlock,
-    FeatureLatestResponseJsonViewer,
-    FeatureMessageTable,
     UnifiedDocumentationPanel,
     FeatureProtoSourceBlock,
     FeatureSchemaTable,
     FormControl,
     IconButton,
     InputAdornment,
-    KeyboardArrowUp,
     Language,
     ListItemText,
     Menu,
@@ -128,12 +128,9 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     Paper,
     PlayArrow,
     RequestTabs,
-    ResponseToolbar,
-    ResponseWorkbenchTabs,
     RestMockPanel,
     RestPairEditor,
     Select,
-    Search,
     Stack,
     Storage,
     Stream,
@@ -148,7 +145,6 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     activeRequestId,
     activeDocumentationSource,
     activeRequestDocumentationPage,
-    standaloneDocumentationPage,
     activeEnvironmentKey,
     activeIsRest,
     activeIsWebSocket,
@@ -157,7 +153,6 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     activeRestMockScenarios,
     activeRunning,
     activeSession,
-    assertionResults,
     activeTransportMode,
     activeWebSocketMockResponseText,
     activeWebSocketMockScenario,
@@ -168,14 +163,12 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     addRestPairRow,
     addWebSocketMockScenario,
     beginResponseResize,
-    resizeResponseByKeyboard,
     benchmark,
     chooseEnvironment,
     clearActiveResponseStable,
     closeAllRequestSessions,
     closeOtherRequestSessions,
     closeRequestSession,
-    clearResponseFilter,
     closeManualWebSocketClient,
     commitTargetDraft,
     copyActiveWebSocketMockResponse,
@@ -184,14 +177,11 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     examples,
     currentMockActiveScenario,
     currentMockScenarios,
-    deferredResponseFilter,
     documentation,
-    documentationPages,
     designSystem,
     downloadTextFile,
     envMenuAnchor,
     environments,
-    events,
     exampleInputRef,
     exportCurrentBenchmark,
     exportCurrentMethodExamples,
@@ -206,8 +196,6 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     fetchMockScenarioFilesFromWorkspace,
     openMockScenarioFolder,
     handleRequestJsonChange,
-    handleResponseBodyScroll,
-    handleResponseFilterChange,
     handleResponseTabChange,
     handleRestMockBindHostChange,
     handleRestMockPortChange,
@@ -218,13 +206,9 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     handleWebSocketMockPortChange,
     isNativeBridgeAvailable,
     lastResult,
-    latestResponsePayload,
     loadExample,
-    messageEvents,
     metadata,
     methodTypeLabel,
-    minResponseWidth,
-    minResponseHeight,
     mockServer,
     mockServerStatus,
     setMockServer,
@@ -253,14 +237,11 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     requestTab,
     responseBodyRef,
     responseFields,
-    responseFilter,
-    responseSearchScope,
-    pendingMessageCount,
-    setPendingMessageCount,
-    setAuthorizationMetadata,
     responseHeight,
-    responseWidth,
+    setAuthorizationMetadata,
     responseTab,
+    responseWidth,
+    resizeResponseByKeyboard,
     reorderRequestSessions,
     restMethods,
     restMockServer,
@@ -271,8 +252,6 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     saveCurrentExample,
     saveCurrentResultForDocsStable,
     saveDocumentationSource,
-    openDocumentationRequest,
-    scrollMessagesToTop,
     selectWebSocketMockScenario,
     selectedMethod,
     sendWebSocketMockOnce,
@@ -285,13 +264,11 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     setRestMockScenarioId,
     setSideSection,
     setSidebarOpen,
-    sideSection,
     setWsBenchmarkIterations,
     shellLeft,
     cliPanelOpen,
     cliPanelHeight,
     showEmptyWorkbench,
-    showMessageTopButton,
     startRestMockServer,
     startWebSocketMockServer,
     stopRestMockServer,
@@ -326,8 +303,6 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
   } = props.ctx;
 
   const [exampleEditorState, setExampleEditorState] = useState<{ id: string; tab: ExampleEditorTab } | null>(null);
-  const [responseFullscreen, setResponseFullscreen] = useState(false);
-  const [responseCollapsed, setResponseCollapsed] = useState(false);
   const [requestMockSettingsAnchor, setRequestMockSettingsAnchor] = useState<HTMLElement | null>(null);
   const [requestMockMenuAnchor, setRequestMockMenuAnchor] = useState<HTMLElement | null>(null);
   const [requestToolsMenuAnchor, setRequestToolsMenuAnchor] = useState<HTMLElement | null>(null);
@@ -422,31 +397,6 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     setExampleEditorState({ id: copy.id, tab: "general" });
   };
 
-  const previousMessageCountRef = useRef(messageEvents.length);
-  const previousScrollHeightRef = useRef(0);
-  useLayoutEffect(() => {
-    const node = responseBodyRef.current;
-    if (!node || responseTab !== "messages") {
-      previousMessageCountRef.current = messageEvents.length;
-      previousScrollHeightRef.current = node?.scrollHeight ?? 0;
-      return;
-    }
-    const previousCount = previousMessageCountRef.current;
-    const added = Math.max(0, messageEvents.length - previousCount);
-    const wasFollowingLatest = node.scrollTop <= 16;
-    const previousHeight = previousScrollHeightRef.current || node.scrollHeight;
-    if (added > 0 && !wasFollowingLatest) {
-      const heightDelta = node.scrollHeight - previousHeight;
-      if (heightDelta > 0) node.scrollTop += heightDelta;
-      setPendingMessageCount((current: number) => current + added);
-    } else if (wasFollowingLatest) {
-      setPendingMessageCount(0);
-    }
-    previousMessageCountRef.current = messageEvents.length;
-    previousScrollHeightRef.current = node.scrollHeight;
-  }, [messageEvents.length, responseBodyRef, responseTab, setPendingMessageCount]);
-
-  const searchedMessageEvents = responseSearchScope === "latest" ? messageEvents.slice(-1) : messageEvents;
   const unsupportedRequestStreaming = Boolean(selectedMethod?.requestStream);
   const requestActionDisabled =
     (!selectedMethod && !activeCollectionRequest) ||
@@ -496,14 +446,6 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
   };
   const authorizationValue =
     metadata.find((item: MetadataPair) => item.key.trim().toLowerCase() === "authorization")?.value ?? "";
-  const responseSummary = activeRunning
-    ? activeIsWebSocket
-      ? `Connected · ${messageEvents.length} message${messageEvents.length === 1 ? "" : "s"}`
-      : `Active · ${messageEvents.length} message${messageEvents.length === 1 ? "" : "s"}`
-    : lastResult
-      ? `${lastResult.httpStatus ? `HTTP ${lastResult.httpStatus}` : lastResult.trailers?.["grpc-status"] === "0" ? "0 OK" : "Complete"} · ${Math.round(lastResult.durationMs ?? 0)} ms`
-      : "";
-  const safeAssertionResults = Array.isArray(assertionResults) ? assertionResults : [];
   const activeRequestMockMethod = (() => {
     if (!activeGrpcBinding) return null;
     if (selectedMethod && methodKey(selectedMethod) === activeGrpcBinding.methodFullName) return selectedMethod;
@@ -830,15 +772,6 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     setRequestMockEditorDirty(false);
   }
 
-  async function copyLatestResponseJson() {
-    if (latestResponsePayload === undefined) return;
-    const text =
-      typeof latestResponsePayload === "string"
-        ? latestResponsePayload
-        : JSON.stringify(latestResponsePayload, null, 2);
-    await copyTextWithAnnouncement(text, "Latest response");
-  }
-
   function selectActiveRequestMockContext() {
     if (
       activeRequestMockContext.state !== "available" &&
@@ -872,33 +805,6 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     setSideSection("services");
     setSidebarOpen(true);
   }
-
-  useEffect(() => {
-    if (!responseFullscreen) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      setResponseFullscreen(false);
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [responseFullscreen]);
-
-  useEffect(() => {
-    if (sideSection === "collections") return;
-    setResponseFullscreen(false);
-  }, [sideSection]);
-
-  useEffect(() => {
-    const handleResponsePanelShortcut = (event: KeyboardEvent) => {
-      if (sideSection !== "collections") return;
-      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== "j") return;
-      event.preventDefault();
-      setResponseCollapsed((current) => !current);
-    };
-    window.addEventListener("keydown", handleResponsePanelShortcut);
-    return () => window.removeEventListener("keydown", handleResponsePanelShortcut);
-  }, [sideSection]);
 
   const requestContextView: RequestContextView =
     requestTab === "mock"
@@ -1087,25 +993,6 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
     );
   };
 
-  const renderResponseLayer = (children: ReactNode) =>
-    responseFullscreen && typeof document !== "undefined"
-      ? createPortal(
-          <div
-            style={
-              {
-                position: "fixed",
-                inset: 0,
-                zIndex: 2147483100,
-                WebkitAppRegion: "no-drag",
-              } as CSSProperties
-            }
-          >
-            {children}
-          </div>,
-          document.body,
-        )
-      : children;
-
   return (
     <Box
       component="main"
@@ -1123,8 +1010,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
         bgcolor: "background.default",
       }}
     >
-      {sideSection === "collections" ? (
-        <Box
+      <Box
           data-slot="workspace-tabs"
           sx={{
             height: designSystem.size.workspaceTabHeight,
@@ -1152,91 +1038,12 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
             placement="panel"
           />
         </Box>
-      ) : null}
       <Stack
-        direction={sideSection === "collections" && effectiveRequestResponseLayout === "horizontal" ? "row" : "column"}
+        direction={effectiveRequestResponseLayout === "horizontal" ? "row" : "column"}
         spacing={0}
         sx={{ flex: 1, height: "auto", width: "100%", minHeight: 0, minWidth: 0, overflow: "hidden" }}
       >
-        {sideSection === "source-control" ? (
-          <GitSourceControlWorkspace
-            directoryPath={props.ctx.workspaceFolderPath || ""}
-            onFlushWorkspace={async () => {
-              const directoryPath = props.ctx.workspaceFolderPath || "";
-              if (!directoryPath || !window.electronWorkspace?.saveFolder || !props.ctx.getWorkspaceExportBundle)
-                return;
-              const result = await window.electronWorkspace.saveFolder(
-                props.ctx.getWorkspaceExportBundle(),
-                directoryPath,
-              );
-              if (!result?.ok)
-                throw new Error(result?.error || "Failed to save the workspace before the Git operation.");
-            }}
-          />
-        ) : sideSection === "services" ? (
-          <ServicesWorkspace ctx={props.ctx} />
-        ) : sideSection === "proto-schemas" ? (
-          <ProtoSchemaWorkspace ctx={props.ctx} />
-        ) : sideSection === "settings" ? (
-          <SettingsWorkspace ctx={props.ctx} />
-        ) : sideSection === "docs" && !standaloneDocumentationPage ? (
-          <Paper
-            elevation={0}
-            sx={{
-              ...panelSx,
-              flex: "1 1 auto",
-              minHeight: 0,
-              display: "flex",
-              flexDirection: "column",
-              overflow: "auto",
-              borderRadius: 0,
-            }}
-          >
-            <Stack direction="row" alignItems="center" sx={{ minHeight: 50, px: 1.5, borderBottom: "1px solid var(--border-strong)" }}>
-              <Box sx={{ minWidth: 0, flex: 1 }}>
-                <Typography variant="subtitle1" fontWeight={600}>Documentation</Typography>
-                <Typography variant="caption" color="text.secondary">Select a page from the Docs sidebar to edit or preview it.</Typography>
-              </Box>
-            </Stack>
-            <Box sx={{ p: 1.5, maxWidth: 760 }}>
-              <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
-                {[
-                  ["Pages", documentationPages.length],
-                  ["Published", documentationPages.filter((page: any) => page.status === "published").length],
-                  ["Needs update", documentationPages.filter((page: any) => page.status === "outdated" || page.status === "error").length],
-                ].map(([label, value]) => (
-                  <Stack key={String(label)} direction="row" alignItems="center" sx={{ minHeight: 38, borderBottom: "1px solid", borderColor: "divider" }}>
-                    <Typography variant="body2" sx={{ minWidth: 0, flex: 1 }}>{label}</Typography>
-                    <Typography variant="body2" color="text.secondary">{value}</Typography>
-                  </Stack>
-                ))}
-              </Box>
-            </Box>
-          </Paper>
-        ) : standaloneDocumentationPage && sideSection === "docs" ? (
-          <Paper
-            elevation={0}
-            sx={{
-              ...panelSx,
-              flex: "1 1 auto",
-              minHeight: 0,
-              display: "flex",
-              flexDirection: "column",
-              overflow: "auto",
-              p: 1.4,
-            }}
-          >
-            <UnifiedDocumentationPanel
-              page={standaloneDocumentationPage}
-              source={activeDocumentationSource}
-              settings={documentation.settings}
-              onSaveSource={saveDocumentationSource}
-              onOpenRequest={() => openDocumentationRequest(standaloneDocumentationPage)}
-              onPublish={() => void publishDocumentationPage(standaloneDocumentationPage.id)}
-              onEditExample={(id: string, tab?: ExampleEditorTab) => openExampleEditor(id, tab)}
-            />
-          </Paper>
-        ) : protoPreview && sideSection !== "proto-schemas" ? (
+        {protoPreview ? (
           <Paper
             elevation={0}
             sx={{
@@ -1717,10 +1524,11 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                   p: designSystem.space.panelPadding,
                   minHeight: 0,
                   flex: 1,
-                  overflow: effectiveRequestResponseLayout === "horizontal" && requestTab === "body" ? "hidden" : "auto",
-                  display: effectiveRequestResponseLayout === "horizontal" && requestTab === "body" ? "flex" : "block",
+                  overflow: requestTab === "body" ? "hidden" : "auto",
+                  display: requestTab === "body" ? "flex" : "block",
                   flexDirection: "column",
                 }}
+                data-layout={requestTab === "body" ? "request-body-fill" : undefined}
               >
                 {requestTab === "body" &&
                   (activeIsWebSocket ? (
@@ -1729,7 +1537,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                       sx={{
                         minHeight: 0,
                         flex: 1,
-                        height: effectiveRequestResponseLayout === "horizontal" ? "100%" : "auto",
+                        height: "100%",
                       }}
                     >
                       <Stack
@@ -1779,7 +1587,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                         formatDisabled={!requestJson.trim()}
                         formatAriaLabel="Prettier JSON"
                         fullscreenTitle="WebSocket send data editor"
-                        fullHeight={effectiveRequestResponseLayout === "horizontal"}
+                        fullHeight={true}
                       />
                     </Stack>
                   ) : activeIsRest ? (
@@ -1788,7 +1596,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                       sx={{
                         minHeight: 0,
                         flex: 1,
-                        height: effectiveRequestResponseLayout === "horizontal" ? "100%" : "auto",
+                        height: "100%",
                       }}
                     >
                       <Stack spacing={0.25}>
@@ -1830,7 +1638,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                               : "Format body"
                           }
                           fullscreenTitle="REST request body editor"
-                          fullHeight={effectiveRequestResponseLayout === "horizontal"}
+                          fullHeight={true}
                         />
                       )}
                     </Stack>
@@ -1840,7 +1648,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                       sx={{
                         minHeight: 0,
                         flex: 1,
-                        height: effectiveRequestResponseLayout === "horizontal" ? "100%" : "auto",
+                        height: "100%",
                       }}
                     >
                       <Stack
@@ -1898,7 +1706,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                         formatDisabled={!requestJson.trim()}
                         formatAriaLabel="Prettier JSON"
                         fullscreenTitle="Request body editor"
-                        fullHeight={effectiveRequestResponseLayout === "horizontal"}
+                        fullHeight={true}
                       />
                     </Stack>
                   ))}
@@ -2515,306 +2323,27 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
               </Box>
           </Paper>
         )}
-            {sideSection === "collections" ? (
-              <>
-            <Box
-              role="separator"
-              tabIndex={0}
-              aria-orientation={effectiveRequestResponseLayout === "horizontal" ? "vertical" : "horizontal"}
-              aria-label="Resize request and response panels"
-              aria-valuenow={effectiveRequestResponseLayout === "horizontal" ? responseWidth : responseHeight}
-              aria-valuetext={`${effectiveRequestResponseLayout === "horizontal" ? responseWidth : responseHeight} pixels`}
-              onMouseDown={beginResponseResize}
-              onKeyDown={resizeResponseByKeyboard}
-              sx={{
-                width: effectiveRequestResponseLayout === "horizontal" ? 8 : "100%",
-                height: effectiveRequestResponseLayout === "horizontal" ? "100%" : 8,
-                flexShrink: 0,
-                cursor: effectiveRequestResponseLayout === "horizontal" ? "col-resize" : "row-resize",
-                display: responseFullscreen || responseCollapsed ? "none" : "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                bgcolor: "transparent",
-                opacity: 1,
-                outline: "none",
-                "&::after": {
-                  content: '""',
-                  width: effectiveRequestResponseLayout === "horizontal" ? 1 : "100%",
-                  height: effectiveRequestResponseLayout === "horizontal" ? "100%" : 1,
-                  bgcolor: "transparent",
-                },
-                "&:hover::after, &:focus-visible::after": {
-                  bgcolor: "var(--border-strong)",
-                },
-                "&:active::after": {
-                  bgcolor: "primary.main",
-                },
-              }}
-            />
-
-            {renderResponseLayer(
-              <>
-                {responseFullscreen ? (
-                  <Box
-                    aria-hidden="true"
-                    onClick={() => setResponseFullscreen(false)}
-                    sx={{
-                      position: "absolute",
-                      inset: 0,
-                      zIndex: 0,
-                      bgcolor: "rgba(2,6,23,0.72)",
-                      backdropFilter: "blur(3px)",
-                    }}
-                  />
-                ) : null}
-
-                <Paper
-                  elevation={0}
-                  role={responseFullscreen ? "dialog" : undefined}
-                  aria-modal={responseFullscreen ? true : undefined}
-                  aria-label={responseFullscreen ? "Full screen response" : undefined}
-                  sx={{
-                    ...panelSx,
-                    flex:
-                      effectiveRequestResponseLayout === "horizontal"
-                        ? responseCollapsed
-                          ? "0 0 30px"
-                          : `0 0 ${responseWidth}px`
-                        : responseCollapsed
-                          ? "0 0 30px"
-                          : `0 0 ${responseHeight}px`,
-                    minHeight:
-                      effectiveRequestResponseLayout === "horizontal" ? 0 : responseCollapsed ? 30 : minResponseHeight,
-                    minWidth:
-                      effectiveRequestResponseLayout === "horizontal" ? (responseCollapsed ? 30 : minResponseWidth) : 0,
-                    maxWidth:
-                      effectiveRequestResponseLayout === "horizontal" && !responseFullscreen
-                        ? "calc(100% - 360px)"
-                        : undefined,
-                    display: "flex",
-                    flexDirection: "column",
-                    borderRadius: 0,
-                    borderLeft: 0,
-                    borderRight: 0,
-                    borderBottom: 0,
-                    borderTop: 0,
-                    boxShadow: "none",
-                    bgcolor: "background.paper",
-                    ...(responseFullscreen
-                      ? {
-                          position: "absolute",
-                          top: 24,
-                          right: 24,
-                          bottom: 24,
-                          left: 24,
-                          zIndex: 1,
-                          width: "auto",
-                          height: "auto",
-                          minWidth: 0,
-                          minHeight: 0,
-                          flex: "none",
-                          border: "1px solid",
-                          borderRadius: 1,
-                          borderColor: "primary.main",
-                          boxShadow: "0 28px 90px rgba(0,0,0,0.5)",
-                        }
-                      : {}),
-                  }}
-                >
-                  <ResponseToolbar
-                    filter={responseFilter}
-                    highlightQuery={deferredResponseFilter}
-                    searchScopeKey={responseTab}
-                    searchRootId={`response-viewer-panel-${responseTab}`}
-                    summary={responseSummary}
-                    hasEvents={events.length > 0}
-                    hasLastResult={Boolean(lastResult)}
-                    canSaveDocs={Boolean(lastResult && selectedMethod)}
-                    onFilterChange={handleResponseFilterChange}
-                    onClearFilter={clearResponseFilter}
-                    onExport={exportResponseStable}
-                    onSaveDocs={() => {
-                      saveCurrentResultForDocsStable();
-                      setRequestUtilityDialog("docs");
-                    }}
-                    onClearResponse={clearActiveResponseStable}
-                    fullscreen={responseFullscreen}
-                    onToggleFullscreen={() => setResponseFullscreen((current) => !current)}
-                    collapsed={responseCollapsed}
-                    onToggleCollapsed={() => setResponseCollapsed((current) => !current)}
-                    layout={effectiveRequestResponseLayout}
-                  />
-                  {!responseCollapsed ? (
-                    <ResponseWorkbenchTabs
-                      value={responseTab}
-                      onChange={handleResponseTabChange}
-                      kind={activeIsRest ? "rest" : activeIsWebSocket ? "websocket" : "grpc"}
-                      streaming={Boolean(selectedMethod?.responseStream || activeIsWebSocket)}
-                    />
-                  ) : null}
-                  {!responseCollapsed ? (
-                    <Box
-                    ref={responseBodyRef}
-                    role="tabpanel"
-                    id={`response-viewer-panel-${responseTab}`}
-                    aria-labelledby={`response-viewer-tab-${responseTab}`}
-                    tabIndex={0}
-                    className="response-selectable"
-                    onScroll={handleResponseBodyScroll}
-                    sx={{
-                      p: designSystem.space.panelPadding,
-                      flex: 1,
-                      minHeight: 0,
-                      minWidth: 0,
-                      overflow: responseTab === "latest" ? "hidden" : "auto",
-                      position: "relative",
-                      display: responseTab === "latest" ? "flex" : "block",
-                      flexDirection: responseTab === "latest" ? "column" : undefined,
-                    }}
-                  >
-                    {responseTab === "messages" && (events.length > 0 || Boolean(lastResult)) && (
-                      <FeatureMessageTable
-                        empty={
-                          activeIsWebSocket
-                            ? "Connect the WebSocket to see communication events."
-                            : "Run a request to see the response."
-                        }
-                        events={searchedMessageEvents}
-                        filterQuery={deferredResponseFilter}
-                      />
-                    )}
-                    {responseTab === "messages" && showMessageTopButton && (
-                      <Tooltip
-                        title={pendingMessageCount > 0 ? `${pendingMessageCount} new message(s)` : "Top message"}
-                      >
-                        <IconButton
-                          size="small"
-                          color="primary"
-                          aria-label="Scroll to top message"
-                          onClick={scrollMessagesToTop}
-                          sx={{
-                            position: "fixed",
-                            right: 24,
-                            bottom: 76,
-                            zIndex: 60,
-                            bgcolor: "background.paper",
-                            borderColor: "divider",
-                            boxShadow: "0 12px 32px rgba(15, 23, 42, 0.22)",
-                          }}
-                        >
-                          <KeyboardArrowUp fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    )}
-                    {responseTab === "latest" && (
-                      <Stack
-                        spacing={0.8}
-                        sx={{
-                          width: "100%",
-                          minWidth: 0,
-                          minHeight: 0,
-                          flex: 1,
-                          overflow: "hidden",
-                          "& > .code-viewer--fill": { height: "auto" },
-                        }}
-                      >
-                        <Stack direction="row" spacing={0.7} alignItems="center">
-                          <TextField
-                            size="small"
-                            value={responseFilter}
-                            onChange={handleResponseFilterChange}
-                            placeholder="Search latest JSON"
-                            inputProps={{ "aria-label": "Search latest JSON" }}
-                            InputProps={{
-                              startAdornment: (
-                                <InputAdornment position="start">
-                                  <Search sx={{ fontSize: 16 }} />
-                                </InputAdornment>
-                              ),
-                            }}
-                            sx={{ width: 260, maxWidth: "55vw" }}
-                          />
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            startIcon={<ContentCopy />}
-                            disabled={latestResponsePayload === undefined}
-                            onClick={() => void copyLatestResponseJson()}
-                          >
-                            Copy JSON
-                          </Button>
-                        </Stack>
-                        <FeatureLatestResponseJsonViewer
-                          value={latestResponsePayload}
-                          filterQuery={deferredResponseFilter}
-                          fullHeight
-                        />
-                      </Stack>
-                    )}
-                    {responseTab === "headers" && (
-                      <FeatureJsonBlock
-                        value={events
-                          .filter((event: any) => event.kind === "headers")
-                          .map((event: any) => event.fullPayload ?? event.payload)}
-                        highlightQuery={deferredResponseFilter}
-                        fullHeight={responseFullscreen}
-                      />
-                    )}
-                    {responseTab === "timeline" && (
-                      <Stack spacing={0} sx={{ minWidth: 0 }}>
-                        {events.map((event: any, index: number) => (
-                          <Stack
-                            key={event.id ?? `${event.timestamp}-${index}`}
-                            direction="row"
-                            spacing={1}
-                            alignItems="baseline"
-                            sx={{ minHeight: 24, py: 0.35, borderBottom: "1px solid", borderColor: "divider" }}
-                          >
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{ width: 92, flexShrink: 0, fontFamily: "monospace" }}
-                            >
-                              {event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : ""}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary" sx={{ width: 62, flexShrink: 0 }}>
-                              {event.kind}
-                            </Typography>
-                            <Typography variant="body2" sx={{ minWidth: 0, wordBreak: "break-word" }}>
-                              {event.title}
-                            </Typography>
-                          </Stack>
-                        ))}
-                      </Stack>
-                    )}
-                    {responseTab === "trailers" && (
-                      <FeatureJsonBlock
-                        value={events
-                          .filter((event: any) => event.kind === "trailers")
-                          .map((event: any) => event.fullPayload ?? event.payload)}
-                        highlightQuery={deferredResponseFilter}
-                        fullHeight={responseFullscreen}
-                      />
-                    )}
-                    {responseTab === "tests" &&
-                      (safeAssertionResults.length > 0 ? (
-                        <FeatureJsonBlock
-                          value={safeAssertionResults}
-                          highlightQuery={deferredResponseFilter}
-                          fullHeight={responseFullscreen}
-                        />
-                      ) : (
-                        <Alert severity="info" variant="outlined">
-                          No test assertions have been evaluated for this response.
-                        </Alert>
-                      ))}
-                    </Box>
-                  ) : null}
-                </Paper>
-              </>,
-            )}
-              </>
-            ) : null}
+            <Profiler id="Response" onRender={(_id: string, _phase: string, actualDuration: number) => performanceStats.recordReactCommit("Response", actualDuration)}>
+              <WorkbenchResponsePanel
+                activeIsRest={activeIsRest}
+                activeIsWebSocket={activeIsWebSocket}
+                activeRunning={activeRunning}
+                beginResponseResize={beginResponseResize}
+                clearActiveResponse={clearActiveResponseStable}
+                effectiveRequestResponseLayout={effectiveRequestResponseLayout}
+                exportResponse={exportResponseStable}
+                handleResponseTabChange={handleResponseTabChange}
+                onOpenDocs={() => setRequestUtilityDialog("docs")}
+                responseBodyRef={responseBodyRef}
+                responseHeight={responseHeight}
+                responseSessionId={activeSession?.responseSessionId ?? activeSession?.id ?? "__unbound__"}
+                responseTab={responseTab}
+                responseWidth={responseWidth}
+                resizeResponseByKeyboard={resizeResponseByKeyboard}
+                saveCurrentResultForDocs={saveCurrentResultForDocsStable}
+                selectedMethod={selectedMethod}
+              />
+            </Profiler>
           </Stack>
 
       <Dialog
@@ -2909,27 +2438,9 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
                     </Typography>
                   ) : null}
                 </Stack>
-                <Box
-                  component="pre"
-                  sx={{
-                    m: 0,
-                    p: 1.5,
-                    minHeight: 280,
-                    maxHeight: "62vh",
-                    overflow: "auto",
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: 1,
-                    bgcolor: "background.default",
-                    color: "text.primary",
-                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                    fontSize: 12.5,
-                    lineHeight: 1.65,
-                    whiteSpace: "pre",
-                  }}
-                >
-                  {activeRequestProtoSourceFile.text}
-                </Box>
+                <div className="code-viewer code-viewer--proto request-proto-viewer">
+                  <code>{activeRequestProtoSourceFile.text}</code>
+                </div>
               </Stack>
             ) : (
               <Alert severity="warning" variant="outlined">
@@ -3153,7 +2664,7 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
         onSaveScenario={saveActiveRequestMockScenario}
         onDirtyChange={setRequestMockEditorDirty}
         onFetchFile={async () => (await fetchMockScenarioFilesFromWorkspace?.()) ?? null}
-        onOpenFolder={(relativePath) => openMockScenarioFolder?.(relativePath)}
+        onOpenFolder={() => openMockScenarioFolder?.()}
       />
 
       <ExampleEditorDialog
@@ -3165,5 +2676,219 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchViewContext }) {
         onDuplicate={duplicateExample}
       />
     </Box>
+  );
+}
+
+const MemoCollectionsMainPanel = memo(WorkbenchCollectionsMainPanel);
+const MemoServicesWorkspace = memo(ServicesWorkspace);
+const MemoProtoSchemaWorkspace = memo(ProtoSchemaWorkspace);
+const MemoSettingsWorkspace = memo(SettingsWorkspace);
+
+const MemoGitSourceControlWorkspace = memo(function MemoGitSourceControlWorkspace({
+  ctx,
+}: {
+  ctx: WorkbenchMainPanelRuntimeModel;
+}) {
+  const directoryPath = ctx.workspaceFolderPath || "";
+  return (
+    <GitSourceControlWorkspace
+      directoryPath={directoryPath}
+      onFlushWorkspace={async () => {
+        if (!directoryPath || !window.electronWorkspace?.saveFolder || !ctx.getWorkspaceExportBundle) return;
+        const result = await window.electronWorkspace.saveFolder(ctx.getWorkspaceExportBundle(), directoryPath);
+        if (!result?.ok) throw new Error(result?.error || "Failed to save the workspace before the Git operation.");
+      }}
+    />
+  );
+});
+
+const MemoDocumentationWorkspace = memo(function MemoDocumentationWorkspace({
+  ctx,
+}: {
+  ctx: WorkbenchMainPanelRuntimeModel;
+}) {
+  const {
+    Box,
+    Paper,
+    Stack,
+    Typography,
+    UnifiedDocumentationPanel,
+    activeDocumentationSource,
+    documentation,
+    documentationPages,
+    openDocumentationRequest,
+    panelSx,
+    publishDocumentationPage,
+    saveDocumentationSource,
+    standaloneDocumentationPage,
+  } = ctx;
+
+  if (!standaloneDocumentationPage) {
+    const pages = Array.isArray(documentationPages) ? documentationPages : [];
+    return (
+      <Paper
+        elevation={0}
+        sx={{
+          ...panelSx,
+          flex: "1 1 auto",
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "auto",
+          borderRadius: 0,
+        }}
+      >
+        <Stack
+          direction="row"
+          alignItems="center"
+          sx={{ minHeight: 50, px: 1.5, borderBottom: "1px solid var(--border-strong)" }}
+        >
+          <Box sx={{ minWidth: 0, flex: 1 }}>
+            <Typography variant="subtitle1" fontWeight={600}>Documentation</Typography>
+            <Typography variant="caption" color="text.secondary">
+              Select a page from the Docs sidebar to edit or preview it.
+            </Typography>
+          </Box>
+        </Stack>
+        <Box sx={{ p: 1.5, maxWidth: 760 }}>
+          <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
+            {[
+              ["Pages", pages.length],
+              ["Published", pages.filter((page: { status?: string }) => page.status === "published").length],
+              [
+                "Needs update",
+                pages.filter((page: { status?: string }) => page.status === "outdated" || page.status === "error").length,
+              ],
+            ].map(([label, value]) => (
+              <Stack
+                key={String(label)}
+                direction="row"
+                alignItems="center"
+                sx={{ minHeight: 38, borderBottom: "1px solid", borderColor: "divider" }}
+              >
+                <Typography variant="body2" sx={{ minWidth: 0, flex: 1 }}>{label}</Typography>
+                <Typography variant="body2" color="text.secondary">{value}</Typography>
+              </Stack>
+            ))}
+          </Box>
+        </Box>
+      </Paper>
+    );
+  }
+
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        ...panelSx,
+        flex: "1 1 auto",
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "auto",
+        p: 1.4,
+      }}
+    >
+      <UnifiedDocumentationPanel
+        page={standaloneDocumentationPage}
+        source={activeDocumentationSource}
+        settings={documentation.settings}
+        onSaveSource={saveDocumentationSource}
+        onOpenRequest={() => openDocumentationRequest(standaloneDocumentationPage)}
+        onPublish={() => void publishDocumentationPage(standaloneDocumentationPage.id)}
+      />
+    </Paper>
+  );
+});
+
+type SectionWorkspaceSurfaceProps = {
+  bottom: number;
+  children: ReactNode;
+  left: number;
+  section: SideSection;
+  top: number;
+};
+
+function SectionWorkspaceSurface({ bottom, children, left, section, top }: SectionWorkspaceSurfaceProps) {
+  return (
+    <ShellBox
+      data-slot="section-workspace-overlay"
+      data-section={section}
+      style={{
+        position: "fixed",
+        top,
+        right: 0,
+        bottom,
+        left,
+        minWidth: 0,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        background: "var(--background)",
+        zIndex: 4,
+      }}
+    >
+      {children}
+    </ShellBox>
+  );
+}
+
+/**
+ * Lightweight navigation shell. Only the active heavy workspace is mounted.
+ * Domain state lives outside the DOM, so switching sections never keeps hidden
+ * schema/Mocking/Settings trees subscribed in the background.
+ */
+export function WorkbenchMainPanel(props: { ctx: WorkbenchMainPanelModel; cliPanelOpen: boolean; cliPanelHeight: number }) {
+  const sideSection = useWorkbenchSideSection();
+  const ctx: WorkbenchMainPanelRuntimeModel = {
+    ...props.ctx,
+    cliPanelOpen: props.cliPanelOpen,
+    cliPanelHeight: props.cliPanelHeight,
+  };
+  const sectionBottom = ctx.designSystem.size.statusbarHeight + (ctx.cliPanelOpen ? ctx.cliPanelHeight : 0);
+  const normalSectionLeft = ctx.shellLeft;
+  const sectionTop = ctx.designSystem.size.titlebarHeight;
+
+  if (sideSection === "collections") return <MemoCollectionsMainPanel ctx={ctx} />;
+
+  if (sideSection === "services") {
+    return (
+      <SectionWorkspaceSurface section="services" top={sectionTop} left={normalSectionLeft} bottom={sectionBottom}>
+        <Profiler id="Mocking" onRender={(_id: string, _phase: string, actualDuration: number) => performanceStats.recordReactCommit("Mocking", actualDuration)}>
+          <MemoServicesWorkspace ctx={ctx} />
+        </Profiler>
+      </SectionWorkspaceSurface>
+    );
+  }
+
+  if (sideSection === "proto-schemas") {
+    return (
+      <SectionWorkspaceSurface section="proto-schemas" top={sectionTop} left={normalSectionLeft} bottom={sectionBottom}>
+        <MemoProtoSchemaWorkspace ctx={ctx} />
+      </SectionWorkspaceSurface>
+    );
+  }
+
+  if (sideSection === "settings") {
+    return (
+      <SectionWorkspaceSurface section="settings" top={sectionTop} left={normalSectionLeft} bottom={sectionBottom}>
+        <MemoSettingsWorkspace ctx={ctx} />
+      </SectionWorkspaceSurface>
+    );
+  }
+
+  if (sideSection === "docs") {
+    return (
+      <SectionWorkspaceSurface section="docs" top={sectionTop} left={normalSectionLeft} bottom={sectionBottom}>
+        <MemoDocumentationWorkspace ctx={ctx} />
+      </SectionWorkspaceSurface>
+    );
+  }
+
+  return (
+    <SectionWorkspaceSurface section="source-control" top={sectionTop} left={railWidth} bottom={sectionBottom}>
+      <MemoGitSourceControlWorkspace ctx={ctx} />
+    </SectionWorkspaceSurface>
   );
 }

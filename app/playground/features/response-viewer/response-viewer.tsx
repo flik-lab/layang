@@ -1,387 +1,58 @@
 "use client";
 
-import { copyTextWithAnnouncement } from "@/lib/accessibility";
-import { Fragment, useMemo, useState, type MouseEvent } from "react";
-import {
-  Box,
-  Button,
-  Chip,
-  IconButton,
-  Paper,
-  Stack,
-  TableBody,
-  TableCell,
-  TableRow,
-  Tooltip,
-  Typography,
-} from "@/components/shadcn/compat";
-import { ContentCopy } from "@/components/shadcn/icons";
-import { EmptyState } from "../../shared/components/empty-state";
-import { ResizableTable, type ResizableTableColumn } from "../../shared/components/resizable-table";
-import { formatTimestampReadable, formatTimestampShort } from "../../shared/formatters";
-import { deepTextIncludes, isPayloadPreview, payloadPreviewBodyText, safePrettyJson } from "../../shared/json-utils";
-import type { HistoryItem, UiEvent } from "../../shared/workbench-types";
+import { useMemo } from "react";
+import { Box, Typography } from "@/components/shadcn/compat";
 import { SearchHighlightedText } from "../../shared/components/search-highlight";
+import { safeJsonStringify } from "../../shared/json-utils";
 
-const maxMessageTableRows = 200;
-const maxJsonBlockChars = 60000;
-const maxInlinePayloadChars = 320;
+const DEFAULT_MAX_CHARS = 60_000;
 
-const oneLineMessageSx = {
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-  fontSize: 12,
-} as const;
-
-const messageTableColumns: ResizableTableColumn[] = [
-  { id: "no", label: "No", width: 44, minWidth: 36, maxWidth: 80, sx: { textAlign: "right" } },
-  { id: "time", label: "Time", width: 136, minWidth: 112, maxWidth: 260 },
-  { id: "summary", label: "Summary", width: 560, minWidth: 260, maxWidth: 1400 },
-];
-
-const historyTableColumns: ResizableTableColumn[] = [
-  { id: "time", label: "Time", width: 136, minWidth: 112, maxWidth: 260 },
-  { id: "method", label: "Method", width: 320, minWidth: 160, maxWidth: 900 },
-  { id: "status", label: "Status", width: 120, minWidth: 90, maxWidth: 260 },
-  { id: "duration", label: "Duration", width: 110, minWidth: 90, maxWidth: 180 },
-  { id: "messages", label: "Messages", width: 92, minWidth: 76, maxWidth: 160, sx: { textAlign: "right" } },
-];
-
-/** Renders response messages as newest-first one-line rows that expand on click. */
-export function MessageTable({
-  events,
-  empty,
-  filterQuery = "",
-}: {
-  events: UiEvent[];
-  empty: string;
-  filterQuery?: string;
-}) {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const normalizedFilterQuery = filterQuery.trim();
-  const displayEvents = useMemo<Array<{ event: UiEvent; messageNumber: number; timestampMs: number }>>(() => {
-    const normalizedQuery = filterQuery.trim();
-    return events
-      .filter((event) => event.kind === "message" || event.kind === "error" || event.kind === "end")
-      .map((event, index) => ({
-        event,
-        messageNumber: parseMessageNumber(event.title) ?? index + 1,
-        timestampMs: new Date(event.timestamp).getTime(),
-      }))
-      .filter(({ event }) => {
-        if (!normalizedQuery) return true;
-        return (
-          deepTextIncludes(event.payload, normalizedQuery) ||
-          event.title.toLowerCase().includes(normalizedQuery.toLowerCase())
-        );
-      })
-      .sort((a, b) => {
-        const timeDiff =
-          (Number.isFinite(b.timestampMs) ? b.timestampMs : 0) - (Number.isFinite(a.timestampMs) ? a.timestampMs : 0);
-        return timeDiff || b.messageNumber - a.messageNumber;
-      })
-      .slice(0, maxMessageTableRows);
-  }, [events, filterQuery]);
-
-  if (displayEvents.length === 0) {
-    return (
-      <EmptyState
-        title={normalizedFilterQuery ? "No matching messages" : "No messages yet"}
-        body={normalizedFilterQuery ? `No message rows contain "${normalizedFilterQuery}".` : empty}
-      />
-    );
-  }
-  return (
-    <ResizableTable columns={messageTableColumns}>
-      <TableBody>
-        {displayEvents.map(({ event, messageNumber }: { event: UiEvent; messageNumber: number }) => {
-          const expanded = expandedId === event.id;
-          const summary = oneLinePayload(event.payload);
-          return (
-            <Fragment key={event.id}>
-              <TableRow sx={{ cursor: "pointer" }} onClick={() => setExpandedId(expanded ? null : event.id)}>
-                <TableCell sx={{ whiteSpace: "nowrap", textAlign: "right", color: "text.secondary" }}>
-                  {messageNumber}
-                </TableCell>
-                <TableCell
-                  title={formatTimestampShort(event.timestamp)}
-                  sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-                >
-                  {formatTimestampReadable(event.timestamp)}
-                </TableCell>
-                <TableCell sx={{ minWidth: 0 }}>
-                  <Box
-                    title={summary}
-                    sx={{
-                      ...oneLineMessageSx,
-                      fontFamily:
-                        'var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace)',
-                    }}
-                  >
-                    <SearchHighlightedText text={summary} query={filterQuery} />
-                  </Box>
-                </TableCell>
-              </TableRow>
-              {expanded && (
-                <TableRow key={`${event.id}-expanded`}>
-                  <TableCell colSpan={3}>
-                    <Box
-                      sx={{
-                        position: "relative",
-                        maxHeight: 440,
-                        overflow: "auto",
-                        border: "1px solid",
-                        borderColor: "divider",
-                        borderRadius: 1.25,
-                        bgcolor: "var(--muted)",
-                        "& .code-viewer": {
-                          maxHeight: "none",
-                          overflow: "visible",
-                          border: 0,
-                          borderRadius: 0,
-                          bgcolor: "transparent",
-                        },
-                      }}
-                    >
-                      <Tooltip title={copiedId === event.id ? "Copied" : "Copy message"}>
-                        <IconButton
-                          size="small"
-                          aria-label="Copy message"
-                          onClick={(clickEvent: MouseEvent<HTMLButtonElement>) => {
-                            clickEvent.stopPropagation();
-                            void copyMessagePayload(event.fullPayload ?? event.payload).then((copied) => {
-                              if (!copied) return;
-                              setCopiedId(event.id);
-                              window.setTimeout(
-                                () => setCopiedId((current) => (current === event.id ? null : current)),
-                                1200,
-                              );
-                            });
-                          }}
-                          sx={{
-                            position: "sticky",
-                            top: 8,
-                            right: 8,
-                            float: "right",
-                            m: 0.75,
-                            zIndex: 2,
-                            bgcolor: "background.paper",
-                            border: "1px solid",
-                            borderColor: "divider",
-                            boxShadow: 1,
-                            "&:hover": { bgcolor: "action.hover" },
-                          }}
-                        >
-                          <ContentCopy sx={{ fontSize: 16 }} />
-                        </IconButton>
-                      </Tooltip>
-                      <JsonBlock
-                        value={event.fullPayload ?? event.payload}
-                        compact
-                        highlightQuery={filterQuery}
-                        maxChars={null}
-                      />
-                    </Box>
-                  </TableCell>
-                </TableRow>
-              )}
-            </Fragment>
-          );
-        })}
-      </TableBody>
-    </ResizableTable>
-  );
-}
-
-/** Extracts the original message sequence number from titles like "Message #12". */
-function parseMessageNumber(title: string): number | null {
-  const match = String(title || "").match(/#(\d+)/);
-  if (!match) return null;
-  const value = Number(match[1]);
-  return Number.isFinite(value) ? value : null;
-}
-
-/** Formats JSON-like payloads as one compact line for dense message rows. */
-function oneLinePayload(value: unknown): string {
-  const sourceText = isPayloadPreview(value)
-    ? payloadPreviewBodyText(value, false)
-    : safePrettyJson(value, { parseString: true });
-  const text = sourceText.replace(/\s+/g, " ").trim();
-  if (!text) return "{}";
-  return text.length > maxInlinePayloadChars ? `${text.slice(0, maxInlinePayloadChars)}...` : text;
-}
-
-/** Copies the selected message payload in a user-friendly raw/pretty format. */
-async function copyMessagePayload(value: unknown): Promise<boolean> {
-  return copyTextWithAnnouncement(messagePayloadCopyText(value), "Message payload");
-}
-
-/** Preserves raw text messages while pretty-printing JSON-like payloads. */
-function messagePayloadCopyText(value: unknown): string {
-  if (isPayloadPreview(value)) return payloadPreviewBodyText(value);
-
-  if (typeof value === "string") {
-    try {
-      return JSON.stringify(JSON.parse(value), null, 2);
-    } catch {
-      return value;
-    }
-  }
-  return safePrettyJson(value);
-}
-
-/** Renders lower-volume raw event lists. */
-export function EventList({
-  events,
-  empty,
-  filterQuery = "",
-}: {
-  events: UiEvent[];
-  empty: string;
-  filterQuery?: string;
-}) {
-  const normalizedFilterQuery = filterQuery.trim();
-  const displayEvents = (
-    normalizedFilterQuery
-      ? events.filter(
-          (event) =>
-            deepTextIncludes(event.payload, normalizedFilterQuery) ||
-            event.title.toLowerCase().includes(normalizedFilterQuery.toLowerCase()),
-        )
-      : events
-  ).slice(0, maxMessageTableRows);
-  if (displayEvents.length === 0) {
-    return (
-      <EmptyState
-        title={normalizedFilterQuery ? "No matching events" : "No data"}
-        body={normalizedFilterQuery ? `No event rows contain "${normalizedFilterQuery}".` : empty}
-      />
-    );
-  }
-  return (
-    <Stack spacing={0.8}>
-      {displayEvents.map((event) => (
-        <Paper key={event.id} variant="outlined" sx={{ p: 1, borderRadius: 2 }}>
-          <Stack direction="row" spacing={0.7} alignItems="center" sx={{ mb: 0.6 }}>
-            <Typography variant="caption" color="text.secondary">
-              {formatTimestampReadable(event.timestamp)}
-            </Typography>
-            <Typography variant="body2" sx={{ fontWeight: 500 }}>
-              <SearchHighlightedText text={event.title} query={filterQuery} />
-            </Typography>
-          </Stack>
-          <JsonBlock value={event.payload} highlightQuery={filterQuery} />
-        </Paper>
-      ))}
-    </Stack>
-  );
-}
-
-/** Renders method-scoped request history. */
-export function HistoryTable({
-  history,
-  filterQuery = "",
-  onClear,
-}: {
-  history: HistoryItem[];
-  filterQuery?: string;
-  onClear?: () => void;
-}) {
-  const filtered = filterQuery ? history.filter((item) => deepTextIncludes(item, filterQuery)) : history;
-  return (
-    <Stack spacing={0.8}>
-      {onClear && (
-        <Button size="small" color="error" variant="text" onClick={onClear} sx={{ alignSelf: "flex-start" }}>
-          Clear history
-        </Button>
-      )}
-      {filtered.length === 0 ? (
-        <EmptyState title="No history" body="Run a request to create a history item." />
-      ) : (
-        <ResizableTable columns={historyTableColumns}>
-          <TableBody>
-            {filtered.map((item) => (
-              <TableRow key={item.id}>
-                <TableCell
-                  title={formatTimestampShort(item.timestamp)}
-                  sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-                >
-                  {formatTimestampReadable(item.timestamp)}
-                </TableCell>
-                <TableCell title={item.method}>{item.method}</TableCell>
-                <TableCell>
-                  <Chip size="small" label={item.status} />
-                </TableCell>
-                <TableCell>{item.durationMs} ms</TableCell>
-                <TableCell sx={{ textAlign: "right" }}>{item.messageCount}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </ResizableTable>
-      )}
-    </Stack>
-  );
-}
-
-/** Renders only the newest response message payload as formatted JSON. */
-export function LatestResponseJsonViewer({
-  value,
-  empty = "Run a request to see the latest response payload.",
-  filterQuery = "",
-  fullHeight = false,
-}: {
+type JsonBlockProps = {
   value: unknown;
-  empty?: string;
-  filterQuery?: string;
-  fullHeight?: boolean;
-}) {
-  if (value === undefined) {
-    return <EmptyState title="No latest response" body={empty} />;
-  }
-
-  return <JsonBlock value={value} highlightQuery={filterQuery} fullHeight={fullHeight} maxChars={null} />;
-}
-
-/** Renders an object as formatted JSON with optional text highlighting. */
-export function JsonBlock({
-  value,
-  compact = false,
-  highlightQuery = "",
-  fullHeight = false,
-  maxChars = maxJsonBlockChars,
-}: {
-  value: unknown;
-  compact?: boolean;
   highlightQuery?: string;
   fullHeight?: boolean;
-  maxChars?: number | null;
-}) {
-  const displayText = jsonBlockText(value, maxChars);
+  maxChars?: number;
+};
+
+/**
+ * Lightweight JSON block for low-volume metadata surfaces (headers, trailers,
+ * assertions and the standalone WebSocket panel). Large response bodies are
+ * rendered by JsonDocumentViewer and never pass through this component.
+ */
+export function JsonBlock({
+  value,
+  highlightQuery = "",
+  fullHeight = false,
+  maxChars = DEFAULT_MAX_CHARS,
+}: JsonBlockProps) {
+  const text = useMemo(() => {
+    const serialized = safeJsonStringify(value, 2);
+    if (serialized.length <= maxChars) return serialized;
+    return `${serialized.slice(0, maxChars)}\n… truncated ${serialized.length - maxChars} chars`;
+  }, [maxChars, value]);
+
   return (
-    <pre
-      className={["code-viewer", compact ? "code-viewer--compact" : "", fullHeight ? "code-viewer--fill" : ""]
-        .filter(Boolean)
-        .join(" ")}
+    <Box
+      component="pre"
+      sx={{
+        m: 0,
+        p: 1,
+        minHeight: fullHeight ? "100%" : 0,
+        maxHeight: fullHeight ? "none" : 480,
+        overflow: "auto",
+        whiteSpace: "pre-wrap",
+        overflowWrap: "anywhere",
+        bgcolor: "background.default",
+        border: "1px solid",
+        borderColor: "divider",
+        fontFamily: "monospace",
+        fontSize: 12,
+        lineHeight: 1.55,
+      }}
     >
-      <code>
-        <SearchHighlightedText text={displayText} query={highlightQuery} />
-      </code>
-    </pre>
+      <Typography component="code" sx={{ fontFamily: "inherit", fontSize: "inherit" }}>
+        {highlightQuery.trim() ? <SearchHighlightedText text={text} query={highlightQuery} /> : text}
+      </Typography>
+    </Box>
   );
-}
-
-function jsonBlockText(value: unknown, maxChars: number | null): string {
-  const text = isPayloadPreview(value)
-    ? payloadPreviewBodyText(value)
-    : safePrettyJson(value, {
-        parseString: true,
-        maxChars: maxChars ?? undefined,
-        truncatedLabel: "...",
-      });
-
-  if (maxChars === null || text.length <= maxChars) return text;
-  return `${text.slice(0, maxChars)}
-...`;
 }

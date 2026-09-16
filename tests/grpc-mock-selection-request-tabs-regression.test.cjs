@@ -17,9 +17,10 @@ test("gRPC mock method selection is not overwritten while the active proto revis
   assert.match(model, /if \(mockSelectedMethodKey \|\| !mockSelectedMethod\) return/);
   assert.doesNotMatch(model, /if \(key !== mockSelectedMethodKey\) setMockSelectedMethodKey\(key\)/);
 
-  assert.match(services, /const currentStillExists = matchingRows\.some/);
-  assert.match(services, /if \(currentStillExists\) return currentKey/);
-  assert.match(services, /const persistedScenarioId = mockServer\.selectedScenarioIds\[selectedKey\]/);
+  assert.match(services, /const selectCatalogMethod = useCallback/);
+  assert.match(services, /setMockSelectedMethodKey\(row\.methodKey\)/);
+  assert.match(services, /selectProtoLibraryVersion\(row\.libraryId, row\.versionId, \{ persistDefault: false \}\)/);
+  assert.doesNotMatch(services, /currentStillExists/);
 });
 
 test("scenario source editor edits one scenario and opens the canonical gRPC method files", () => {
@@ -64,4 +65,30 @@ test("saved request tabs reuse source identity and adopt legacy gRPC tabs instea
   assert.match(model, /sourceRequestId,/);
   assert.match(model, /requestKind: "grpc"/);
   assert.doesNotMatch(model, /requestKind: undefined/);
+});
+
+
+test("gRPC mock method selection does not add an artificial animation-frame delay", () => {
+  const services = read("app/playground/features/services/services-workspace.tsx");
+  const hookStart = services.indexOf("function useImmediateMockMethodSelection(");
+  const hookEnd = services.indexOf("\n}", hookStart) + 2;
+  const hook = services.slice(hookStart, hookEnd);
+
+  assert.match(hook, /setMockSelectedMethodKey\(key\)/);
+  assert.match(hook, /selectProtoLibraryVersion\(source\.libraryId, source\.versionId, \{ persistDefault: false \}\)/);
+  assert.match(hook, /setMockSelectedMethodKey\(key\);\s*selectProtoLibraryVersion\(source\.libraryId, source\.versionId, \{ persistDefault: false \}\);/);
+  assert.doesNotMatch(hook, /requestAnimationFrame\(\(\) => \{[\s\S]*selectProtoLibraryVersion/);
+});
+
+test("focused gRPC mock method exposes per-scenario stream cadence controls", () => {
+  const services = read("app/playground/features/services/services-workspace.tsx");
+  const focusedStart = services.indexOf("function GrpcFocusedMockWorkspace");
+  const focusedEnd = services.indexOf("export function GrpcMockWorkspace", focusedStart);
+  const focused = services.slice(focusedStart, focusedEnd);
+
+  assert.match(focused, /intervalMs/);
+  assert.match(focused, /Interval \(ms\)/);
+  assert.match(focused, /Loop/);
+  assert.match(focused, /Count/);
+  assert.match(focused, /patchFocusedStream/);
 });

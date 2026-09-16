@@ -7,6 +7,7 @@ const {
   decodeGrpcWebRequestBody,
   decodeGrpcWebTextBody,
   encodeDataFrame,
+  encodeGrpcWebTextResponseChunks,
   parseFrames,
 } = require("../lib/grpc-web-protocol.cjs");
 
@@ -22,6 +23,23 @@ function independentlyEncodedChunks(bytes, sizes) {
   if (offset < bytes.length) chunks.push(bytes.subarray(offset).toString("base64"));
   return chunks;
 }
+
+
+test("grpc-web-text unary response flushes data and trailers as independent Base64 frames", () => {
+  const chunks = encodeGrpcWebTextResponseChunks([Buffer.alloc(0)], 0, "");
+
+  assert.equal(chunks.length, 2);
+  assert.equal(chunks[0], encodeDataFrame(Buffer.alloc(0)).toString("base64"));
+  assert.match(chunks[1], /=+$/);
+
+  const decoded = decodeGrpcWebTextBody(Buffer.from(chunks.join(""), "ascii"));
+  const frames = parseFrames(decoded);
+  assert.equal(frames.length, 2);
+  assert.equal(frames[0].kind, "data");
+  assert.equal(frames[0].payload.length, 0);
+  assert.equal(frames[1].kind, "trailers");
+  assert.equal(frames[1].trailers["grpc-status"], "0");
+});
 
 test("grpc-web-text request decoder accepts one conventional base64 entity", () => {
   const payload = Buffer.from("external-unary-request");

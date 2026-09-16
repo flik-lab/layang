@@ -2,6 +2,7 @@
 
 import { applyWorkspaceLayoutSnapshot } from "./workspace-model";
 import { clamp } from "../../shared/number-utils";
+import { scheduleIdleTask } from "../../shared/performance/interaction-performance";
 import {
   layoutStorageKey,
   maxSidebarWidth,
@@ -50,28 +51,29 @@ export function useWorkspaceLayoutPersistence(scope: WorkspaceLayoutPersistenceS
       setResponseWidth,
       setRequestResponseLayout,
     });
-    window.localStorage.setItem(
-      layoutStorageKey,
-      JSON.stringify({
-        sidebarOpen: typeof layout.sidebarOpen === "boolean" ? layout.sidebarOpen : sidebarOpen,
-        sidebarWidthPx:
-          typeof layout.sidebarWidthPx === "number"
-            ? clamp(layout.sidebarWidthPx, minSidebarWidth, maxSidebarWidth)
-            : sidebarWidthPx,
-        responseHeight:
-          typeof layout.responseHeight === "number"
-            ? clamp(layout.responseHeight, minResponseHeight, maxStoredResponseHeight)
-            : responseHeight,
-        responseWidth:
-          typeof layout.responseWidth === "number"
-            ? clamp(layout.responseWidth, minResponseWidth, maxStoredResponseWidth)
-            : responseWidth,
-        requestResponseLayout:
-          layout.requestResponseLayout === "vertical" || layout.requestResponseLayout === "horizontal"
-            ? layout.requestResponseLayout
-            : requestResponseLayout,
-      }),
-    );
+    const persistedLayout = {
+      sidebarOpen: typeof layout.sidebarOpen === "boolean" ? layout.sidebarOpen : sidebarOpen,
+      sidebarWidthPx:
+        typeof layout.sidebarWidthPx === "number"
+          ? clamp(layout.sidebarWidthPx, minSidebarWidth, maxSidebarWidth)
+          : sidebarWidthPx,
+      responseHeight:
+        typeof layout.responseHeight === "number"
+          ? clamp(layout.responseHeight, minResponseHeight, maxStoredResponseHeight)
+          : responseHeight,
+      responseWidth:
+        typeof layout.responseWidth === "number"
+          ? clamp(layout.responseWidth, minResponseWidth, maxStoredResponseWidth)
+          : responseWidth,
+      requestResponseLayout:
+        layout.requestResponseLayout === "vertical" || layout.requestResponseLayout === "horizontal"
+          ? layout.requestResponseLayout
+          : requestResponseLayout,
+    } satisfies WorkspaceLayoutSnapshot;
+
+    scheduleIdleTask("workspace-layout", () => {
+      window.localStorage.setItem(layoutStorageKey, JSON.stringify(persistedLayout));
+    });
   }
 
   function getLayoutSnapshot(): WorkspaceLayoutSnapshot {

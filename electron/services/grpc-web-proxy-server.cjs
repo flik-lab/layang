@@ -8,10 +8,10 @@ const grpc = require("@grpc/grpc-js");
 const { readSecret } = require("../utils/secure-secrets.cjs");
 const { resolveHttpsCertificateSecurity } = require("../utils/web-https-certificates.cjs");
 const {
-  GrpcWebTextEncoder,
   decodeGrpcWebRequestBody,
   encodeDataFrame,
   encodeGrpcWebTextFrame,
+  encodeGrpcWebTextResponseChunks,
   encodeTrailerFrame,
   normalizeGrpcWebContentType,
   parseGrpcTimeout,
@@ -438,7 +438,7 @@ function proxyUnary(params) {
         }
         let payload;
         try {
-          payload = params.route.definition.responseSerialize(response);
+          payload = params.route.definition.responseSerialize(response ?? {});
         } catch (serializeError) {
           writeGrpcWebResponse(
             params.res,
@@ -581,16 +581,16 @@ function writeGrpcWebFrame(res, contentType, frame) {
 
 function writeGrpcWebResponse(res, contentType, payloads, status, message, metadata = {}) {
   startGrpcWebResponse(res, contentType, metadata);
-  const frames = [...payloads.map(encodeDataFrame), encodeTrailerFrame(status, message, metadata)];
   if (contentType.text) {
-    const encoder = new GrpcWebTextEncoder();
-    for (const frame of frames) {
-      const chunk = encoder.push(frame);
-      if (chunk) res.write(chunk);
+    // Match the server-streaming wire behavior: every gRPC-Web frame is
+    // Base64 encoded and flushed independently. Besides reducing buffering,
+    // this is compatible with generated grpc-web text clients that process
+    // padded Base64 entities incrementally.
+    for (const chunk of encodeGrpcWebTextResponseChunks(payloads, status, message, metadata)) {
+      res.write(chunk);
     }
-    const final = encoder.flush();
-    if (final) res.write(final);
   } else {
+    const frames = [...payloads.map(encodeDataFrame), encodeTrailerFrame(status, message, metadata)];
     for (const frame of frames) res.write(frame);
   }
   res.end();
@@ -616,6 +616,7 @@ function startGrpcWebResponse(res, contentType, metadata) {
       !lower ||
       lower.startsWith(":") ||
       hopByHopHeaders.has(lower) ||
+      protocolHeaders.has(lower) ||
       lower === "grpc-status" ||
       lower === "grpc-message"
     )

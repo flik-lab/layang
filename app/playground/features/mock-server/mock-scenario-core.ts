@@ -17,6 +17,7 @@ import type {
   MockMethodScenarioFile,
   MockParseResult,
   MockScenario,
+  MockScenarioCatalogEntry,
   MockScenarioBundle,
   MockScenarioMatcher,
   MockScenarioResponse,
@@ -367,6 +368,21 @@ export function normalizeMockMethodFiles(
         : typeof item.text === "string" && item.text.trim()
           ? item.text
           : formatMockScenarioBundle({ version: 1, scenarios: [] }, declaredFormat);
+    const trustedCatalogScenarios = normalizeMockCatalogScenarios(item.catalogScenarios);
+    const hasTrustedCatalogMetadata = Array.isArray(item.catalogScenarios);
+
+    // Electron/workspace readers already parsed split scenario files. Trust their
+    // compact catalog metadata so the renderer does not parse 1000-track bodies again.
+    if (hasTrustedCatalogMetadata) {
+      output[key] = {
+        format: declaredFormat,
+        scenarioText: rawScenarioText,
+        updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : undefined,
+        catalogScenarios: trustedCatalogScenarios,
+      };
+      continue;
+    }
+
     const declaredParsed = parseMockScenarioText(rawScenarioText, declaredFormat, defaultMockPort);
     const alternateFormat: MockFormat = declaredFormat === "json" ? "yaml" : "json";
     const alternateParsed = declaredParsed.ok
@@ -382,9 +398,38 @@ export function normalizeMockMethodFiles(
       format: resolvedFormat,
       scenarioText: resolvedBundle ? formatMockScenarioBundle(resolvedBundle, resolvedFormat) : rawScenarioText,
       updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : undefined,
+      catalogScenarios: resolvedBundle ? toMockScenarioCatalogEntries(resolvedBundle.scenarios) : [],
     };
   }
   return output;
+}
+
+function normalizeMockCatalogScenarios(value: unknown): MockScenarioCatalogEntry[] {
+  if (!Array.isArray(value)) return [];
+  const output: MockScenarioCatalogEntry[] = [];
+  for (const item of value) {
+    if (!isPlainRecord(item)) continue;
+    const id = String(item.id ?? "").trim();
+    const service = String(item.service ?? "").trim();
+    const method = String(item.method ?? "").trim();
+    if (!id || !service || !method) continue;
+    output.push({
+      id,
+      service,
+      method,
+      description: typeof item.description === "string" ? item.description : undefined,
+    });
+  }
+  return output;
+}
+
+function toMockScenarioCatalogEntries(scenarios: MockScenario[]): MockScenarioCatalogEntry[] {
+  return scenarios.map((scenario) => ({
+    id: scenario.id,
+    service: scenario.service,
+    method: scenario.method,
+    description: scenario.description,
+  }));
 }
 
 /**
@@ -432,12 +477,19 @@ export function updateMockMethodScenarioFile(
   const key = methodKey(method);
   const existing = getMockMethodScenarioFile(project, method);
   const nextFormat: MockFormat = patch.format ?? existing.format;
+  const nextScenarioText = patch.scenarioText ?? existing.scenarioText;
+  let catalogScenarios = patch.catalogScenarios ?? existing.catalogScenarios;
+  if (patch.scenarioText !== undefined || patch.format !== undefined) {
+    const parsed = parseMockScenarioText(nextScenarioText, nextFormat, project.port);
+    catalogScenarios = parsed.ok ? toMockScenarioCatalogEntries(parsed.bundle.scenarios) : [];
+  }
   const nextFile: MockMethodScenarioFile = {
     ...existing,
     ...patch,
     format: nextFormat,
-    scenarioText: patch.scenarioText ?? existing.scenarioText,
+    scenarioText: nextScenarioText,
     updatedAt: new Date().toISOString(),
+    catalogScenarios,
   };
   return {
     ...project,

@@ -8,6 +8,7 @@ import { averageNumbers, percentileFromSorted } from "../shared/number-utils";
 import { defaultUnaryDeadlineMs, maxMessagesPerRequest } from "../shared/workbench-constants";
 import type { BenchmarkResult, TransportMode } from "../shared/workbench-types";
 import { getResultMessageCount } from "../features/workspace/workspace-model";
+import { payloadDocumentService } from "../features/response-viewer/payload-document/payloadDocument.service";
 
 type ToastSeverity = "info" | "success" | "warning" | "error";
 
@@ -159,6 +160,7 @@ export function useBenchmarkRunner({
 
         streamStartedAt = performance.now();
 
+        if (transportMode === "native-grpc") await payloadDocumentService.ensureNativeGrpcProducerPort();
         const result =
           transportMode === "native-grpc"
             ? await invokeNativeGrpc({
@@ -175,6 +177,7 @@ export function useBenchmarkRunner({
             : await invokeGrpcWebText({
                 baseUrl: targetBaseUrl,
                 root: loaded.root,
+                createPayloadDocumentProducerChannel: () => payloadDocumentService.createProducerChannel(),
                 method: selectedMethod,
                 requestJson: parsedJson,
                 metadata,
@@ -275,6 +278,7 @@ export function useBenchmarkRunner({
         benchmarkControl.nativeRunId = transportMode === "native-grpc" ? runId : "";
 
         try {
+          if (transportMode === "native-grpc") await payloadDocumentService.ensureNativeGrpcProducerPort();
           const result =
             transportMode === "native-grpc"
               ? await invokeNativeGrpc({
@@ -290,6 +294,7 @@ export function useBenchmarkRunner({
               : await invokeGrpcWebText({
                   baseUrl: targetBaseUrl,
                   root: loaded.root,
+                  createPayloadDocumentProducerChannel: () => payloadDocumentService.createProducerChannel(),
                   method: selectedMethod,
                   requestJson: parsedJson,
                   metadata,

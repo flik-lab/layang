@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
-import type { BenchmarkResult, WebSocketMockProject, WebSocketMockStatus } from "../../shared/workbench-types";
+import type { BenchmarkResult, WebSocketMockProject } from "../../shared/workbench-types";
 import { createDefaultWebSocketMockProject } from "../workspace/workspace-model";
+import { mockRuntimeStore } from "../mock-server/runtime/mockRuntime.store";
 
 export type WebSocketClientState = {
   readyState: "closed" | "connecting" | "open";
@@ -16,7 +17,7 @@ export type ManagedWebSocketClient = {
   requestId: string;
   url: string;
   startedAt: Date;
-  messages: unknown[];
+  messageCount: number;
 };
 
 export function useWebSocketController() {
@@ -25,7 +26,8 @@ export function useWebSocketController() {
   const [wsBenchmarkIterations, setWsBenchmarkIterations] = useState(5);
   const [wsBenchmarkResults, setWsBenchmarkResults] = useState<BenchmarkResult[]>([]);
   const [wsBenchmarkRunning, setWsBenchmarkRunning] = useState(false);
-  const [wsMockStatus, setWsMockStatus] = useState<WebSocketMockStatus>({ running: false });
+  const wsMockStatus = mockRuntimeStore.getWebSocket();
+  const setWsMockStatus = mockRuntimeStore.patchWebSocket;
   const wsClientRef = useRef<ManagedWebSocketClient | null>(null);
   const [wsClientState, setWsClientState] = useState<WebSocketClientState>({
     readyState: "closed",

@@ -4,12 +4,11 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import { Download, Settings, Storage, UploadFile } from "@/components/shadcn/icons";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import type { ColorMode } from "../../design-system";
+import type { WorkbenchAppBarModel } from "./workbenchShell.types";
 
 type CompatTheme = { palette: { mode: ColorMode } };
 type ButtonClickEvent = ReactMouseEvent<HTMLButtonElement>;
-type WorkbenchViewContext = Record<string, any>;
-
-export function WorkbenchAppBar({ ctx }: { ctx: WorkbenchViewContext }) {
+export function WorkbenchAppBar({ ctx }: { ctx: WorkbenchAppBarModel }) {
   const {
     AppBar,
     AppLogoIcon,

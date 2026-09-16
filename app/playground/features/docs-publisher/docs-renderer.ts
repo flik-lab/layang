@@ -72,11 +72,11 @@ export function buildEndpointExportBundle(input: {
  */
 
 export function buildLatestResultByMethod(sessions: RequestSession[]): Map<string, GrpcResult> {
-  const output = new Map<string, GrpcResult>();
-  for (const session of [...sessions].sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))) {
-    if (session.lastResult) output.set(session.methodKey, session.lastResult);
-  }
-  return output;
+  // RequestSession is control-plane only. Response payloads are owned by
+  // ResponseSessionRegistry and must be explicitly saved to docResults before
+  // they become durable documentation input.
+  void sessions;
+  return new Map<string, GrpcResult>();
 }
 
 /**

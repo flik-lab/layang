@@ -1643,7 +1643,7 @@ export function Tooltip({
     setTooltipPosition({ top, left });
   }, [open, placement]);
 
-  if (!title) return <>{children}</>;
+  if (!title) return children;
 
   const element = isValidElement(children)
     ? (children as ReactElement<AnyProps>)

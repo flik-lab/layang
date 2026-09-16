@@ -1,5 +1,6 @@
 import type { GrpcResult, ProtoSourceFile, RpcMethodInfo } from "@/lib/types";
 import { normalizeDocumentationState } from "@/lib/docs-core.mjs";
+import { scheduleIdleTask } from "../../shared/performance/interaction-performance";
 import {
   defaultEnvironments,
   isEnvironmentKey,
@@ -21,6 +22,7 @@ import { normalizeCollectionHierarchy } from "../collection/collection-tree-doma
 import { clamp } from "../../shared/number-utils";
 import {
   createLayangPayloadPreview,
+  createLayangPayloadPreviewFromSerialized,
   isPayloadPreview,
   normalizeEditableText,
   safeJsonStringify,
@@ -39,7 +41,6 @@ import {
   maxSidebarWidth,
   maxStoredResponseHeight,
   maxStoredResponseWidth,
-  maxStoredEventsPerSession,
   maxStoredMessagesPerResult,
   maxUiEventsPerSession,
   minResponseHeight,
@@ -68,7 +69,6 @@ import type {
   WebSocketMockScenario,
 } from "../../shared/workbench-types";
 
-const maxLiveFullPayloadChars = 1_000_000;
 
 export function createDefaultRestMockProject(): RestMockProject {
   return {
@@ -257,16 +257,11 @@ export function defaultProjectData(): ProjectData {
 /**
  * Runs non-urgent persistence work during idle time so typing/searching stays responsive.
  */
+let runWhenIdleSequence = 0;
+
 export function runWhenIdle(callback: () => void) {
-  if (typeof globalThis === "undefined") return;
-  const idleCallback = (
-    globalThis as typeof globalThis & { requestIdleCallback?: (cb: () => void, options?: { timeout: number }) => void }
-  ).requestIdleCallback;
-  if (idleCallback) {
-    idleCallback(callback, { timeout: 1500 });
-    return;
-  }
-  globalThis.setTimeout(callback, 0);
+  runWhenIdleSequence += 1;
+  scheduleIdleTask(`workspace-idle-${runWhenIdleSequence}`, callback, 1500);
 }
 
 /**
@@ -637,8 +632,18 @@ export function normalizeVisibleResponseTab(tab: ResponseTab | undefined): Respo
  */
 export function normalizeRequestSession(session: RequestSession): RequestSession {
   const requestFallback = session.requestKind === "rest" || session.requestKind === "websocket" ? "" : "{}";
+  const {
+    events: _legacyEvents,
+    lastResult: _legacyLastResult,
+    assertionResults: _legacyAssertionResults,
+    ...controlPlane
+  } = session;
+  void _legacyEvents;
+  void _legacyLastResult;
+  void _legacyAssertionResults;
+
   return {
-    ...session,
+    ...controlPlane,
     requestJson: normalizeEditableText(
       (session as RequestSession & { requestJson?: unknown }).requestJson,
       requestFallback,
@@ -671,11 +676,6 @@ export function normalizeRequestSession(session: RequestSession): RequestSession
     nativeTarget: session.nativeTarget ?? "localhost:50051",
     environmentKey: isEnvironmentKey(session.environmentKey) ? session.environmentKey : "default",
     assertionJson: session.assertionJson ?? defaultAssertion,
-    events: Array.isArray(session.events)
-      ? session.events.slice(-maxUiEventsPerSession).map(compactUiEventForStorage)
-      : [],
-    lastResult: session.lastResult ? compactGrpcResultForClient(session.lastResult) : null,
-    assertionResults: Array.isArray(session.assertionResults) ? session.assertionResults : [],
     responseTab: normalizeVisibleResponseTab(session.responseTab),
     running: false,
     status:
@@ -709,12 +709,20 @@ export function appendLimitedUiEvent(events: UiEvent[], event: UiEvent): UiEvent
  * Compacts a request tab before saving it to localStorage.
  */
 export function compactRequestSessionForStorage(session: RequestSession): RequestSession {
+  const {
+    events: _legacyEvents,
+    lastResult: _legacyLastResult,
+    assertionResults: _legacyAssertionResults,
+    ...controlPlane
+  } = session;
+  void _legacyEvents;
+  void _legacyLastResult;
+  void _legacyAssertionResults;
+
   return {
-    ...session,
+    ...controlPlane,
     running: false,
     status: session.status === "running" ? "cancelled" : session.status,
-    events: session.events.slice(-maxStoredEventsPerSession).map(compactUiEventForStorage),
-    lastResult: session.lastResult ? compactGrpcResultForStorage(session.lastResult) : null,
   };
 }
 
@@ -722,12 +730,12 @@ export function compactRequestSessionForStorage(session: RequestSession): Reques
  * Compacts gRPC results before storing them in live React state.
  */
 export function compactGrpcResultForClient(result: GrpcResult): GrpcResult {
+  const { messageDocumentRefs: _messageDocumentRefs, ...publicResult } = result;
   const messages = result.messages.slice(-maxMessagesPerRequest);
-  const latestIndex = messages.length - 1;
 
   return {
-    ...result,
-    messages: messages.map((message, index) => (index === latestIndex ? message : compactPayload(message))),
+    ...publicResult,
+    messages: messages.map(compactPayload),
   };
 }
 
@@ -735,37 +743,40 @@ export function compactGrpcResultForClient(result: GrpcResult): GrpcResult {
  * Compacts gRPC results more aggressively for localStorage.
  */
 export function compactGrpcResultForStorage(result: GrpcResult): GrpcResult {
+  const { messageDocumentRefs: _messageDocumentRefs, ...publicResult } = result;
   return {
-    ...result,
+    ...publicResult,
     messages: result.messages.slice(-maxStoredMessagesPerResult).map(compactPayload),
   };
 }
 
 /**
- * Compacts a UI event payload for dense rendering while keeping a live full payload when it is safe.
+ * Compacts large non-document UI event payloads for dense rendering.
  */
 export function compactUiEvent(event: UiEvent): UiEvent {
+  if (event.documentId) return event;
   if (isPayloadPreview(event.payload)) return event;
-
-  const compactedPayload = compactPayload(event.payload);
-  if (compactedPayload === event.payload) return event;
+  if (typeof event.payloadOriginalChars === "number" && event.payloadOriginalChars <= maxPayloadPreviewChars) {
+    return event;
+  }
 
   const serialized = safeJsonStringify(event.payload);
-  const shouldKeepFullPayload = serialized.length <= maxLiveFullPayloadChars;
+  if (serialized.length <= maxPayloadPreviewChars) return event;
 
   return {
     ...event,
-    payload: compactedPayload,
-    ...(shouldKeepFullPayload ? { fullPayload: event.fullPayload ?? event.payload } : {}),
+    payload: createLayangPayloadPreviewFromSerialized(event.payload, serialized, maxPayloadPreviewChars),
+    payloadOriginalChars: serialized.length,
   };
 }
 
 /**
- * Compacts a UI event before persisting it. Full payloads are intentionally dropped from storage.
+ * Compacts a UI event before persisting it. Worker document IDs are transient
+ * and are intentionally dropped from local storage.
  */
 export function compactUiEventForStorage(event: UiEvent): UiEvent {
-  const { fullPayload, ...rest } = event;
-  return { ...rest, payload: compactPayload(fullPayload ?? rest.payload) };
+  const { documentId: _documentId, payloadOriginalChars: _payloadOriginalChars, ...rest } = event;
+  return { ...rest, payload: compactPayload(rest.payload) };
 }
 
 /**

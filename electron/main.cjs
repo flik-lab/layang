@@ -15,6 +15,10 @@ const { registerCertificateSettingsIpc } = require("./ipc/certificate-settings-i
 const { registerAppZoomIpc } = require("./ipc/app-zoom-ipc.cjs");
 const { registerGitIpc } = require("./ipc/git-ipc.cjs");
 const { registerCliIpc, stopActiveCliRuns } = require("./ipc/cli-ipc.cjs");
+const { registerRuntimeIpc } = require("./ipc/runtime-ipc.cjs");
+const { registerGrpcWebTransportIpc } = require("./ipc/grpc-web-transport-ipc.cjs");
+const { createUtilityRuntimeHost } = require("./runtime/utility-runtime-host.cjs");
+const { createDisposableTransportRuntimeManager } = require("./runtime/disposable-transport-runtime-manager.cjs");
 const {
   normalizeActiveScenarioIds,
   normalizeEnabledMethods,
@@ -55,6 +59,9 @@ let pendingWorkspaceOpen = findWorkspaceArgument(process.argv);
 const workspaceInternalWriteAt = new Map();
 const workspaceInternalFingerprint = new Map();
 const workspaceWriteInProgress = new Set();
+let utilityRuntimeHost = null;
+let transportRuntimeManager = null;
+const runtimeMode = process.env.LAYANG_RUNTIME_MODE || "utility";
 
 startApplication();
 
@@ -71,11 +78,11 @@ function startApplication() {
   }
 
   registerWindowIpc();
-  registerNativeGrpcIpc();
-  registerGrpcMockIpc();
+  registerNativeGrpcIpc({ runtimeMode, getRuntimeHost: () => utilityRuntimeHost });
+  registerGrpcMockIpc({ runtimeMode, getRuntimeHost: () => utilityRuntimeHost });
   registerGrpcGatewayIpc();
-  registerWebSocketMockIpc();
-  registerRestMockIpc();
+  registerWebSocketMockIpc({ runtimeMode, getRuntimeHost: () => utilityRuntimeHost });
+  registerRestMockIpc({ runtimeMode, getRuntimeHost: () => utilityRuntimeHost });
   registerLoggerIpc();
   registerCertificateSettingsIpc();
   registerAppZoomIpc();
@@ -133,6 +140,15 @@ function startApplication() {
     configureAppZoomSettings({ app });
     registerProcessErrorHandlers(getLogger("process"));
     mainLogger.info("app ready", { version: app.getVersion(), isPackaged: app.isPackaged });
+    utilityRuntimeHost = createUtilityRuntimeHost();
+    transportRuntimeManager = createDisposableTransportRuntimeManager();
+    registerRuntimeIpc({ getRuntimeHost: () => utilityRuntimeHost });
+    registerGrpcWebTransportIpc({ getTransportRuntimeManager: () => transportRuntimeManager });
+    await utilityRuntimeHost.start().catch((error) => {
+      mainLogger.error("failed to start utility runtime", {
+        error: error?.message ? String(error.message) : String(error),
+      });
+    });
     if (pendingWorkspaceOpen) {
       await writeWorkspacePreference({ workspaceDirectoryPath: pendingWorkspaceOpen }).catch((error) => {
         mainLogger.warn("failed to persist CLI launch workspace", {
@@ -258,6 +274,8 @@ function handleWindowsSquirrelStartupEvent() {
 function stopRuntimeServices(reason) {
   mainLogger.info(`${reason}: stopping mock servers`);
   stopActiveCliRuns();
+  void utilityRuntimeHost?.dispose();
+  if (transportRuntimeManager) void transportRuntimeManager.disposeAll();
   void stopMockServer();
   void stopAllGatewayProfiles();
   void stopWebSocketMockServer();
@@ -1482,6 +1500,14 @@ async function readMockServerFromFolder(mocksDir) {
           ? `${JSON.stringify({ version: 1, scenarios }, null, 2)}\n`
           : stringifyWorkspaceYaml({ version: 1, scenarios }),
       updatedAt: new Date().toISOString(),
+      catalogScenarios: scenarios
+        .map((scenario) => ({
+          id: String(scenario?.id || "").trim(),
+          service: String(scenario?.service || "").trim(),
+          method: String(scenario?.method || "").trim(),
+          description: typeof scenario?.description === "string" ? scenario.description : undefined,
+        }))
+        .filter((scenario) => scenario.id && scenario.service && scenario.method),
     };
   }
   if (Object.keys(methodFiles).length) {

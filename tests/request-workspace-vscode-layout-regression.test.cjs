@@ -49,12 +49,12 @@ test("request connection row exposes environment and transport as select-like dr
 });
 
 test("Response panel has no normal separator line or verbose empty-response copy", () => {
-  const main = read("app/playground/features/shell/workbench-main-panel.tsx");
+  const panel = read("app/playground/features/response-viewer/response-workbench-panel.tsx");
   const toolbar = read("app/playground/features/response-viewer/response-toolbar.tsx");
-  assert.match(main, /bgcolor: "transparent"/);
-  assert.match(main, /borderTop: 0/);
-  assert.doesNotMatch(main, /No response yet/);
-  assert.doesNotMatch(main, /responseOwner/);
+  assert.match(panel, /bgcolor: "transparent"/);
+  assert.match(panel, /borderRadius: 0/);
+  assert.doesNotMatch(panel, /No response yet/);
+  assert.doesNotMatch(panel, /responseOwner/);
   assert.match(toolbar, /\{summary \? \(/);
 });
 

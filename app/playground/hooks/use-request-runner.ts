@@ -11,11 +11,11 @@ import {
   evaluateAssertions,
   resultToUiEvents,
 } from "../features/request-runner/request-result-utils";
-import {
-  compactGrpcResultForClient,
-  compactUiEvent,
-  getResultMessageCount,
-} from "../features/workspace/workspace-model";
+import { getResultMessageCount } from "../features/workspace/workspace-model";
+import { payloadDocumentService } from "../features/response-viewer/payload-document/payloadDocument.service";
+import { responseSessionRegistry } from "../features/response-viewer/model/responseSessionRegistry";
+import { transportLifecycleStore } from "../features/response-viewer/model/transportLifecycle.store";
+import { summarizeGrpcResult } from "../features/response-viewer/model/responseResult.types";
 import { createId } from "../shared/entity-utils";
 import { toErrorMessage } from "../shared/error-utils";
 import { formatTimestampShort } from "../shared/formatters";
@@ -78,6 +78,7 @@ export type UseRequestRunnerOptions = {
   setHistory: (updater: (current: HistoryItem[]) => HistoryItem[]) => void;
   showToast: (message: string, severity?: ToastSeverity) => void;
   appendLiveEventToSession: (sessionId: string, event: GrpcEvent) => void;
+  compactUiEventsForResponse: (sessionId: string, events: UiEvent[]) => Promise<UiEvent[]>;
   upsertRequestSessionPreservingOrder: (session: RequestSession) => void;
   activateRequestSession: (session: RequestSession) => void;
   updateRequestSession: (sessionId: string, patch: Partial<RequestSession>) => void;
@@ -111,12 +112,12 @@ export function useRequestRunner(options: UseRequestRunnerOptions) {
         responseTab,
         environments,
         setError,
-        setEvents,
         setLastResult,
         setAssertionResults,
         setHistory,
         showToast,
         appendLiveEventToSession,
+        compactUiEventsForResponse,
         upsertRequestSessionPreservingOrder,
         activateRequestSession,
         updateRequestSession,
@@ -156,12 +157,12 @@ export function useRequestRunner(options: UseRequestRunnerOptions) {
           targetDraft,
           responseTab,
           setError,
-          setEvents,
           setLastResult,
           setAssertionResults,
           setHistory,
           showToast,
           appendLiveEventToSession,
+          compactUiEventsForResponse,
           upsertRequestSessionPreservingOrder,
           activateRequestSession,
           updateRequestSession,
@@ -261,9 +262,6 @@ export function useRequestRunner(options: UseRequestRunnerOptions) {
         environmentKey: targetEnvironmentKey,
         timeoutMs: targetTimeoutMs,
         streamIdleTimeoutMs: targetStreamIdleTimeoutMs,
-        events: [],
-        lastResult: null,
-        assertionResults: [],
         responseTab: reusableSession?.responseTab ?? (runSession.id === activeRequestId ? responseTab : "messages"),
         running: true,
         status: "running",
@@ -271,6 +269,9 @@ export function useRequestRunner(options: UseRequestRunnerOptions) {
       };
 
       setError("");
+      if (targetTransportMode === "grpc-web" && window.electronGrpcWebTransport?.isAvailable) {
+        responseSessionRegistry.getOrCreate(targetSessionId).store.reset();
+      }
       upsertRequestSessionPreservingOrder(startedSession);
       activateRequestSession(startedSession);
 
@@ -284,6 +285,7 @@ export function useRequestRunner(options: UseRequestRunnerOptions) {
         let result: GrpcResult;
 
         if (targetTransportMode === "native-grpc") {
+          await payloadDocumentService.ensureNativeGrpcProducerPort();
           result = await invokeNativeGrpc({
             runId: targetSessionId,
             targetUrl: targetNativeTarget,
@@ -299,8 +301,10 @@ export function useRequestRunner(options: UseRequestRunnerOptions) {
           });
         } else {
           result = await invokeGrpcWebText({
+            runId: targetSessionId,
             baseUrl: targetBaseUrl,
             root: loaded.root,
+            createPayloadDocumentProducerChannel: () => payloadDocumentService.createProducerChannel(),
             method: methodToRun,
             requestJson: parsedJson,
             metadata: metadataToRun,
@@ -319,20 +323,18 @@ export function useRequestRunner(options: UseRequestRunnerOptions) {
           const grpcMessage = decodeGrpcMessageForUi(result.trailers["grpc-message"] ?? "");
           showToast(`gRPC error ${status}${grpcMessage ? `: ${grpcMessage}` : ""}`, "error");
         }
-        const clientSafeResult = compactGrpcResultForClient(result);
-        const resultEvents = resultToUiEvents(result).map(compactUiEvent);
+        const resultEvents = await compactUiEventsForResponse(targetSessionId, resultToUiEvents(result));
+        const clientSafeResult = buildClientResultFromCompactedEvents(result, resultEvents);
         const evaluatedAssertions = evaluateAssertions(clientSafeResult, assertionToRun);
+        const responseRuntime = responseSessionRegistry.getOrCreate(targetSessionId);
+        responseRuntime.store.setEvents(resultEvents);
+        responseRuntime.setResultSummary(summarizeGrpcResult(clientSafeResult));
+        responseRuntime.setAssertionResults(evaluatedAssertions);
         if (activeRequestIdRef.current === targetSessionId) {
-          setEvents(resultEvents);
           setLastResult(clientSafeResult);
           setAssertionResults(evaluatedAssertions);
         }
-        updateRequestSession(targetSessionId, {
-          events: resultEvents,
-          lastResult: clientSafeResult,
-          assertionResults: evaluatedAssertions,
-          status: finalStatus,
-        });
+        updateRequestSession(targetSessionId, { status: finalStatus });
         const completedAt = new Date();
         setHistory((current) =>
           [
@@ -349,6 +351,9 @@ export function useRequestRunner(options: UseRequestRunnerOptions) {
           ].slice(0, 80),
         );
       } catch (err) {
+        if (targetTransportMode === "grpc-web" && window.electronGrpcWebTransport?.isAvailable) {
+          responseSessionRegistry.get(targetSessionId)?.store.reset();
+        }
         if ((err as Error).name === "AbortError") {
           finalStatus = "cancelled";
           appendLiveEventToSession(targetSessionId, {
@@ -382,6 +387,12 @@ export function useRequestRunner(options: UseRequestRunnerOptions) {
       cancelledRunIdsRef.current.add(sessionId);
       abortControllersRef.current.get(sessionId)?.abort();
       window.electronGrpc?.cancelActive?.(sessionId)?.catch(() => undefined);
+      window.electronGrpcWebTransport?.cancel(sessionId).catch(() => undefined);
+      responseSessionRegistry.get(sessionId)?.store.reset();
+      if (options.activeRequestId === sessionId) {
+        options.setLastResult(null);
+        options.setAssertionResults([]);
+      }
       options.updateRequestSession(sessionId, { running: false, status: "cancelled" });
     },
     [options],
@@ -404,12 +415,12 @@ type CollectionRunOptions = {
   targetDraft: string;
   responseTab: ResponseTab;
   setError: (value: string) => void;
-  setEvents: (value: UiEvent[]) => void;
   setLastResult: (value: GrpcResult | null) => void;
   setAssertionResults: (value: AssertionResult[]) => void;
   setHistory: (updater: (current: HistoryItem[]) => HistoryItem[]) => void;
   showToast: (message: string, severity?: ToastSeverity) => void;
   appendLiveEventToSession: (sessionId: string, event: GrpcEvent) => void;
+  compactUiEventsForResponse: (sessionId: string, events: UiEvent[]) => Promise<UiEvent[]>;
   upsertRequestSessionPreservingOrder: (session: RequestSession) => void;
   activateRequestSession: (session: RequestSession) => void;
   updateRequestSession: (sessionId: string, patch: Partial<RequestSession>) => void;
@@ -432,12 +443,12 @@ async function runCollectionRequest(options: CollectionRunOptions) {
     targetDraft,
     responseTab,
     setError,
-    setEvents,
     setLastResult,
     setAssertionResults,
     setHistory,
     showToast,
     appendLiveEventToSession,
+    compactUiEventsForResponse,
     upsertRequestSessionPreservingOrder,
     activateRequestSession,
     updateRequestSession,
@@ -476,10 +487,8 @@ async function runCollectionRequest(options: CollectionRunOptions) {
     nativeTarget: activeNativeTarget,
     environmentKey: activeEnvironmentKey,
     assertionJson: assertionToRun,
+    responseSessionId: reusableSession?.responseSessionId ?? targetSessionId,
     responseTab: reusableSession?.responseTab ?? (targetSessionId === activeRequestId ? responseTab : "messages"),
-    events: [],
-    lastResult: null,
-    assertionResults: [],
     running: true,
     status: "running",
     openedAt: reusableSession?.openedAt ?? now,
@@ -519,11 +528,14 @@ async function runCollectionRequest(options: CollectionRunOptions) {
     if (finalStatus === "error") {
       showToast(result.trailers["grpc-message"] || `${collectionRequest.kind} request failed`, "error");
     }
-    const clientSafeResult = compactGrpcResultForClient(result);
-    const resultEvents = resultToUiEvents(result).map(compactUiEvent);
+    const resultEvents = await compactUiEventsForResponse(targetSessionId, resultToUiEvents(result));
+    const clientSafeResult = buildClientResultFromCompactedEvents(result, resultEvents);
     const evaluatedAssertions = evaluateAssertions(clientSafeResult, assertionToRun);
+    const responseRuntime = responseSessionRegistry.getOrCreate(targetSessionId);
+    responseRuntime.store.setEvents(resultEvents);
+    responseRuntime.setResultSummary(summarizeGrpcResult(clientSafeResult));
+    responseRuntime.setAssertionResults(evaluatedAssertions);
     if (activeRequestIdRef.current === targetSessionId) {
-      setEvents(resultEvents);
       setLastResult(clientSafeResult);
       setAssertionResults(evaluatedAssertions);
     }
@@ -532,9 +544,6 @@ async function runCollectionRequest(options: CollectionRunOptions) {
       metadata: metadataToRun.map((item) => ({ ...item })),
       requestUrl,
       baseUrl: requestUrl,
-      events: resultEvents,
-      lastResult: clientSafeResult,
-      assertionResults: evaluatedAssertions,
       status: finalStatus,
     });
     const completedAt = new Date();
@@ -640,16 +649,25 @@ async function invokeWebSocketRequest(options: {
 }): Promise<GrpcResult> {
   const startedAt = new Date();
   const messages: unknown[] = [];
+  let totalMessages = 0;
   options.onEvent({ type: "log", level: "info", message: "Opening WebSocket", details: { url: options.url } });
+  transportLifecycleStore.increment("activeStreamSubscriptions");
 
   return new Promise((resolve, reject) => {
     let settled = false;
+    let lifecycleClosed = false;
     let socket: WebSocket | null = null;
+    const closeLifecycle = (): void => {
+      if (lifecycleClosed) return;
+      lifecycleClosed = true;
+      transportLifecycleStore.decrement("activeStreamSubscriptions");
+    };
     const finish = (code: number, reason: string, ok: boolean) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
       options.signal.removeEventListener("abort", abort);
+      closeLifecycle();
       const completedAt = new Date();
       const trailers = {
         "grpc-status": ok ? "0" : "2",
@@ -662,7 +680,7 @@ async function invokeWebSocketRequest(options: {
         headers: { upgrade: "websocket" },
         trailers,
         messages,
-        totalMessages: messages.length,
+        totalMessages,
         durationMs: completedAt.getTime() - startedAt.getTime(),
         requestUrl: options.url,
         startedAt: startedAt.toISOString(),
@@ -671,6 +689,11 @@ async function invokeWebSocketRequest(options: {
       });
     };
     const abort = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      options.signal.removeEventListener("abort", abort);
+      closeLifecycle();
       try {
         socket?.close(1000, "Cancelled");
       } catch {
@@ -695,7 +718,9 @@ async function invokeWebSocketRequest(options: {
       const protocols = webSocketProtocolsFromMetadata(options.metadata);
       socket = protocols.length ? new WebSocket(options.url, protocols) : new WebSocket(options.url);
     } catch (error) {
+      settled = true;
       clearTimeout(timeout);
+      closeLifecycle();
       reject(error);
       return;
     }
@@ -711,9 +736,12 @@ async function invokeWebSocketRequest(options: {
     };
     socket.onmessage = (event) => {
       const value = parsePossiblyJson(String(event.data));
-      messages.push(value);
-      options.onEvent({ type: "message", index: messages.length - 1, value });
-      if (messages.length >= options.maxMessages) {
+      const index = totalMessages;
+      totalMessages += 1;
+      messages.push(compactTransportPreview(value));
+      if (messages.length > options.maxMessages) messages.shift();
+      options.onEvent({ type: "message", index, value });
+      if (totalMessages >= options.maxMessages) {
         try {
           socket?.close(1000, "Message limit reached");
         } catch {
@@ -724,11 +752,26 @@ async function invokeWebSocketRequest(options: {
     };
     socket.onerror = () => {
       if (settled) return;
+      settled = true;
       clearTimeout(timeout);
+      options.signal.removeEventListener("abort", abort);
+      closeLifecycle();
       reject(new Error("WebSocket connection failed."));
     };
-    socket.onclose = (event) => finish(event.code, event.reason, event.wasClean || messages.length > 0);
+    socket.onclose = (event) => finish(event.code, event.reason, event.wasClean || totalMessages > 0);
   });
+}
+
+
+function compactTransportPreview(value: unknown, maxChars = 12_000): string {
+  if (typeof value === "string") return value.length <= maxChars ? value : value.slice(0, maxChars);
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) return String(value);
+    return serialized.length <= maxChars ? serialized : serialized.slice(0, maxChars);
+  } catch {
+    return String(value).slice(0, maxChars);
+  }
 }
 
 function buildRestFetchUrl(request: ActiveCollectionRequest, fallbackUrl: string): URL {
@@ -797,6 +840,17 @@ function parsePossiblyJson(text: string): unknown {
   }
 }
 
+
+function buildClientResultFromCompactedEvents(result: GrpcResult, events: UiEvent[]): GrpcResult {
+  const { messageDocumentRefs: _messageDocumentRefs, ...publicResult } = result;
+  const retainedMessages = result.messages.slice(-maxMessagesPerRequest);
+  if (retainedMessages.length === 0) return { ...publicResult, messages: [] };
+
+  const messageEvents = events.filter((event) => event.kind === "message").slice(-retainedMessages.length);
+  const messages = retainedMessages.map((message, index) => messageEvents[index]?.payload ?? message);
+
+  return { ...publicResult, messages };
+}
 
 function buildRequestCliCommand(input: {
   collectionRequest: ActiveCollectionRequest | null;

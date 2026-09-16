@@ -16,6 +16,7 @@ Machine-local preferences such as imported certificates, TLS bypass, logger sett
 - [Mock State Sync](./mock-state-sync.md)
 - [Mock Server Runtime](./mock-server-runtime.md)
 - [Request Session Tabs](./request-session-tabs.md)
+- [Response Runtime](./response-runtime.md)
 - [Certificate Settings](./certificate-settings.md)
 - [App Zoom Settings](./app-zoom-settings.md)
 - [Electron IPC](./electron-ipc.md)

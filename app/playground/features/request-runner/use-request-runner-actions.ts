@@ -20,6 +20,8 @@ import { copyTextWithAnnouncement } from "@/lib/accessibility";
 import type { ManagedWebSocketClient, WebSocketClientState } from "../websocket/use-websocket-controller";
 import { savedExampleAssertionJson } from "../../shared/entity-utils";
 import { recordGuiCliCommand } from "../cli/cli-command-history";
+import { responseSessionRegistry } from "../response-viewer/model/responseSessionRegistry";
+import { summarizeGrpcResult } from "../response-viewer/model/responseResult.types";
 
 type StateSetter<T> = (value: T | ((current: T) => T)) => void;
 type CollectionNamedRequest = ApiCollectionRequest & { collectionName?: string };
@@ -540,12 +542,17 @@ export function useRequestRunnerActions(ctx: ActionContext) {
     trailers: Record<string, string> = { "grpc-status": "0", "grpc-message": "WebSocket connected" },
   ): GrpcResult {
     const completedAt = new Date();
+    const messages = responseSessionRegistry
+      .getOrCreate(client.sessionId)
+      .store.getEvents()
+      .filter((event) => event.kind === "message")
+      .map((event) => event.payload);
     return {
       httpStatus: 101,
       headers: { upgrade: "websocket" },
       trailers,
-      messages: [...client.messages],
-      totalMessages: client.messages.length,
+      messages,
+      totalMessages: client.messageCount,
       durationMs: completedAt.getTime() - client.startedAt.getTime(),
       requestUrl: client.url,
       startedAt: client.startedAt.toISOString(),
@@ -556,18 +563,9 @@ export function useRequestRunnerActions(ctx: ActionContext) {
 
   function updateWebSocketLiveResult(client: ManagedWebSocketClient) {
     const result = buildWebSocketResult(client);
-    const evaluatedAssertions = evaluateAssertions(result, assertionJson);
-    if (activeRequestIdRef.current === client.sessionId) {
-      setLastResult(result);
-      setAssertionResults(evaluatedAssertions);
-      setResponseTab("messages");
-    }
-    updateRequestSession(client.sessionId, {
-      lastResult: result,
-      assertionResults: evaluatedAssertions,
-      responseTab: "messages",
-      status: "running",
-    });
+    responseSessionRegistry.getOrCreate(client.sessionId).setResultSummary(summarizeGrpcResult(result));
+    if (activeRequestIdRef.current === client.sessionId) setResponseTab("messages");
+    updateRequestSession(client.sessionId, { responseTab: "messages", status: "running" });
   }
 
   function prepareWebSocketClientSession(url: string) {
@@ -579,8 +577,10 @@ export function useRequestRunnerActions(ctx: ActionContext) {
     const reusableSession =
       requestSessions.find((session) => session.methodKey === activeCollectionRequest.id) ??
       (activeSession?.methodKey === activeCollectionRequest.id ? activeSession : null);
+    const sessionId = reusableSession?.id ?? createId();
     const session: RequestSession = {
-      id: reusableSession?.id ?? createId(),
+      id: sessionId,
+      responseSessionId: reusableSession?.responseSessionId ?? sessionId,
       methodKey: activeCollectionRequest.id,
       title: activeCollectionRequest.name,
       serviceName: activeCollectionRequest.collectionName ?? "WebSocket Collection",
@@ -594,9 +594,6 @@ export function useRequestRunnerActions(ctx: ActionContext) {
       environmentKey: activeEnvironmentKey,
       assertionJson,
       responseTab: "messages",
-      events: [],
-      lastResult: null,
-      assertionResults: [],
       running: true,
       status: "running",
       openedAt: reusableSession?.openedAt ?? now,
@@ -694,7 +691,7 @@ export function useRequestRunnerActions(ctx: ActionContext) {
       requestId: activeCollectionRequest.id,
       url,
       startedAt: new Date(),
-      messages: [],
+      messageCount: 0,
     };
     wsClientRef.current = client;
     setWsClientState({ readyState: "connecting", url, sessionId: session.id, messageCount: 0 });
@@ -707,15 +704,16 @@ export function useRequestRunnerActions(ctx: ActionContext) {
         headers: { upgrade: "websocket" },
         contentType: "",
       });
-      setWsClientState({ readyState: "open", url, sessionId: session.id, messageCount: client.messages.length });
+      setWsClientState({ readyState: "open", url, sessionId: session.id, messageCount: client.messageCount });
       if (sendInitialMessage) sendMessageThroughActiveWebSocket(client);
     };
 
     socket.onmessage = (event) => {
       const value = safeJsonParse(String(event.data));
-      client.messages.push(value);
-      appendWebSocketEvent(session.id, { type: "message", index: client.messages.length - 1, value });
-      setWsClientState({ readyState: "open", url, sessionId: session.id, messageCount: client.messages.length });
+      const messageIndex = client.messageCount;
+      client.messageCount += 1;
+      appendWebSocketEvent(session.id, { type: "message", index: messageIndex, value });
+      setWsClientState({ readyState: "open", url, sessionId: session.id, messageCount: client.messageCount });
       updateWebSocketLiveResult(client);
     };
 
@@ -728,7 +726,7 @@ export function useRequestRunnerActions(ctx: ActionContext) {
     };
 
     socket.onclose = (event) => {
-      const ok = event.wasClean || client.messages.length > 0 || event.code === 1000;
+      const ok = event.wasClean || client.messageCount > 0 || event.code === 1000;
       const trailers = {
         "grpc-status": ok ? "0" : "2",
         "grpc-message": event.reason || (ok ? "WebSocket closed" : "WebSocket closed unexpectedly"),
@@ -737,16 +735,14 @@ export function useRequestRunnerActions(ctx: ActionContext) {
       appendWebSocketEvent(session.id, { type: "trailers", trailers });
       const result = buildWebSocketResult(client, trailers);
       const evaluatedAssertions = evaluateAssertions(result, assertionJson);
+      const responseRuntime = responseSessionRegistry.getOrCreate(session.id);
+      responseRuntime.setResultSummary(summarizeGrpcResult(result));
+      responseRuntime.setAssertionResults(evaluatedAssertions);
       if (activeRequestIdRef.current === session.id) {
         setLastResult(result);
         setAssertionResults(evaluatedAssertions);
       }
-      updateRequestSession(session.id, {
-        lastResult: result,
-        assertionResults: evaluatedAssertions,
-        running: false,
-        status: ok ? "done" : "error",
-      });
+      updateRequestSession(session.id, { running: false, status: ok ? "done" : "error" });
       const timestamp = new Date().toISOString();
       setHistory((current) =>
         [
@@ -755,7 +751,7 @@ export function useRequestRunnerActions(ctx: ActionContext) {
             method: `${activeCollectionRequest.collectionName ?? "Collection"}/${activeCollectionRequest.name}`,
             status: trailers["grpc-status"],
             durationMs: result.durationMs,
-            messageCount: client.messages.length,
+            messageCount: client.messageCount,
             time: formatTimestampShort(timestamp),
             timestamp,
           },
@@ -763,7 +759,7 @@ export function useRequestRunnerActions(ctx: ActionContext) {
         ].slice(0, 80),
       );
       if (wsClientRef.current?.sessionId === session.id) wsClientRef.current = null;
-      setWsClientState({ readyState: "closed", url, sessionId: session.id, messageCount: client.messages.length });
+      setWsClientState({ readyState: "closed", url, sessionId: session.id, messageCount: client.messageCount });
     };
   }
 

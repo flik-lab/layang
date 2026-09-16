@@ -1,16 +1,19 @@
 "use client";
 
+import { useRef } from "react";
 import type * as protobuf from "protobufjs";
 import type { MetadataPair, RpcMethodInfo } from "@/lib/types";
 import { createRequestSession } from "../request-runner/request-session-model";
 import { reorderRequestSessionList, upsertRequestSessionPreservingOrderList } from "./request-session-domain";
-import { compactRequestSessionForStorage, normalizeVisibleResponseTab } from "../workspace/workspace-model";
+import { compactRequestSessionForStorage, normalizeVisibleResponseTab, runWhenIdle } from "../workspace/workspace-model";
 import { enqueueWorkspaceAutosave } from "../workspace/workspace-autosave";
 import { extractRequestBodyFromMockScenario, generateRandomExampleFromType } from "../mock-server/mock-scenario-model";
 import { defaultMetadata, projectStorageKey } from "../../shared/workbench-constants";
+import { responseSessionRegistry } from "../response-viewer/model/responseSessionRegistry";
 import { toErrorMessage } from "../../shared/error-utils";
 import { methodKey } from "../../shared/rpc-method-utils";
 import { createPinnedGrpcBinding, findProtoVersion, grpcBindingIdentity } from "../proto-library/proto-library-domain";
+import type { GrpcRequestBinding } from "../proto-library/proto-library-types";
 import type {
   ApiCollection,
   ApiCollectionRequest,
@@ -34,14 +37,12 @@ export function useRequestSessionActions(scope: any) {
     activeRunning,
     activeTransportMode,
     assertionJson,
-    assertionResults,
     baseUrl,
     closeManualWebSocketClient,
     collections,
     currentMockActiveScenario,
     currentMockScenarios,
     environmentKey,
-    events,
     findCollectionRequestById,
     getProjectSnapshot,
     getWorkspaceExportBundle,
@@ -84,13 +85,59 @@ export function useRequestSessionActions(scope: any) {
     wsClientRef,
   } = scope;
 
+  const pendingRequestTabPersistenceRef = useRef<{
+    nextSessions: RequestSession[];
+    nextActiveRequestId: string;
+  } | null>(null);
+  const requestTabPersistenceScheduledRef = useRef(false);
+  const requestTabPersistenceContextRef = useRef({ getProjectSnapshot, selectedMethodKey, requestJson });
+  requestTabPersistenceContextRef.current = { getProjectSnapshot, selectedMethodKey, requestJson };
+  const pendingSessionSnapshotRef = useRef(new Map<string, Partial<RequestSession>>());
+  const sessionSnapshotFlushScheduledRef = useRef(false);
+
+  function stageRequestSessionSnapshot(sessionId: string, patch: Partial<RequestSession>) {
+    if (!sessionId) return;
+    const current = pendingSessionSnapshotRef.current.get(sessionId) ?? {};
+    pendingSessionSnapshotRef.current.set(sessionId, { ...current, ...patch });
+    if (sessionSnapshotFlushScheduledRef.current) return;
+    sessionSnapshotFlushScheduledRef.current = true;
+    runWhenIdle(() => {
+      sessionSnapshotFlushScheduledRef.current = false;
+      const pending = new Map(pendingSessionSnapshotRef.current);
+      pendingSessionSnapshotRef.current.clear();
+      if (pending.size === 0) return;
+      const updatedAt = new Date().toISOString();
+      setRequestSessions((sessions: RequestSession[]) =>
+        sessions.map((session) => {
+          const staged = pending.get(session.id);
+          return staged ? { ...session, ...staged, updatedAt } : session;
+        }),
+      );
+    });
+  }
+
+  function effectiveRequestSession(session: RequestSession): RequestSession {
+    const staged = pendingSessionSnapshotRef.current.get(session.id);
+    return staged ? { ...session, ...staged } : session;
+  }
+
+  function syncProtoContext(binding?: GrpcRequestBinding) {
+    if (!binding) return;
+    const compiled = protoRuntimeRegistry?.resolveVersion(binding.libraryId, binding.versionId);
+    if (!compiled) return;
+    if (activeProtoLibraryId !== compiled.library.id) setActiveProtoLibraryId(compiled.library.id);
+    if (activeProtoVersionId !== compiled.version.id) setActiveProtoVersionId(compiled.version.id);
+    if (loaded !== compiled.loaded && typeof setLoaded === "function") setLoaded(compiled.loaded);
+  }
+
   const getRequestRunner = () => requestRunner?.current ?? requestRunner;
 
-  function selectMethod(root: protobuf.Root, method: RpcMethodInfo) {
+  function selectMethod(root: protobuf.Root, method: RpcMethodInfo, grpcOverride?: GrpcRequestBinding) {
     setActiveCollectionRequestId("");
     const key = methodKey(method);
     const activeProto = findProtoVersion(protoLibraries, activeProtoLibraryId, activeProtoVersionId);
-    const grpc = activeProto ? createPinnedGrpcBinding(activeProto.library, activeProto.version, method) : undefined;
+    const grpc =
+      grpcOverride ?? (activeProto ? createPinnedGrpcBinding(activeProto.library, activeProto.version, method) : undefined);
     const identity = grpcBindingIdentity(grpc, key);
     const existing = requestSessions.find(
       (session: RequestSession) => grpcBindingIdentity(session.grpc, session.methodKey) === identity,
@@ -119,8 +166,9 @@ export function useRequestSessionActions(scope: any) {
   }
 
   function activateRequestSession(session: RequestSession) {
-    if (activeRequestIdRef.current && activeRequestIdRef.current !== session.id) {
-      updateRequestSession(activeRequestIdRef.current, {
+    const nextSession = effectiveRequestSession(session);
+    if (activeRequestIdRef.current && activeRequestIdRef.current !== nextSession.id) {
+      stageRequestSessionSnapshot(activeRequestIdRef.current, {
         requestJson,
         metadata,
         transportMode: activeTransportMode,
@@ -128,67 +176,48 @@ export function useRequestSessionActions(scope: any) {
         nativeTarget: activeNativeTarget,
         environmentKey: activeEnvironmentKey,
         assertionJson,
-        events,
-        lastResult: scope.lastResult,
-        assertionResults,
         responseTab: scope.responseTab,
       });
     }
 
-    activeRequestIdRef.current = session.id;
-    setActiveRequestId(session.id);
-    const pinnedCompiled = session.grpc
-      ? protoRuntimeRegistry?.resolveVersion(session.grpc.libraryId, session.grpc.versionId)
-      : null;
-    if (pinnedCompiled) {
-      setActiveProtoLibraryId(pinnedCompiled.library.id);
-      setActiveProtoVersionId(pinnedCompiled.version.id);
-      if (typeof setLoaded === "function") setLoaded(pinnedCompiled.loaded);
-    }
-    if (session.requestKind === "grpc") {
-      const sourceRequestId = session.sourceRequestId ?? session.methodKey;
+    activeRequestIdRef.current = nextSession.id;
+    setActiveRequestId(nextSession.id);
+    syncProtoContext(nextSession.grpc);
+
+    if (nextSession.requestKind === "grpc") {
+      const sourceRequestId = nextSession.sourceRequestId ?? nextSession.methodKey;
       const collectionGrpcRequest = findCollectionRequestById(collections, sourceRequestId);
-      const binding = session.grpc ?? collectionGrpcRequest?.grpc;
-      const compiled = binding ? protoRuntimeRegistry?.resolveVersion(binding.libraryId, binding.versionId) : null;
-      const grpcLoaded = compiled?.loaded ?? loaded;
+      const binding = nextSession.grpc ?? collectionGrpcRequest?.grpc;
       const grpcMethodKey = binding?.methodFullName ?? collectionGrpcRequest?.grpcMethodKey ?? "";
-      const grpcMethod = grpcMethodKey
-        ? grpcLoaded?.methods.find((method: RpcMethodInfo) => methodKey(method) === grpcMethodKey)
-        : null;
-      if (grpcMethod) {
-        setActiveCollectionRequestId(sourceRequestId);
-        setSelectedMethodKey(grpcMethodKey);
-      } else {
-        setActiveCollectionRequestId(sourceRequestId);
-        setSelectedMethodKey("");
-      }
-    } else if (session.requestKind) {
-      setActiveCollectionRequestId(session.methodKey);
+      setActiveCollectionRequestId(sourceRequestId);
+      setSelectedMethodKey(grpcMethodKey);
+      if (!nextSession.grpc && binding) syncProtoContext(binding);
+    } else if (nextSession.requestKind) {
+      setActiveCollectionRequestId(nextSession.methodKey);
       setSelectedMethodKey("");
     } else {
       setActiveCollectionRequestId("");
-      setSelectedMethodKey(session.grpc?.methodFullName ?? session.methodKey);
+      setSelectedMethodKey(nextSession.grpc?.methodFullName ?? nextSession.methodKey);
     }
-    setRequestJson(session.requestJson);
-    setMetadata(session.metadata.length ? session.metadata : defaultMetadata);
+    setRequestJson(nextSession.requestJson);
+    setMetadata(nextSession.metadata.length ? nextSession.metadata : defaultMetadata);
     const nextTransportMode: TransportMode =
-      session.requestKind === "websocket"
+      nextSession.requestKind === "websocket"
         ? "websocket"
-        : session.requestKind === "rest"
+        : nextSession.requestKind === "rest"
           ? "rest"
-          : session.transportMode === "websocket" || session.transportMode === "rest"
+          : nextSession.transportMode === "websocket" || nextSession.transportMode === "rest"
             ? "grpc-web"
-            : (session.transportMode ?? transportMode);
+            : (nextSession.transportMode ?? transportMode);
     setTransportMode(nextTransportMode);
-    if (session.requestKind === "rest") setBaseUrl(session.baseUrl || session.requestUrl || "http://127.0.0.1:3000");
-    else if (session.requestKind !== "websocket") setBaseUrl(grpcBaseUrlFallback(session.baseUrl, baseUrl));
-    setNativeTarget(session.nativeTarget ?? nativeTarget);
-    setEnvironmentKey(session.environmentKey ?? environmentKey);
-    setAssertionJson(session.assertionJson ?? assertionJson);
-    setEvents(session.events ?? []);
-    setLastResult(session.lastResult ?? null);
-    setAssertionResults(session.assertionResults ?? []);
-    setResponseTab(normalizeVisibleResponseTab(session.responseTab));
+    if (nextSession.requestKind === "rest")
+      setBaseUrl(nextSession.baseUrl || nextSession.requestUrl || "http://127.0.0.1:3000");
+    else if (nextSession.requestKind !== "websocket") setBaseUrl(grpcBaseUrlFallback(nextSession.baseUrl, baseUrl));
+    setNativeTarget(nextSession.nativeTarget ?? nativeTarget);
+    setEnvironmentKey(nextSession.environmentKey ?? environmentKey);
+    setAssertionJson(nextSession.assertionJson ?? assertionJson);
+    responseSessionRegistry.getOrCreate(nextSession.responseSessionId || nextSession.id);
+    setResponseTab(normalizeVisibleResponseTab(nextSession.responseTab));
   }
 
   function clearActiveView() {
@@ -214,18 +243,33 @@ export function useRequestSessionActions(scope: any) {
   }
 
   function persistRequestTabsNow(nextSessions: RequestSession[], nextActiveRequestId: string) {
-    const project: ProjectData = {
-      ...getProjectSnapshot(),
-      updatedAt: new Date().toISOString(),
-      requestTabs: nextSessions.map(compactRequestSessionForStorage),
-      activeRequestId: nextActiveRequestId,
-      selectedMethodKey: nextActiveRequestId ? selectedMethodKey : "",
-      requestJson: nextActiveRequestId ? requestJson : "{}",
-    };
-    persistProjectSnapshotNow(project);
+    pendingRequestTabPersistenceRef.current = { nextSessions, nextActiveRequestId };
+    if (requestTabPersistenceScheduledRef.current) return;
+
+    requestTabPersistenceScheduledRef.current = true;
+    runWhenIdle(() => {
+      requestTabPersistenceScheduledRef.current = false;
+      const pending = pendingRequestTabPersistenceRef.current;
+      pendingRequestTabPersistenceRef.current = null;
+      if (!pending) return;
+
+      const latest = requestTabPersistenceContextRef.current;
+      const project: ProjectData = {
+        ...latest.getProjectSnapshot(),
+        updatedAt: new Date().toISOString(),
+        requestTabs: pending.nextSessions.map(compactRequestSessionForStorage),
+        activeRequestId: pending.nextActiveRequestId,
+        selectedMethodKey: pending.nextActiveRequestId ? latest.selectedMethodKey : "",
+        requestJson: pending.nextActiveRequestId ? latest.requestJson : "{}",
+      };
+      void persistProjectSnapshotNow(project);
+    });
   }
 
   function closeRequestSession(sessionId: string) {
+    pendingSessionSnapshotRef.current.delete(sessionId);
+    const closingSession = requestSessions.find((session: RequestSession) => session.id === sessionId);
+    responseSessionRegistry.close(closingSession?.responseSessionId || sessionId);
     getRequestRunner()?.cancelRequest?.(sessionId);
     if (wsClientRef.current?.sessionId === sessionId) closeManualWebSocketClient("Tab closed");
 
@@ -236,16 +280,31 @@ export function useRequestSessionActions(scope: any) {
     const nextActiveRequestId = sessionId === activeRequestId ? (replacement?.id ?? "") : activeRequestId;
 
     setRequestSessions(next);
+    if (sessionId === activeRequestId) {
+      activeRequestIdRef.current = nextActiveRequestId;
+      setActiveRequestId(nextActiveRequestId);
+    }
     persistRequestTabsNow(next, nextActiveRequestId);
 
     if (sessionId === activeRequestId) {
-      if (replacement) queueMicrotask(() => activateRequestSession(replacement));
-      else queueMicrotask(clearActiveView);
+      if (replacement) {
+        setTimeout(() => {
+          if (activeRequestIdRef.current !== replacement.id) return;
+          activateRequestSession(replacement);
+        }, 0);
+      } else {
+        setTimeout(() => {
+          if (activeRequestIdRef.current) return;
+          clearActiveView();
+        }, 0);
+      }
     }
   }
 
   function closeAllRequestSessions() {
+    pendingSessionSnapshotRef.current.clear();
     requestSessions.forEach((session: RequestSession) => {
+      responseSessionRegistry.close(session.responseSessionId || session.id);
       getRequestRunner()?.cancelRequest?.(session.id);
     });
     setRequestSessions([]);
@@ -259,6 +318,7 @@ export function useRequestSessionActions(scope: any) {
     requestSessions
       .filter((session: RequestSession) => session.id !== sessionId)
       .forEach((session: RequestSession) => {
+        responseSessionRegistry.close(session.responseSessionId || session.id);
         getRequestRunner()?.cancelRequest?.(session.id);
       });
     const next = keptSession ? [keptSession] : [];
@@ -281,9 +341,6 @@ export function useRequestSessionActions(scope: any) {
     setAssertionResults([]);
     setResponseTab("messages");
     updateActiveSession({
-      events: [],
-      lastResult: null,
-      assertionResults: [],
       responseTab: "messages",
       status: activeRunning ? "running" : "idle",
     });

@@ -8,65 +8,53 @@ const test = require("node:test");
 const root = path.resolve(__dirname, "..");
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
 
-test("gRPC Mock groups active-scenario controls by Proto service and method", () => {
+test("gRPC Mock renders the worker-backed flat catalog instead of nested Proto scenario groups", () => {
   const services = read("app/playground/features/services/services-workspace.tsx");
+  const catalog = read("app/playground/features/mock-server/workspace/MockCatalogList.tsx");
 
-  assert.match(services, /const allScenarioProtoGroups = useMemo<ScenarioProtoGroup\[]>/);
-  assert.match(services, /scenarioProtoGroups\.map\(\(proto\)/);
-  assert.match(services, /proto\.services\.map\(\(service, serviceIndex\) =>/);
-  assert.match(services, /service\.methods\.map\(\(method, methodIndex\) =>/);
-  assert.match(services, /Scenario\s*<\/Typography>/);
-  assert.match(services, /Active scenario for \$\{method\.method\.methodName\}/);
+  assert.match(services, /<MockCatalogPanel/);
+  assert.match(catalog, /useFixedVirtualWindow\(/);
+  assert.doesNotMatch(catalog, /@tanstack\/react-virtual|useVirtualizer|flushSync/);
+  assert.doesNotMatch(services, /const allScenarioProtoGroups = useMemo/);
+  assert.doesNotMatch(services, /scenarioProtoGroups\.map/);
 });
 
-test("choosing an active scenario only updates the workspace selection", () => {
+test("choosing an active scenario delegates to the existing scenario selection controller", () => {
   const services = read("app/playground/features/services/services-workspace.tsx");
-  const selectionStart = services.indexOf(
-    "function selectScenarioFromMethod(method: ScenarioMethodGroup, scenarioId: string)",
-  );
-  const selectionEnd = services.indexOf("\n  function attachSource()", selectionStart);
-  const selectionBlock = services.slice(selectionStart, selectionEnd);
+  const row = read("app/playground/features/mock-server/workspace/MockCatalogRow.tsx");
 
-  assert.match(selectionBlock, /setMockServer\(\(current: MockServerProject\) => \(\{/);
-  assert.match(selectionBlock, /selectedScenarioIds:[\s\S]*?\[key\]: scenarioId/);
-  assert.doesNotMatch(selectionBlock, /enabledMethods/);
-  assert.doesNotMatch(selectionBlock, /setScenarioActive\(/);
-  assert.doesNotMatch(selectionBlock, /handleMockScenarioSelectChange\(/);
-  assert.doesNotMatch(services, /if \(attached\) \{[\s\S]{0,160}setNewOpen\(true\)/);
+  assert.match(services, /onScenarioChange=\{handleMockScenarioSelectChange\}/);
+  assert.match(row, /onChange=\{\(scenarioId\) => onScenarioChange\(method, scenarioId\)\}/);
 });
 
-test("each workspace method has an independent active switch", () => {
-  const services = read("app/playground/features/services/services-workspace.tsx");
+test("each virtualized method row has an independent active switch", () => {
+  const row = read("app/playground/features/mock-server/workspace/MockCatalogRow.tsx");
 
-  assert.match(services, /checked=\{method\.enabled\}/);
-  assert.match(services, /`Enable mock for \$\{method\.method\.methodName\}`/);
-  assert.match(services, /handleMockMethodEnabledChange\(method\.method, event\.target\.checked\)/);
+  assert.match(row, /checked=\{row\.enabled\}/);
+  assert.match(row, /`Enable mock for \$\{row\.methodName\}`/);
+  assert.match(row, /onEnabledChange\(method, event\.target\.checked\)/);
 });
 
-test("active scenario dropdown uses concise options and isolates row click handling", () => {
-  const services = read("app/playground/features/services/services-workspace.tsx");
+test("scenario options are concise, lazy, and isolated from row selection", () => {
+  const picker = read("app/playground/features/mock-server/workspace/MockScenarioPicker.tsx");
+  const row = read("app/playground/features/mock-server/workspace/MockCatalogRow.tsx");
 
-  assert.match(
-    services,
-    /<MenuItem key=\{`\$\{key\}:\$\{row\.scenario\.id\}`\} value=\{row\.scenario\.id\}>\s*\{mockScenarioDisplayName\(row\.scenario, row\.method\)\}\s*<\/MenuItem>/,
-  );
-  assert.doesNotMatch(services, /renderValue=\{/);
-  assert.match(services, /key=\{`\$\{key\}:\$\{activeScenario\?\.scenario\.id/);
-  assert.match(services, /onPointerDown=\{\(event: any\) => event\.stopPropagation\(\)\}/);
+  assert.match(picker, /onOpen=\{\(\) => void load\(\)\}/);
+  assert.match(picker, /mockCatalogStore\.getScenarios\(methodId\)/);
+  assert.match(row, /onPointerDown=\{\(event: \{ stopPropagation\(\): void \}\) => event\.stopPropagation\(\)\}/);
+  assert.match(row, /onClick=\{\(event: \{ stopPropagation\(\): void \}\) => event\.stopPropagation\(\)\}/);
 });
 
-test("scenario settings keep edit and destructive actions in the shared settings flow", () => {
+test("scenario settings still use the shared scenario-manager controller", () => {
   const services = read("app/playground/features/services/services-workspace.tsx");
+  const row = read("app/playground/features/mock-server/workspace/MockCatalogRow.tsx");
   const shared = read("app/playground/features/mock-server/grpc-mock-scenario-controls.tsx");
 
-  assert.match(services, /Scenario settings/);
-  assert.match(services, /<GrpcMockScenarioActionsMenu/);
-  assert.match(services, /<GrpcMockScenarioManagerDialog/);
+  assert.match(services, /onManageScenario=\{openMockScenarioManager\}/);
+  assert.match(row, /onManageScenario\(method, row\.activeScenarioId\)/);
   assert.match(shared, /Edit source/);
   assert.match(shared, /Manage scenarios/);
   assert.match(shared, /Add scenario/);
   assert.match(shared, /Duplicate active/);
   assert.match(shared, /Delete active/);
-  assert.match(shared, /aria-label="Method scenarios"/);
-  assert.match(services, /setManagedMethodKey\(""\);[\s\S]{0,180}window\.setTimeout\(\(\) => deleteScenario\(row\), 0\)/);
 });
