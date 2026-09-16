@@ -88,8 +88,35 @@ export const ResponseToolbar = memo(function ResponseToolbar({
     return root ? Array.from(root.querySelectorAll<HTMLElement>("mark.search-highlight")) : [];
   }, [searchRootId]);
 
+  const getVirtualSearchViewer = useCallback(() => {
+    const root = document.getElementById(searchRootId);
+    return root?.querySelector<HTMLElement>(".virtual-json-viewer") ?? null;
+  }, [searchRootId]);
+
   const selectSearchMatch = useCallback(
     (requestedIndex: number, scroll = true) => {
+      const virtualViewer = getVirtualSearchViewer();
+      if (virtualViewer) {
+        activeMarkRef.current?.classList.remove("search-highlight--active");
+        activeMarkRef.current = null;
+        const count = Number(virtualViewer.dataset.virtualSearchCount ?? 0);
+        setMatchCount(count);
+        if (!count) {
+          activeMatchIndexRef.current = -1;
+          setActiveMatchIndex(-1);
+          return;
+        }
+        const nextIndex = ((requestedIndex % count) + count) % count;
+        activeMatchIndexRef.current = nextIndex;
+        setActiveMatchIndex(nextIndex);
+        if (scroll) {
+          virtualViewer.dispatchEvent(
+            new CustomEvent("layang-virtual-search", { detail: { index: nextIndex } }),
+          );
+        }
+        return;
+      }
+
       const marks = getSearchMarks();
       activeMarkRef.current?.classList.remove("search-highlight--active");
       setMatchCount(marks.length);
@@ -108,7 +135,7 @@ export const ResponseToolbar = memo(function ResponseToolbar({
       setActiveMatchIndex(nextIndex);
       if (scroll) mark.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
     },
-    [getSearchMarks],
+    [getSearchMarks, getVirtualSearchViewer],
   );
 
   const moveSearchMatch = useCallback(
@@ -129,30 +156,68 @@ export const ResponseToolbar = memo(function ResponseToolbar({
 
     const root = document.getElementById(searchRootId);
     if (!root) return;
-    let frame = window.requestAnimationFrame(() => selectSearchMatch(0));
-    const observer = new MutationObserver(() => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(() => {
-        const marks = getSearchMarks();
-        if (!marks.length) {
-          activeMarkRef.current = null;
-          setActiveMatchIndex(-1);
-          setMatchCount(0);
-          return;
-        }
-        const retainedIndex = Math.min(Math.max(activeMatchIndexRef.current, 0), Math.max(marks.length - 1, 0));
-        selectSearchMatch(retainedIndex, false);
+
+    const syncVirtualSearchState = (event?: Event) => {
+      const detail = (event as CustomEvent<{ count?: number; index?: number }> | undefined)?.detail;
+      const virtualViewer = getVirtualSearchViewer();
+      if (!virtualViewer && !detail) return false;
+      const count = Number(detail?.count ?? virtualViewer?.dataset.virtualSearchCount ?? 0);
+      const index = Number(detail?.index ?? virtualViewer?.dataset.virtualSearchIndex ?? -1);
+      setMatchCount(count);
+      setActiveMatchIndex(index >= 0 && index < count ? index : count > 0 ? 0 : -1);
+      activeMatchIndexRef.current = index >= 0 && index < count ? index : count > 0 ? 0 : -1;
+      return true;
+    };
+
+    const onVirtualSearchState = (event: Event) => {
+      syncVirtualSearchState(event);
+    };
+    root.addEventListener("layang-virtual-search-state", onVirtualSearchState);
+
+    let observer: MutationObserver | null = null;
+    let frame = window.requestAnimationFrame(() => {
+      if (syncVirtualSearchState()) {
+        selectSearchMatch(0);
+        return;
+      }
+
+      selectSearchMatch(0);
+      observer = new MutationObserver(() => {
+        window.cancelAnimationFrame(frame);
+        frame = window.requestAnimationFrame(() => {
+          if (syncVirtualSearchState()) {
+            observer?.disconnect();
+            observer = null;
+            return;
+          }
+          const marks = getSearchMarks();
+          if (!marks.length) {
+            activeMarkRef.current = null;
+            setActiveMatchIndex(-1);
+            setMatchCount(0);
+            return;
+          }
+          const retainedIndex = Math.min(Math.max(activeMatchIndexRef.current, 0), Math.max(marks.length - 1, 0));
+          selectSearchMatch(retainedIndex, false);
+        });
       });
+      observer.observe(root, { childList: true, subtree: true });
     });
-    observer.observe(root, { childList: true, subtree: true });
+
     return () => {
-      observer.disconnect();
+      root.removeEventListener("layang-virtual-search-state", onVirtualSearchState);
+      observer?.disconnect();
       window.cancelAnimationFrame(frame);
     };
-  }, [getSearchMarks, highlightQuery, searchScopeKey, selectSearchMatch]);
+  }, [getSearchMarks, getVirtualSearchViewer, highlightQuery, searchRootId, searchScopeKey, selectSearchMatch]);
 
   async function copyResponse() {
     setMenuAnchor(null);
+    const virtualViewer = getVirtualSearchViewer();
+    if (virtualViewer) {
+      virtualViewer.dispatchEvent(new CustomEvent("layang-copy-virtual-json"));
+      return;
+    }
     const responseText = document.querySelector(".response-selectable")?.textContent ?? "";
     if (responseText.trim()) await copyTextWithAnnouncement(responseText, "Response");
   }
@@ -391,6 +456,7 @@ export const ResponseWorkbenchTabs = memo(function ResponseWorkbenchTabs({
   useEffect(() => {
     if (normalizedValue !== value) onChange(normalizedValue);
   }, [normalizedValue, onChange, value]);
+
   return (
     <WorkbenchTabs<ResponseTab>
       value={normalizedValue}

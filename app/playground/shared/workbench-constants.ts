@@ -30,12 +30,14 @@ export const configuredLogLevel = (
 export const defaultUnaryDeadlineMs = 30000;
 export const defaultGrpcConnectionTimeoutMs = 10000;
 export const defaultGrpcStreamIdleTimeoutMs = 60000;
-// Large streaming responses can be hundreds of KB each. Keep a bounded recent
-// window while totalMessages continues tracking the complete stream count.
+// Transport capture limit. Streaming transports may continue while replacing older previews.
 export const maxMessagesPerRequest = 50;
+// UI/history retention is smaller than the transport capture window. The response store
+// tightens this further to 5 messages when a payload is >= 250k chars.
+export const maxRetainedMessagesPerRequest = 10;
 export const maxUiEventsPerSession = 650;
 export const maxStoredEventsPerSession = 160;
-export const maxStoredMessagesPerResult = 120;
+export const maxStoredMessagesPerResult = 10;
 export const maxPayloadPreviewChars = 12000;
 export const maxJsonBlockChars = 60000;
 

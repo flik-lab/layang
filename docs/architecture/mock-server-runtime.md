@@ -206,3 +206,47 @@ Regression tests should cover:
 - Manual file edit reload.
 - Invalid selected scenario fallback.
 - Add WebSocket request, run WebSocket, and start WebSocket mock.
+
+## Renderer status ownership
+
+Mock runtime status is external runtime state, not `WorkbenchContainer` React state. `mockRuntimeStore` owns gRPC, REST, WebSocket, and Web Access status snapshots. In the default utility mode, gRPC/REST/WebSocket status is push-driven through `mock.statusChanged`; timer polling exists only in the explicit legacy Main rollback path. The runtime/store must **publish only when** the semantic status value actually changes.
+
+Status indicators subscribe directly to the relevant runtime slice. A no-op or unrelated status change must not rebuild the Workbench/Collections tree. This keeps mock control-plane activity independent from the response data plane.
+
+## Final desktop runtime ownership
+
+The Electron utility process is the default owner of gRPC, REST, and WebSocket mock execution. Electron Main routes lifecycle commands but does not own the active mock engine in normal desktop operation.
+
+```txt
+Mock editor / controls
+       |
+       | start / update / stop
+       v
+Electron Main router
+       |
+       v
+Utility runtime core
+  |- gRPC mock
+  |- REST mock
+  `- WebSocket mock
+       |
+       `---- mock.statusChanged ----> renderer status store
+```
+
+Mock status in utility mode is push-driven. The renderer does not poll gRPC/REST/WebSocket mock status on a timer; `mock.statusChanged` is published only when the semantic status changes. The legacy `LAYANG_RUNTIME_MODE=main` path keeps polling compatibility only for rollback.
+
+## CLI parity
+
+Electron and the standalone CLI use the same `lib/runtime/runtime-core.cjs` mock behavior. The hosts differ only in lifecycle responsibilities:
+
+```txt
+Electron UI -> utility-process host --\
+                                  +--> runtime core --> mock services
+CLI --------> CLI daemon host -----/
+```
+
+The CLI host still owns daemon state files, signals, and log presentation. Protocol matching, scenario updates, and mock start/update/stop behavior belong to the shared runtime core.
+
+## Large response ownership
+
+Large streamed response bodies are retained in the utility payload document store, not React state. Normal payload history retains up to 10 documents; once a large payload (250,000 characters or more) is observed, retention tightens to 5 documents. Search/indexing and pretty-line preparation are performed lazily and bounded inside the runtime.

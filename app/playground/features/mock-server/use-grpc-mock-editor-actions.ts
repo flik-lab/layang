@@ -18,8 +18,9 @@ import type { LoadedProto, RpcMethodInfo } from "@/lib/types";
 import { createDefaultGatewayProfile, normalizeGatewayProfile, saveMockScenarioForMethod } from "./mock-scenario-core";
 import { syncRunningMockServerFromEditor } from "./use-mock-runtime-sync";
 import { createPinnedGrpcBinding, findProtoVersion } from "../proto-library/proto-library-domain";
-import type { ProtoLibrary } from "../proto-library/proto-library-types";
+import type { ProtoLibrary, ProtoLibraryVersion } from "../proto-library/proto-library-types";
 import { recordGuiCliCommand } from "../cli/cli-command-history";
+import { performanceStats } from "../../shared/performance/performance-stats.store";
 
 type StateSetter<T> = (value: T | ((current: T) => T)) => void;
 type MockScenarioEditorDraft = {
@@ -38,6 +39,13 @@ type MockRuntimeReady = {
 type MockRuntimeFailure = {
   ok: false;
   error: string;
+};
+
+type MockMethodRuntime = {
+  loaded: LoadedProto;
+  method: RpcMethodInfo;
+  library: ProtoLibrary;
+  version: ProtoLibraryVersion;
 };
 
 function yieldForRuntimeUiPaint() {
@@ -109,7 +117,6 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
     normalizeMockBindHost,
     normalizeMockPort,
     normalizeMockStreamSettings,
-    parseAllMockScenarioFiles,
     parseExternalScenarioImportText,
     parseMockScenarioText,
     parseSingleMockScenarioText,
@@ -119,7 +126,6 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
     protoRuntimeRegistry,
     refreshGrpcMockServerFromWorkspace,
     requestJson,
-    resolveMockActiveScenarioIds,
     safeMockFileBaseName,
     selectMethod,
     selectedMethod,
@@ -146,6 +152,58 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
   } = ctx;
 
   const activeProtoVersion = findProtoVersion(protoLibraries, activeProtoLibraryId, activeProtoVersionId);
+
+  function resolveMockMethodRuntime(method: RpcMethodInfo): MockMethodRuntime | null {
+    const key = methodKey(method);
+    const currentMockServer = mockServerRef?.current ?? mockServer;
+
+    const resolveCompiled = (
+      libraryId: string,
+      versionId: string,
+      requireExactSignature: boolean,
+    ): MockMethodRuntime | null => {
+      const compiled = protoRuntimeRegistry?.resolveVersion(libraryId, versionId);
+      if (!compiled) return null;
+      const runtimeMethod = compiled.loaded.methods.find((candidate: RpcMethodInfo) => {
+        if (methodKey(candidate) !== key) return false;
+        if (!requireExactSignature) return true;
+        return (
+          candidate.requestType === method.requestType &&
+          candidate.responseType === method.responseType &&
+          candidate.requestStream === method.requestStream &&
+          candidate.responseStream === method.responseStream
+        );
+      });
+      if (!runtimeMethod) return null;
+      return {
+        loaded: compiled.loaded,
+        method: runtimeMethod,
+        library: compiled.library,
+        version: compiled.version,
+      };
+    };
+
+    const binding = currentMockServer.methodBindings?.[key];
+    if (binding) {
+      const bound = resolveCompiled(binding.libraryId, binding.versionId, false);
+      if (bound) return bound;
+    }
+
+    if (activeProtoLibraryId && activeProtoVersionId) {
+      const active = resolveCompiled(activeProtoLibraryId, activeProtoVersionId, true);
+      if (active) return active;
+    }
+
+    const exactSources = (currentMockServer.protoSources ?? [])
+      .map((source: MockServerProject["protoSources"][number]) => resolveCompiled(source.libraryId, source.versionId, true))
+      .filter((candidate: MockMethodRuntime | null): candidate is MockMethodRuntime => Boolean(candidate));
+    if (exactSources.length === 1) return exactSources[0];
+
+    const keySources = (currentMockServer.protoSources ?? [])
+      .map((source: MockServerProject["protoSources"][number]) => resolveCompiled(source.libraryId, source.versionId, false))
+      .filter((candidate: MockMethodRuntime | null): candidate is MockMethodRuntime => Boolean(candidate));
+    return keySources.length === 1 ? keySources[0] : null;
+  }
 
   function attachActiveMethodBinding(project: MockServerProject): MockServerProject {
     if (!selectedMethod || !activeProtoVersion) return project;
@@ -729,6 +787,12 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
           format: fileFormat,
           scenarioText: formatMockScenarioBundle(bundle, fileFormat),
           updatedAt: new Date().toISOString(),
+          catalogScenarios: [{
+            id: scenario.id,
+            service: scenario.service,
+            method: scenario.method,
+            description: scenario.description,
+          }],
         };
         selectedScenarioIds[key] = scenario.id;
         enabledMethods[key] = true;
@@ -762,38 +826,62 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
    * Adds one editable mock scenario for a specific method into that method's own file.
    */
   function addMockScenarioForMethod(method: RpcMethodInfo) {
+    const runtime = resolveMockMethodRuntime(method);
+    if (!runtime) {
+      showToast(
+        `Cannot add a scenario for ${method.methodName}: its Proto revision is not available in the runtime registry.`,
+        "error",
+      );
+      return;
+    }
+
     clearMockScenarioEditorDraftState();
-    setBoundMockServer((current) => {
-      const file = getMockMethodScenarioFile(current, method);
+    setMockServer((current) => {
+      const file = getMockMethodScenarioFile(current, runtime.method);
       const parsed = parseMockScenarioText(file.scenarioText, file.format, current.port);
       const bundle: MockScenarioBundle = parsed.ok ? parsed.bundle : { version: 1, scenarios: [] };
       const methodScenarios = bundle.scenarios.filter(
-        (item: MockScenario) => item.service === method.serviceName && item.method === method.methodName,
+        (item: MockScenario) =>
+          item.service === runtime.method.serviceName && item.method === runtime.method.methodName,
       );
-      const key = methodKey(method);
+      const key = methodKey(runtime.method);
       const scenario = ensureUniqueMockScenarioId(
-        buildDefaultMockScenario(method, loaded?.root, methodScenarios.length, undefined, current.streamDefaults),
+        buildDefaultMockScenario(
+          runtime.method,
+          runtime.loaded.root,
+          methodScenarios.length,
+          undefined,
+          current.streamDefaults,
+        ),
         methodScenarios,
       );
       const nextBundle: MockScenarioBundle = {
         ...bundle,
         scenarios: [scenario, ...methodScenarios],
       };
-      const nextProject = updateMockMethodScenarioFile(current, method, {
+      const nextProject = updateMockMethodScenarioFile(current, runtime.method, {
         scenarioText: formatMockScenarioBundle(nextBundle, file.format),
       });
       return {
         ...nextProject,
+        methodBindings: {
+          ...(nextProject.methodBindings ?? {}),
+          [key]: createPinnedGrpcBinding(runtime.library, runtime.version, runtime.method),
+        },
         selectedScenarioIds: { ...nextProject.selectedScenarioIds, [key]: scenario.id },
         enabledMethods: { ...nextProject.enabledMethods, [key]: true },
       };
     });
-    if (loaded) selectMethod(loaded.root, method);
+    selectMethod(
+      runtime.loaded.root,
+      runtime.method,
+      createPinnedGrpcBinding(runtime.library, runtime.version, runtime.method),
+    );
     setRequestTab("mock");
     setMockSettingsOpen(false);
     setSideSection("services");
     setSidebarOpen(true);
-    showToast(`Scenario added for ${method.methodName}.`, "success");
+    showToast(`Scenario added for ${runtime.method.methodName}.`, "success");
   }
 
   /**
@@ -1216,15 +1304,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
       if (!schema.protoFiles.length || !schema.methods.length) {
         return { ok: false, error: "Attach at least one Proto source before starting gRPC Mock." };
       }
-      const parsed = parseAllMockScenarioFiles(effectiveMockServer, schema.methods);
-      if (!parsed.ok) {
-        return { ok: false, error: parsed.error };
-      }
-      const activeScenarioIds = resolveMockActiveScenarioIds(
-        parsed.bundle,
-        schema.methods,
-        effectiveMockServer.selectedScenarioIds,
-      );
+      const activeScenarioIds = effectiveMockServer.selectedScenarioIds ?? {};
       if (!window.electronMock?.start) {
         return { ok: false, error: "gRPC Mock is available in the desktop app only." };
       }
@@ -1232,12 +1312,13 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
       mockRuntimeLastSyncSignatureRef.current = "";
       mockRuntimeUpdateSeqRef.current += 1;
       const uiRuntimeRevision = mockRuntimeUpdateSeqRef.current;
+      const mockStartStartedAt = performance.now();
       const result = await window.electronMock.start({
         port,
         bindHost: normalizeMockBindHost(effectiveMockServer.bindHost),
         protoFiles: schema.protoFiles,
         methods: schema.methods,
-        scenarios: parsed.bundle.scenarios,
+        methodFiles: effectiveMockServer.methodFiles,
         streamDefaults: effectiveMockServer.streamDefaults,
         security: effectiveMockServer.security,
         limits: effectiveMockServer.limits,
@@ -1247,6 +1328,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
         uiRuntimeRevision,
         mockServerUpdatedAt: effectiveMockServer.updatedAt,
       });
+      performanceStats.recordMockDuration("server-start", performance.now() - mockStartStartedAt);
       if (!result.ok) {
         return { ok: false, error: result.error ?? "gRPC Mock failed to start." };
       }
@@ -1256,7 +1338,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
         ([key, scenarioId]) => !confirmed.activeScenarioIds || confirmed.activeScenarioIds[key] === scenarioId,
       );
       const scenarioCountMatches =
-        confirmed.scenarioCount === undefined || confirmed.scenarioCount === parsed.bundle.scenarios.length;
+        true;
       const methodCountMatches = confirmed.methodCount === undefined || confirmed.methodCount === schema.methods.length;
       if (!confirmed.running || !activeIdsMatch || !scenarioCountMatches || !methodCountMatches) {
         await window.electronMock.stop?.().catch(() => undefined);
@@ -1276,7 +1358,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
         bindAddress: confirmed.bindAddress ?? result.bindAddress ?? localTarget,
         localTarget,
         reachableTargets: confirmed.reachableTargets ?? result.reachableTargets,
-        scenarioCount: confirmed.scenarioCount ?? result.scenarioCount ?? parsed.bundle.scenarios.length,
+        scenarioCount: confirmed.scenarioCount ?? result.scenarioCount ?? Object.keys(effectiveMockServer.methodFiles ?? {}).length,
         methodCount: confirmed.methodCount ?? result.methodCount ?? schema.methods.length,
         activeScenarioIds: confirmed.activeScenarioIds ?? result.activeScenarioIds ?? activeScenarioIds,
         enabledMethods: confirmed.enabledMethods ?? effectiveMockServer.enabledMethods,

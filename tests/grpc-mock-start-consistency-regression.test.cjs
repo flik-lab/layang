@@ -50,8 +50,9 @@ test("running gRPC mock receives live editor revisions and Web Access waits for 
   assert.match(container, /const MOCK_RUNTIME_SYNC_DELAY_MS = 280/);
   assert.match(runtimeSync, /syncInFlightRef/);
   assert.match(runtimeSync, /syncPendingRef/);
-  assert.match(container, /const unchanged =/);
-  assert.match(container, /return unchanged \? current : \{ \.\.\.current, \.\.\.result \}/);
+  const runtimePolling = read("app/playground/features/mock-server/runtime/useMockRuntimePolling.ts");
+  assert.match(runtimePolling, /mockRuntimeStore\.patchGrpc/);
+  assert.match(runtimePolling, /electronMock\.status\(\)/);
   const signatureBlock = runtimeSync.slice(
     runtimeSync.indexOf("const syncSignature"),
     runtimeSync.indexOf("if (syncSignature ===", runtimeSync.indexOf("const syncSignature")),
@@ -81,8 +82,8 @@ test("workspace scenario editor owns scenario content and folder opening flushes
   assert.match(core, /!methodScenarioIds\.has\(selectedScenarioIds\[key\]\)/);
   assert.match(core, /selectedScenarioIds\[key\] = uniqueId/);
   assert.match(actions, /saveMockScenarioForMethod\(/);
-  assert.match(services, /const effectiveScenarioId = methodScenarios\.some/);
-  assert.match(services, /setFocusedScenarioKey\(`\$\{methodKey\(row\.method\)\}:\$\{saved\.scenario\.id\}`\)/);
+  assert.match(services, /onAddScenario=\{addMockScenarioForMethod\}/);
+  assert.match(services, /onManageScenario=\{openMockScenarioManager\}/);
   assert.match(requestPanel, /<GrpcScenarioSourceDialog/);
   assert.match(requestPanel, /openActiveRequestScenarioEditor/);
   assert.match(requestPanel, /selectActiveRequestScenario/);
@@ -91,4 +92,24 @@ test("workspace scenario editor owns scenario content and folder opening flushes
   assert.doesNotMatch(requestPanel, /startActiveRequestMock/);
   assert.match(actions, /await persistProjectSnapshotNow\?\.\(project\)/);
   assert.match(actions, /openPath\(nextPath, "mocks\/grpc\/methods"/);
+});
+
+
+test("running gRPC mock is flushed before a request so a newly added scenario works immediately", () => {
+  const container = read("app/playground/features/shell/use-workbench-container-model.tsx");
+  const start = container.indexOf("const flushRunningMockServersBeforeRequest");
+  const end = container.indexOf("useEffect(() =>", start);
+  const block = container.slice(start, end);
+  assert.match(block, /syncRunningMockServerFromEditor\(\{/);
+  assert.match(block, /mockRuntimeStore\.getGrpc\(\)/);
+  assert.match(block, /mockServerRef\.current/);
+});
+
+
+test("failed gRPC live reload does not mark the new scenario snapshot as already synchronized", () => {
+  const runtimeSync = read("app/playground/features/mock-server/use-mock-runtime-sync.ts");
+  const updateCall = runtimeSync.indexOf("const result = await mockUpdate({");
+  const failureGuard = runtimeSync.indexOf("if (!result.ok)", updateCall);
+  const signatureCommit = runtimeSync.indexOf("lastSyncSignatureRef.current = syncSignature", updateCall);
+  assert.ok(updateCall >= 0 && failureGuard > updateCall && signatureCommit > failureGuard);
 });

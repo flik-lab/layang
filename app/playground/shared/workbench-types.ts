@@ -90,8 +90,10 @@ export type UiEvent = {
   level?: "debug" | "info" | "warn" | "error";
   /** Payload used by dense tables and search. Large values may be previewed for UI performance. */
   payload: unknown;
-  /** Full payload kept only in live memory so expanded message rows can show complete JSON. */
-  fullPayload?: unknown;
+  /** Payload document owned by the response document worker. */
+  documentId?: string;
+  /** Known serialized size from the payload document worker. */
+  payloadOriginalChars?: number;
   timestamp: string;
 };
 
@@ -222,10 +224,19 @@ export type MethodDoc = {
 
 export type MockFormat = "json" | "yaml";
 
+export type MockScenarioCatalogEntry = {
+  id: string;
+  description?: string;
+  service: string;
+  method: string;
+};
+
 export type MockMethodScenarioFile = {
   format: MockFormat;
   scenarioText: string;
   updatedAt?: string;
+  /** Compact catalog metadata produced by Electron/workspace parsing. Never includes response bodies. */
+  catalogScenarios?: MockScenarioCatalogEntry[];
 };
 
 export type MockStreamSettings = {
@@ -585,7 +596,7 @@ export type DocResultSnapshot = {
   savedAt: string;
 };
 
-export type RequestSession = {
+export type RequestSessionControlPlane = {
   id: string;
   methodKey: string;
   sourceRequestId?: string;
@@ -605,14 +616,21 @@ export type RequestSession = {
   environmentKey: EnvironmentKey;
   assertionJson: string;
   responseTab: ResponseTab;
-  events: UiEvent[];
-  lastResult: GrpcResult | null;
-  assertionResults: AssertionResult[];
+  responseSessionId: string;
   running: boolean;
   status: "idle" | "running" | "done" | "error" | "cancelled";
   openedAt: string;
   updatedAt: string;
 };
+
+/** Legacy workspace compatibility only. Live streaming must not write these fields. */
+export type LegacyRequestSessionRuntimeFields = {
+  events?: UiEvent[];
+  lastResult?: GrpcResult | null;
+  assertionResults?: AssertionResult[];
+};
+
+export type RequestSession = RequestSessionControlPlane & LegacyRequestSessionRuntimeFields;
 
 export type ProjectData = {
   version: 3;

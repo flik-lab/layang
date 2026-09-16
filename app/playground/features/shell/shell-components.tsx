@@ -20,6 +20,7 @@ import { designSystem } from "../../design-system";
 import { appLogoSrc, iconButtonSx } from "../../shared/workbench-constants";
 import type { RequestSession, SideSection } from "../../shared/workbench-types";
 import { uiCopy } from "../../shared/ui-copy";
+import { interactionStartedAt, measureInteraction } from "../../shared/performance/interaction-performance";
 
 type TabKeyboardEvent = ReactKeyboardEvent<HTMLDivElement>;
 type ContextMenuAnchor = { getBoundingClientRect: () => DOMRect };
@@ -122,10 +123,15 @@ export function RequestTabs({
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const tabRefs = useRef(new Map<string, HTMLDivElement>());
   const [hasOverflow, setHasOverflow] = useState(false);
+  const [visualActiveRequestId, setVisualActiveRequestId] = useState(activeRequestId);
   const [draggedSessionId, setDraggedSessionId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ sessionId: string; position: "before" | "after" } | null>(null);
   const [tabMenu, setTabMenu] = useState<{ anchorEl: ContextMenuAnchor; session: RequestSession } | null>(null);
   const menuSession = tabMenu?.session ?? null;
+
+  useEffect(() => {
+    setVisualActiveRequestId(activeRequestId);
+  }, [activeRequestId]);
 
   useEffect(() => {
     const node = scrollerRef.current;
@@ -142,12 +148,12 @@ export function RequestTabs({
   }, [sessions.length]);
 
   useEffect(() => {
-    if (!activeRequestId) return;
+    if (!visualActiveRequestId) return;
     const frame = window.requestAnimationFrame(() => {
-      tabRefs.current.get(activeRequestId)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      tabRefs.current.get(visualActiveRequestId)?.scrollIntoView({ block: "nearest", inline: "nearest" });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [activeRequestId, sessions.length]);
+  }, [visualActiveRequestId, sessions.length]);
 
   function scrollTabs(direction: -1 | 1) {
     const node = scrollerRef.current;
@@ -188,8 +194,16 @@ export function RequestTabs({
     action(session);
   }
 
-  function activateTabFromKeyboard(session: RequestSession) {
+  function activateTab(session: RequestSession) {
+    if (session.id === visualActiveRequestId && session.id === activeRequestId) return;
+    const startedAt = interactionStartedAt();
+    setVisualActiveRequestId(session.id);
     onActivate(session);
+    window.requestAnimationFrame(() => measureInteraction("request-tab-activate", startedAt));
+  }
+
+  function activateTabFromKeyboard(session: RequestSession) {
+    activateTab(session);
     window.requestAnimationFrame(() => tabRefs.current.get(session.id)?.focus());
   }
 
@@ -209,7 +223,7 @@ export function RequestTabs({
   function handleTabKeyDown(event: TabKeyboardEvent, session: RequestSession) {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      onActivate(session);
+      activateTab(session);
       return;
     }
 
@@ -305,7 +319,7 @@ export function RequestTabs({
           onContextMenu={openStripTabMenu}
         >
           {sessions.map((session) => {
-            const active = session.id === activeRequestId;
+            const active = session.id === visualActiveRequestId;
             const status = session.running ? "running" : session.status === "error" ? "error" : "open";
             return (
               <div
@@ -324,7 +338,15 @@ export function RequestTabs({
                 aria-selected={active}
                 aria-label={`${session.title}, ${session.running ? "running" : session.status}`}
                 title={requestTabContextLabel(session)}
-                onClick={() => onActivate(session)}
+                onClick={() => activateTab(session)}
+                onMouseDown={(event: ReactMouseEvent<HTMLElement>) => {
+                  if (event.button !== 1) return;
+                  const startedAt = interactionStartedAt();
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onClose(session.id);
+                  window.requestAnimationFrame(() => measureInteraction("request-tab-middle-close", startedAt));
+                }}
                 onDragStart={(event) => {
                   if (!onReorder) return;
                   if ((event.target as HTMLElement).closest(".request-tab__action")) {
@@ -352,12 +374,6 @@ export function RequestTabs({
                   endTabDrag();
                 }}
                 onDragEnd={endTabDrag}
-                onAuxClick={(event: ReactMouseEvent<HTMLElement>) => {
-                  if (event.button !== 1) return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onClose(session.id);
-                }}
                 onContextMenu={(event: ReactMouseEvent<HTMLElement>) => openTabMenu(event, session)}
                 onKeyDown={(event: TabKeyboardEvent) => handleTabKeyDown(event, session)}
               >

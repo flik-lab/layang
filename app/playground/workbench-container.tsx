@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Profiler, useEffect, useState } from "react";
 import { WorkbenchShell } from "./features/shell/workbench-shell";
 import { WorkbenchAppBar } from "./features/shell/workbench-app-bar";
 import { WorkbenchSidebar } from "./features/shell/workbench-sidebar";
@@ -10,12 +10,48 @@ import { WorkbenchStatusBar } from "./features/shell/workbench-status-bar";
 import { CliTerminalPanel } from "./features/cli/cli-terminal-panel";
 import { useWorkbenchContainerModel } from "./features/shell/use-workbench-container-model";
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { railWidth } from "./shared/workbench-constants";
+import { useWorkbenchSideSection } from "./features/shell/workbench-navigation-store";
+import { performanceStats } from "./shared/performance/performance-stats.store";
+
+type NavigationAwareCliTerminalPanelProps = {
+  height: number;
+  onClose: () => void;
+  onHeightChange: (height: number) => void;
+  open: boolean;
+  shellLeft: number;
+  statusbarHeight: number;
+  workspacePath: string;
+};
+
+function NavigationAwareCliTerminalPanel({
+  height,
+  onClose,
+  onHeightChange,
+  open,
+  shellLeft,
+  statusbarHeight,
+  workspacePath,
+}: NavigationAwareCliTerminalPanelProps) {
+  const sideSection = useWorkbenchSideSection();
+  return (
+    <CliTerminalPanel
+      open={open}
+      height={height}
+      shellLeft={sideSection === "source-control" ? railWidth : shellLeft}
+      statusbarHeight={statusbarHeight}
+      workspacePath={workspacePath}
+      onClose={onClose}
+      onHeightChange={onHeightChange}
+    />
+  );
+}
 
 export default function WorkbenchContainer() {
+  performanceStats.recordRenderInvocation("container");
   const { theme, viewContext } = useWorkbenchContainerModel();
   const [cliPanelOpen, setCliPanelOpen] = useState(false);
   const [cliPanelHeight, setCliPanelHeight] = useState(260);
-  const cliContext = { ...viewContext, cliPanelOpen, cliPanelHeight, setCliPanelOpen, setCliPanelHeight };
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -30,10 +66,13 @@ export default function WorkbenchContainer() {
   return (
     <WorkbenchShell theme={theme} density={viewContext.densityMode}>
       <SidebarProvider open={viewContext.sidebarOpen} onOpenChange={viewContext.setSidebarOpen}>
-        <WorkbenchAppBar ctx={cliContext} />
-        <WorkbenchSidebar ctx={cliContext} />
-        <WorkbenchMainPanel ctx={cliContext} />
-        <CliTerminalPanel
+        <Profiler id="Workbench" onRender={(_id: string, _phase: string, actualDuration: number) => performanceStats.recordReactCommit("Workbench", actualDuration)}>
+          <WorkbenchAppBar ctx={viewContext} />
+          <WorkbenchSidebar ctx={viewContext} />
+          <WorkbenchMainPanel ctx={viewContext} cliPanelOpen={cliPanelOpen} cliPanelHeight={cliPanelHeight} />
+          <WorkbenchDialogs ctx={viewContext} />
+        </Profiler>
+        <NavigationAwareCliTerminalPanel
           open={cliPanelOpen}
           height={cliPanelHeight}
           shellLeft={viewContext.shellLeft}
@@ -42,8 +81,7 @@ export default function WorkbenchContainer() {
           onClose={() => setCliPanelOpen(false)}
           onHeightChange={setCliPanelHeight}
         />
-        <WorkbenchStatusBar ctx={cliContext} />
-        <WorkbenchDialogs ctx={cliContext} />
+        <WorkbenchStatusBar ctx={viewContext} cliPanelOpen={cliPanelOpen} setCliPanelOpen={setCliPanelOpen} />
       </SidebarProvider>
     </WorkbenchShell>
   );

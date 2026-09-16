@@ -4,6 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const http = require("node:http");
 const net = require("node:net");
+const { createGrpcWebStreamParser } = require("../../lib/runtime/grpc-web/grpc-web-transport-runtime.cjs");
 
 function tryRequire(name) {
   try {
@@ -321,12 +322,15 @@ test("Web Access unary mock accepts external chunked grpc-web-text base64 and ma
     });
 
     assert.equal(response.statusCode, 200);
-    const decoded = Buffer.from(response.body.toString("ascii").replace(/[\r\n\t ]+/g, ""), "base64");
-    assert.equal(decoded[0], 0);
-    const payloadLength = decoded.readUInt32BE(1);
-    const message = rpcDefinition.responseDeserialize(decoded.subarray(5, 5 + payloadLength));
+    const parser = createGrpcWebStreamParser({ responseEncoding: "text" });
+    const frames = parser.push(response.body, true);
+    const dataFrame = frames.find((frame) => frame.kind === "data");
+    const trailerFrame = frames.find((frame) => frame.kind === "trailers");
+    assert.ok(dataFrame, "expected a gRPC-Web data frame");
+    assert.ok(trailerFrame, "expected a gRPC-Web trailer frame");
+    const message = rpcDefinition.responseDeserialize(Buffer.from(dataFrame.payload));
     assert.equal(message.message, "hello Ada");
-    assert.match(decoded.toString("ascii"), /grpc-status: 0/);
+    assert.match(Buffer.from(trailerFrame.payload).toString("ascii"), /grpc-status: 0/);
   } finally {
     await stopGatewayProfile(profileId);
     await fs.rm(dir, { recursive: true, force: true });

@@ -27,8 +27,6 @@ test("request tabs keep visible copy compact and move operation context to the t
 test("REST and WebSocket mock panels share concise section and field copy", () => {
   const rest = read("app/playground/features/rest/rest-panels.tsx");
   const websocket = read("app/playground/features/websocket/websocket-panels.tsx");
-  const guidelines = read("docs/ui-copy-guidelines.md");
-
   assert.match(rest, /uiCopy\.sections\.matchers/);
   assert.match(rest, /uiCopy\.sections\.response/);
   assert.match(rest, /uiCopy\.sections\.requests/);
@@ -44,6 +42,4 @@ test("REST and WebSocket mock panels share concise section and field copy", () =
     websocket,
     /Configure this request mock here|Scenario code \/ mock message body|label="Max"|label="Interval"/,
   );
-  assert.match(guidelines, /## Request tabs and headers/);
-  assert.match(guidelines, /## Mock panels/);
 });

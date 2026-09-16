@@ -13,6 +13,28 @@ export type CompiledProtoVersion = {
   loaded: LoadedProto;
 };
 
+const MAX_COMPILED_PROTO_CACHE = 24;
+const compiledProtoCache = new Map<string, LoadedProto>();
+
+function getCachedLoadedProto(version: ProtoLibraryVersion): LoadedProto {
+  const cacheKey = version.checksum || version.id;
+  const cached = compiledProtoCache.get(cacheKey);
+  if (cached) {
+    compiledProtoCache.delete(cacheKey);
+    compiledProtoCache.set(cacheKey, cached);
+    return cached;
+  }
+
+  const loaded = loadProtoFiles(version.files);
+  compiledProtoCache.set(cacheKey, loaded);
+  while (compiledProtoCache.size > MAX_COMPILED_PROTO_CACHE) {
+    const oldestKey = compiledProtoCache.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    compiledProtoCache.delete(oldestKey);
+  }
+  return loaded;
+}
+
 export class ProtoRuntimeRegistry {
   private readonly libraries = new Map<string, ProtoLibrary>();
   private readonly compiledByVersionId = new Map<string, CompiledProtoVersion>();
@@ -36,7 +58,7 @@ export class ProtoRuntimeRegistry {
     const compiled: CompiledProtoVersion = {
       library,
       version,
-      loaded: loadProtoFiles(version.files),
+      loaded: getCachedLoadedProto(version),
     };
     this.compiledByVersionId.set(versionId, compiled);
     return compiled;

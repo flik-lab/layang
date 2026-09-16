@@ -50,27 +50,20 @@ export function evaluateAssertions(result: GrpcResult, assertionText: string): A
  */
 export function resultToUiEvents(result: GrpcResult): UiEvent[] {
   return [
-    {
-      id: createId(),
-      kind: "headers",
-      title: "Metadata",
-      payload: result.headers,
-      timestamp: new Date().toISOString(),
-    },
-    ...result.messages.map((message, index) => ({
-      id: createId(),
-      kind: "message" as const,
-      title: `Message #${index + 1}`,
-      payload: message,
-      timestamp: new Date().toISOString(),
-    })),
-    {
-      id: createId(),
-      kind: "trailers",
-      title: "Status",
-      payload: result.trailers,
-      timestamp: new Date().toISOString(),
-    },
+    { id: createId(), kind: "headers", title: "Metadata", payload: result.headers, timestamp: new Date().toISOString() },
+    ...result.messages.map((message, index) => {
+      const documentRef = result.messageDocumentRefs?.[index];
+      return {
+        id: createId(),
+        kind: "message" as const,
+        title: `Message #${index + 1}`,
+        payload: documentRef?.preview ?? message,
+        documentId: documentRef?.id,
+        payloadOriginalChars: documentRef?.originalChars,
+        timestamp: new Date().toISOString(),
+      };
+    }),
+    { id: createId(), kind: "trailers", title: "Status", payload: result.trailers, timestamp: new Date().toISOString() },
   ];
 }
 
@@ -105,8 +98,26 @@ export function eventToUiEvent(event: GrpcEvent): UiEvent {
       payload: { contentType: event.contentType, headers: event.headers },
       timestamp,
     };
-  if (event.type === "message")
-    return { id: createId(), kind: "message", title: `Message #${event.index + 1}`, payload: event.value, timestamp };
+  if (event.type === "message") {
+    if ("documentRef" in event && event.documentRef) {
+      return {
+        id: createId(),
+        kind: "message",
+        title: `Message #${event.index + 1}`,
+        payload: event.documentRef.preview,
+        documentId: event.documentRef.id,
+        payloadOriginalChars: event.documentRef.originalChars,
+        timestamp,
+      };
+    }
+    return {
+      id: createId(),
+      kind: "message",
+      title: `Message #${event.index + 1}`,
+      payload: event.value,
+      timestamp,
+    };
+  }
   if (event.type === "trailers")
     return {
       id: createId(),

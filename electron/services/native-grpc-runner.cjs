@@ -6,6 +6,7 @@ const protoLoader = require("@grpc/proto-loader");
 const { writeProtoWorkspace } = require("../utils/file-utils.cjs");
 const { getCurrentCertificateSettings } = require("../utils/certificate-settings.cjs");
 const { safeRelativePath } = require("../utils/path-utils.cjs");
+const { serializeNativeGrpcMessage } = require("./native-grpc-serialization.cjs");
 
 /**
  * Invokes native gRPC through @grpc/grpc-js and streams normalized events back to the renderer.
@@ -392,13 +393,20 @@ function invokeUnary(
       if (response !== undefined) {
         totalMessages = 1;
         if (maxMessages > 0) {
-          messages.push(response);
-          emit({ type: "message", index: 0, value: response });
+          const serialized = serializeNativeGrpcMessage(response);
+          messages.push(serialized.preview);
+          emit({
+            type: "message",
+            index: 0,
+            serializedValueUtf8: serialized.serializedValueUtf8,
+            preview: serialized.preview,
+            originalChars: serialized.originalChars,
+          });
           emit({
             type: "log",
             level: "info",
             message: "Native unary response decoded",
-            details: { messageIndex: 0, storedMessages: messages.length },
+            details: { messageIndex: 0, storedMessages: messages.length, originalChars: serialized.originalChars },
           });
         } else {
           droppedMessages = 1;
@@ -521,13 +529,25 @@ function invokeServerStreaming(
         }
       }
 
-      messages.push(message);
-      emit({ type: "message", index: totalMessages - 1, value: message });
+      const serialized = serializeNativeGrpcMessage(message);
+      messages.push(serialized.preview);
+      emit({
+        type: "message",
+        index: totalMessages - 1,
+        serializedValueUtf8: serialized.serializedValueUtf8,
+        preview: serialized.preview,
+        originalChars: serialized.originalChars,
+      });
       emit({
         type: "log",
         level: "info",
         message: `Native stream message #${totalMessages} received`,
-        details: { messageIndex: totalMessages - 1, storedMessages: messages.length, droppedMessages },
+        details: {
+          messageIndex: totalMessages - 1,
+          storedMessages: messages.length,
+          droppedMessages,
+          originalChars: serialized.originalChars,
+        },
       });
     });
 
@@ -588,6 +608,13 @@ function errorToPlainObject(error) {
   return error;
 }
 
+
+/** Cancels a native gRPC call/client pair without throwing during cleanup. */
+function cancelNativeGrpcHandle(call, client) {
+  if (call && typeof call.cancel === "function") call.cancel();
+  if (client && typeof client.close === "function") client.close();
+}
+
 /**
  * Closes a grpc-js client without throwing during cleanup.
  */
@@ -601,4 +628,4 @@ function closeClient(client) {
  * Starts a local native gRPC mock server from loaded proto metadata and scenario files.
  */
 
-module.exports = { invokeNativeGrpc };
+module.exports = { invokeNativeGrpc, cancelNativeGrpcHandle };

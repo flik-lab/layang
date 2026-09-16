@@ -1,9 +1,13 @@
 import type * as protobuf from "protobufjs";
-import type { GrpcEvent, GrpcFrame, GrpcResult, MetadataPair, RpcMethodInfo } from "./types";
+import { transportLifecycleStore } from "../app/playground/features/response-viewer/model/transportLifecycle.store";
+import { createGrpcWebDecodeWorkerClient, type GrpcWebDecodeWorkerClient, type GrpcWebDecodeWorkerFrame } from "./grpc-web-decode-worker-client";
+import { buildGrpcWebWorkerSchema, canDecodeInGrpcWebWorker } from "./grpc-web-worker-schema";
+import type { GrpcEvent, GrpcResult, MetadataPair, ResponseDocumentRef, RpcMethodInfo } from "./types";
 
 type Bytes = Uint8Array<ArrayBufferLike>;
 
 type InvokeGrpcWebTextParams = {
+  runId?: string;
   baseUrl: string;
   root: protobuf.Root;
   method: RpcMethodInfo;
@@ -15,10 +19,13 @@ type InvokeGrpcWebTextParams = {
   idleTimeoutMs?: number;
   maxMessages?: number;
   onEvent?: (event: GrpcEvent) => void;
+  createPayloadDocumentProducerChannel: () => { producerPort: MessagePort; ready: Promise<void>; release(): void };
 };
 
 /**
- * Invokes a gRPC-Web text endpoint and streams decoded events to the UI.
+ * Invokes a browser gRPC-Web endpoint and streams decoded events to the UI.
+ * Unary and server-streaming calls both use grpc-web-text so custom reverse
+ * proxies can forward one consistent request/response representation.
  */
 export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promise<GrpcResult> {
   const emit = params.onEvent ?? (() => undefined);
@@ -39,9 +46,12 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
   const requestMessage = requestType.fromObject(requestObject);
   const requestPayload = requestType.encode(requestMessage).finish();
   const requestFrame = encodeGrpcFrame(requestPayload, false);
-  const requestBody = base64Encode(requestFrame);
   const responseStream = params.method.responseStream;
-  const headers = buildGrpcWebHeaders(params.metadata ?? [], responseStream);
+  // Keep unary and server-streaming on the same grpc-web-text wire format.
+  // The custom web proxy already handles the streaming text path correctly,
+  // so unary should use the identical Base64-framed representation.
+  const requestBody: string = base64Encode(requestFrame);
+  const headers = buildGrpcWebHeaders(params.metadata ?? []);
   const timeoutMs = Math.max(0, Number(params.timeoutMs ?? 30_000));
   if (!responseStream && timeoutMs > 0) headers["grpc-timeout"] = `${Math.ceil(timeoutMs)}m`;
   const firstResult = await invokeGrpcWebTextAttempt({
@@ -128,12 +138,17 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 type InvokeGrpcWebTextAttemptParams = InvokeGrpcWebTextParams & {
   emit: (event: GrpcEvent) => void;
   requestPayload: Uint8Array;
-  requestBody: string;
+  requestBody: string | Uint8Array<ArrayBuffer>;
   headers: Record<string, string>;
   responseType: protobuf.Type;
 };
 
 async function invokeGrpcWebTextAttempt(params: InvokeGrpcWebTextAttemptParams): Promise<GrpcResult> {
+  if (typeof window !== "undefined" && window.electronGrpcWebTransport?.isAvailable) {
+    return invokeElectronGrpcWebTransport(params);
+  }
+
+  // Browser fallback: keep the Web Worker transport for the real web build.
   const upstreamUrl = buildGrpcWebUrl(params.baseUrl, params.method.serviceName, params.method.methodName);
   const requestUrl = upstreamUrl;
   const startedTimestamp = new Date();
@@ -189,7 +204,7 @@ async function invokeGrpcWebTextAttempt(params: InvokeGrpcWebTextAttemptParams):
       requestUrl,
       upstreamUrl,
       contentType: params.headers["content-type"],
-      note: "Electron desktop can bypass browser CORS when webSecurity is disabled; regular browsers still require APISIX CORS.",
+      note: "Electron desktop can bypass browser CORS when webSecurity is disabled; regular browsers still require the reverse proxy to return valid CORS headers.",
     },
   });
 
@@ -217,6 +232,7 @@ async function invokeGrpcWebTextAttempt(params: InvokeGrpcWebTextAttemptParams):
 
   const responseHeaders = headersToRecord(response.headers);
   const contentType = response.headers.get("content-type") ?? "";
+  const responseEncoding = resolveGrpcWebResponseEncoding(contentType);
 
   params.emit({
     type: "headers",
@@ -232,196 +248,135 @@ async function invokeGrpcWebTextAttempt(params: InvokeGrpcWebTextAttemptParams):
     details: { httpStatus: response.status, contentType, headers: responseHeaders },
   });
 
-  const frameParser = new GrpcWebFrameParser();
-  const textDecoder = new TextDecoder();
-  const base64Stream = new GrpcWebTextBase64Decoder();
+  const workerSchema = buildGrpcWebWorkerSchema(params.responseType);
+  if (!canDecodeInGrpcWebWorker(workerSchema)) {
+    const error = new Error("This response schema cannot be decoded by the gRPC-Web worker.");
+    params.emit({ type: "error", message: error.message, details: { reasons: workerSchema.unsupportedReasons } });
+    throw error;
+  }
+
+  const payloadChannel = params.createPayloadDocumentProducerChannel();
+  await payloadChannel.ready;
+  let decodeWorker: GrpcWebDecodeWorkerClient;
+  try {
+    decodeWorker = createGrpcWebDecodeWorkerClient({
+      schema: workerSchema,
+      responseEncoding,
+      producerPort: payloadChannel.producerPort,
+      maxPreviewChars: 12_000,
+      documentPrefix: `grpc-web:${startedTimestamp.getTime().toString(36)}`,
+    });
+  } catch (error) {
+    payloadChannel.release();
+    throw error;
+  }
   const messages: unknown[] = [];
+  const messageDocumentRefs: ResponseDocumentRef[] = [];
   const maxMessages = normalizeMaxMessages(params.maxMessages);
   let totalMessages = 0;
   let droppedMessages = 0;
   let trailers: Record<string, string> = {};
-  let rawTextBytes = 0;
   let decodedBinaryBytes = 0;
   let dataFrames = 0;
   let trailerFrames = 0;
 
-  const processBytes = (bytes: Uint8Array) => {
-    decodedBinaryBytes += bytes.length;
-    params.emit({
-      type: "log",
-      level: "debug",
-      message: "Decoded gRPC-Web text chunk",
-      details: { decodedBytes: bytes.length, totalDecodedBytes: decodedBinaryBytes },
-    });
+  params.emit({
+    type: "log",
+    level: "debug",
+    message: "gRPC-Web response decoding moved to worker.",
+    details: { responseType: params.method.responseType, encoding: responseEncoding },
+  });
 
-    const frames = frameParser.push(bytes);
-
-    if (frames.length === 0) {
+  const processDecodedFrame = (frame: GrpcWebDecodeWorkerFrame) => {
+    if (frame.kind === "trailers") {
+      trailerFrames += 1;
+      trailers = { ...trailers, ...frame.trailers };
+      params.emit({ type: "trailers", trailers });
+      const status = trailers["grpc-status"];
+      const message = trailers["grpc-message"] ?? "";
+      const isOk = status === undefined || status === "0";
       params.emit({
         type: "log",
-        level: "debug",
-        message: "Waiting for a complete gRPC frame",
-        details: frameParser.getBufferState(),
+        level: isOk ? "info" : "error",
+        message: isOk ? "gRPC trailers received" : `gRPC error ${status}: ${decodeGrpcMessage(message)}`,
+        details: { frame: trailerFrames, grpcStatus: status ?? "<missing>", grpcMessage: decodeGrpcMessage(message), trailers },
       });
       return;
     }
 
-    for (const frame of frames) {
-      if (frame.kind === "trailers") {
-        trailerFrames += 1;
-        trailers = { ...trailers, ...frame.trailers };
-        params.emit({ type: "trailers", trailers });
-
-        const status = trailers["grpc-status"];
-        const message = trailers["grpc-message"] ?? "";
-        const isOk = status === undefined || status === "0";
-        params.emit({
-          type: "log",
-          level: isOk ? "info" : "error",
-          message: isOk ? "gRPC trailers received" : `gRPC error ${status}: ${decodeGrpcMessage(message)}`,
-          details: {
-            frame: trailerFrames,
-            grpcStatus: status ?? "<missing>",
-            grpcMessage: decodeGrpcMessage(message),
-            trailers,
-          },
-        });
-        continue;
-      }
-
-      dataFrames += 1;
-      totalMessages += 1;
-
-      try {
-        const decoded = params.responseType.decode(frame.payload);
-        const value = params.responseType.toObject(decoded, {
-          longs: String,
-          enums: String,
-          bytes: String,
-          defaults: true,
-          arrays: true,
-          objects: true,
-        });
-
-        if (maxMessages > 0 && messages.length >= maxMessages) {
-          droppedMessages += 1;
-          messages.shift();
-          if (droppedMessages === 1) {
-            params.emit({
-              type: "log",
-              level: "warn",
-              message:
-                "Message capture limit reached; older response messages are replaced while the stream continues.",
-              details: { maxMessages },
-            });
-          }
-        }
-
-        messages.push(value);
-        params.emit({
-          type: "message",
-          index: totalMessages - 1,
-          value,
-        });
-        params.emit({
-          type: "log",
-          level: "info",
-          message: `Message #${totalMessages} decoded`,
-          details: {
-            frame: dataFrames,
-            messageIndex: totalMessages - 1,
-            storedMessages: messages.length,
-            bytes: frame.payload.length,
-          },
-        });
-      } catch (error) {
-        params.emit({
-          type: "error",
-          message: "Failed to decode response message with selected proto response type.",
-          details: {
-            responseType: params.method.responseType,
-            frameBytes: frame.payload.length,
-            error: errorToPlainObject(error),
-          },
-        });
-        throw error;
-      }
+    dataFrames += 1;
+    totalMessages += 1;
+    while (maxMessages > 0 && messages.length >= maxMessages) {
+      messages.shift();
+      messageDocumentRefs.shift();
+      droppedMessages += 1;
     }
-  };
-
-  if (!response.body) {
+    messages.push(frame.documentRef.preview);
+    messageDocumentRefs.push(frame.documentRef);
+    params.emit({ type: "message", index: totalMessages - 1, documentRef: frame.documentRef });
     params.emit({
       type: "log",
-      level: "warn",
-      message: "ReadableStream is not available; response will be processed after completion.",
+      level: "debug",
+      message: `Message #${totalMessages} decoded`,
+      details: { frame: dataFrames, messageIndex: totalMessages - 1, storedMessages: messages.length, bytes: frame.frameBytes, decodeThread: "worker" },
     });
-    let text: string;
-    try {
-      text = await response.text();
-    } catch (error) {
-      if (!timeoutMessage) throw error;
-      text = "";
+  };
+
+  const processWorkerChunk = async (chunk: Uint8Array<ArrayBufferLike>, final = false) => {
+    const batch = await decodeWorker.processChunk(chunk, final);
+    decodedBinaryBytes += batch.decodedBinaryBytes;
+    if (batch.decodedBinaryBytes > 0) {
+      params.emit({ type: "log", level: "debug", message: "Decoded gRPC-Web bytes in worker", details: { decodedBytes: batch.decodedBinaryBytes, totalDecodedBytes: decodedBinaryBytes, encoding: responseEncoding } });
     }
-    rawTextBytes += text.length;
-    for (const bytes of base64Stream.push(text, true)) {
-      processBytes(bytes);
-    }
-  } else {
-    const reader = response.body.getReader();
-    const cancelReader = () => {
-      params.emit({ type: "log", level: "warn", message: "Abort requested; cancelling response reader immediately." });
-      void reader.cancel("Request cancelled by user").catch(() => undefined);
-    };
+    for (const frame of batch.frames) processDecodedFrame(frame);
+  };
 
-    if (requestController.signal.aborted) cancelReader();
-    requestController.signal.addEventListener("abort", cancelReader, { once: true });
-
-    try {
-      while (true) {
-        if (requestController.signal.aborted) break;
-        const chunk = params.method.responseStream && idleTimeoutMs > 0
-          ? await readGrpcWebStreamChunk(reader, idleTimeoutMs)
-          : await reader.read();
-        if (chunk.done) break;
-
-        const text = textDecoder.decode(chunk.value, { stream: true });
-        rawTextBytes += text.length;
-        params.emit({
-          type: "log",
-          level: "debug",
-          message: "Response stream chunk received",
-          details: { rawTextBytes: text.length, totalRawTextBytes: rawTextBytes },
-        });
-
-        for (const bytes of base64Stream.push(text, false)) {
-          processBytes(bytes);
+  transportLifecycleStore.increment("activeStreamSubscriptions");
+  try {
+    if (!response.body) {
+      if (responseEncoding === "text") {
+        let text = "";
+        try { text = await response.text(); } catch (error) { if (!timeoutMessage) throw error; }
+        await processWorkerChunk(new TextEncoder().encode(text), true);
+      } else {
+        let bytes = new Uint8Array(0);
+        try { bytes = new Uint8Array(await response.arrayBuffer()); } catch (error) { if (!timeoutMessage) throw error; }
+        await processWorkerChunk(bytes, true);
+      }
+    } else {
+      const reader = response.body.getReader();
+      const cancelReader = () => {
+        params.emit({ type: "log", level: "warn", message: "Abort requested; cancelling response reader immediately." });
+        void reader.cancel("Request cancelled by user").catch(() => undefined);
+      };
+      if (requestController.signal.aborted) cancelReader();
+      requestController.signal.addEventListener("abort", cancelReader, { once: true });
+      try {
+        while (true) {
+          if (requestController.signal.aborted) break;
+          const chunk = params.method.responseStream && idleTimeoutMs > 0
+            ? await readGrpcWebStreamChunk(reader, idleTimeoutMs)
+            : await reader.read();
+          if (chunk.done) break;
+          await processWorkerChunk(chunk.value, false);
         }
+      } catch (error) {
+        if (error instanceof GrpcWebIdleTimeoutError) {
+          timeoutMessage = error.message;
+          await reader.cancel(error.message).catch(() => undefined);
+        } else if (!requestController.signal.aborted) {
+          throw error;
+        }
+      } finally {
+        requestController.signal.removeEventListener("abort", cancelReader);
+        reader.releaseLock();
       }
-    } catch (error) {
-      if (error instanceof GrpcWebIdleTimeoutError) {
-        timeoutMessage = error.message;
-        await reader.cancel(error.message).catch(() => undefined);
-      } else if (!requestController.signal.aborted) {
-        throw error;
-      }
-    } finally {
-      requestController.signal.removeEventListener("abort", cancelReader);
-      reader.releaseLock();
+      if (!requestController.signal.aborted && !timeoutMessage) await processWorkerChunk(new Uint8Array(0), true);
     }
-
-    const finalText = textDecoder.decode();
-    if (finalText) {
-      rawTextBytes += finalText.length;
-      params.emit({
-        type: "log",
-        level: "debug",
-        message: "Final response decoder chunk received",
-        details: { rawTextBytes: finalText.length, totalRawTextBytes: rawTextBytes },
-      });
-    }
-    for (const bytes of base64Stream.push(finalText, true)) {
-      processBytes(bytes);
-    }
+  } finally {
+    decodeWorker.dispose();
+    payloadChannel.release();
+    transportLifecycleStore.decrement("activeStreamSubscriptions");
   }
 
   if (requestTimer !== null) window.clearTimeout(requestTimer);
@@ -486,6 +441,7 @@ async function invokeGrpcWebTextAttempt(params: InvokeGrpcWebTextAttemptParams):
     headers: responseHeaders,
     trailers,
     messages,
+    messageDocumentRefs,
     totalMessages,
     droppedMessages,
     durationMs: Math.round(performance.now() - startedAt),
@@ -512,6 +468,53 @@ async function invokeGrpcWebTextAttempt(params: InvokeGrpcWebTextAttemptParams):
   });
   params.emit({ type: "end", summary });
   return summary;
+}
+
+async function invokeElectronGrpcWebTransport(params: InvokeGrpcWebTextAttemptParams): Promise<GrpcResult> {
+  const bridge = window.electronGrpcWebTransport;
+  if (!bridge?.isAvailable) throw new Error("Electron gRPC-Web transport runtime is unavailable.");
+  const runId = params.runId?.trim() || `grpc-web:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+  const requestUrl = buildGrpcWebUrl(params.baseUrl, params.method.serviceName, params.method.methodName);
+  const cancel = (): void => { void bridge.cancel(runId).catch(() => undefined); };
+  if (params.signal?.aborted) cancel();
+  else params.signal?.addEventListener("abort", cancel, { once: true });
+
+  params.emit({
+    type: "log",
+    level: "info",
+    message: "Using disposable Electron gRPC-Web transport runtime.",
+    details: { requestUrl, runId, responseType: params.method.responseType },
+  });
+
+  try {
+    return await bridge.invoke(
+      {
+        runId,
+        url: requestUrl,
+        headers: params.headers,
+        body: typeof params.requestBody === "string" ? params.requestBody : base64Encode(params.requestBody),
+        rootJson: params.root.toJSON(),
+        responseType: params.method.responseType,
+        responseStream: params.method.responseStream,
+        timeoutMs: params.timeoutMs,
+        connectionTimeoutMs: params.connectionTimeoutMs,
+        idleTimeoutMs: params.idleTimeoutMs,
+        maxMessages: params.maxMessages,
+      },
+      (events) => {
+        for (const event of events) params.emit(event);
+      },
+    );
+  } catch (error) {
+    if (params.signal?.aborted) {
+      const aborted = new Error("Request cancelled by user");
+      aborted.name = "AbortError";
+      throw aborted;
+    }
+    throw error;
+  } finally {
+    params.signal?.removeEventListener("abort", cancel);
+  }
 }
 
 class GrpcWebIdleTimeoutError extends Error {}
@@ -571,14 +574,33 @@ export function buildGrpcWebUrl(baseUrl: string, serviceName: string, methodName
   return `${baseUrl.replace(/\/+$/, "")}/${serviceName}/${methodName}`;
 }
 
-function buildGrpcWebHeaders(metadata: MetadataPair[], _responseStream: boolean): Record<string, string> {
+function buildGrpcWebHeaders(metadata: MetadataPair[]): Record<string, string> {
+  const contentType = "application/grpc-web-text+proto";
   return {
-    "content-type": "application/grpc-web-text+proto",
-    accept: "application/grpc-web-text+proto",
+    "content-type": contentType,
+    accept: contentType,
     "x-grpc-web": "1",
     "x-user-agent": "grpc-web-javascript/0.1",
     ...metadataPairsToRecord(metadata),
   };
+}
+
+type GrpcWebResponseEncoding = "text" | "binary";
+
+/**
+ * Uses the response Content-Type when available and otherwise defaults to text.
+ * The browser client sends grpc-web-text for both unary and server streaming,
+ * while explicit binary responses are still accepted for compatibility.
+ */
+function resolveGrpcWebResponseEncoding(contentType: string): GrpcWebResponseEncoding {
+  const normalized = contentType.split(";", 1)[0].trim().toLowerCase();
+  if (normalized === "application/grpc-web-text" || normalized === "application/grpc-web-text+proto") {
+    return "text";
+  }
+  if (normalized === "application/grpc-web" || normalized === "application/grpc-web+proto") {
+    return "binary";
+  }
+  return "text";
 }
 
 /**
@@ -621,157 +643,6 @@ function encodeGrpcFrame(payload: Bytes, trailers: boolean): Bytes {
   return frame;
 }
 
-class GrpcWebFrameParser {
-  private buffer: Bytes = new Uint8Array(0);
-
-  push(chunk: Bytes): GrpcFrame[] {
-    this.buffer = concatBytes(this.buffer, chunk);
-    const frames: GrpcFrame[] = [];
-    let offset = 0;
-
-    while (this.buffer.length - offset >= 5) {
-      const flag = this.buffer[offset];
-      const length = readUint32BE(this.buffer, offset + 1);
-      const frameEnd = offset + 5 + length;
-
-      if (this.buffer.length < frameEnd) break;
-
-      const payload = this.buffer.slice(offset + 5, frameEnd);
-      const isTrailer = (flag & 0x80) === 0x80;
-      const isCompressed = (flag & 0x01) === 0x01;
-
-      if (isCompressed) {
-        throw new Error(
-          "Compressed gRPC-Web frames are not supported in this MVP. Disable grpc-encoding for this tester route.",
-        );
-      }
-
-      if (isTrailer) {
-        frames.push({
-          kind: "trailers",
-          payload,
-          trailers: parseTrailerBlock(payload),
-        });
-      } else {
-        frames.push({ kind: "data", payload });
-      }
-
-      offset = frameEnd;
-    }
-
-    this.buffer = this.buffer.slice(offset);
-    return frames;
-  }
-
-  getBufferState() {
-    return {
-      bufferedBytes: this.buffer.length,
-      hasHeader: this.buffer.length >= 5,
-      expectedPayloadBytes: this.buffer.length >= 5 ? readUint32BE(this.buffer, 1) : null,
-    };
-  }
-}
-
-class GrpcWebTextBase64Decoder {
-  private pending = "";
-
-  push(text: string, final: boolean): Bytes[] {
-    this.pending += text.replace(/\s+/g, "");
-    const chunks: Bytes[] = [];
-
-    while (this.pending.length >= 4) {
-      const paddedEntityEnd = findPaddedBase64EntityEnd(this.pending);
-
-      if (paddedEntityEnd > 0) {
-        const entity = this.pending.slice(0, paddedEntityEnd);
-        chunks.push(base64Decode(entity));
-        this.pending = this.pending.slice(paddedEntityEnd);
-        continue;
-      }
-
-      const decodableLength = this.pending.length - (this.pending.length % 4);
-
-      if (decodableLength <= 0) break;
-
-      // Decode every complete 4-character base64 quantum immediately.
-      // Keeping a full quantum buffered makes low-frequency server streams look stalled:
-      // a server can send one complete gRPC frame and then stay idle, but the frame parser
-      // will not see the last bytes until another chunk arrives or the stream is closed.
-      const entity = this.pending.slice(0, decodableLength);
-      chunks.push(base64Decode(entity));
-      this.pending = this.pending.slice(decodableLength);
-    }
-
-    if (final && this.pending.length > 0) {
-      const padded = this.pending.padEnd(Math.ceil(this.pending.length / 4) * 4, "=");
-      chunks.push(base64Decode(padded));
-      this.pending = "";
-    }
-
-    return chunks;
-  }
-}
-
-/**
- * Finds the end of a valid padded base64 entity in a streamed text chunk.
- */
-function findPaddedBase64EntityEnd(text: string): number {
-  const firstPadding = text.indexOf("=");
-
-  if (firstPadding === -1) return -1;
-
-  let end = firstPadding;
-  while (end < text.length && text[end] === "=") end += 1;
-
-  const remainder = end % 4;
-  if (remainder !== 0) {
-    const adjustedEnd = end + (4 - remainder);
-    if (adjustedEnd > text.length) return -1;
-    return adjustedEnd;
-  }
-
-  return end;
-}
-
-/**
- * Parses a gRPC-Web trailer frame into trailer key/value pairs.
- */
-function parseTrailerBlock(payload: Bytes): Record<string, string> {
-  const text = new TextDecoder().decode(payload);
-  const trailers: Record<string, string> = {};
-
-  for (const line of text.split("\r\n")) {
-    if (!line.trim()) continue;
-    const separator = line.indexOf(":");
-    if (separator === -1) continue;
-    const key = line.slice(0, separator).trim().toLowerCase();
-    const value = line.slice(separator + 1).trim();
-    trailers[key] = value;
-  }
-
-  return trailers;
-}
-
-/**
- * Concatenates two byte arrays without mutating either input.
- */
-function concatBytes(left: Bytes, right: Bytes): Bytes {
-  if (left.length === 0) return new Uint8Array(right);
-  if (right.length === 0) return new Uint8Array(left);
-
-  const output = new Uint8Array(left.length + right.length);
-  output.set(left, 0);
-  output.set(right, left.length);
-  return output;
-}
-
-/**
- * Reads a big-endian unsigned 32-bit integer from a byte array.
- */
-function readUint32BE(bytes: Bytes, offset: number): number {
-  return bytes[offset] * 2 ** 24 + (bytes[offset + 1] << 16) + (bytes[offset + 2] << 8) + bytes[offset + 3];
-}
-
 /**
  * Encodes bytes as base64 for gRPC-Web text requests.
  */
@@ -779,20 +650,6 @@ function base64Encode(bytes: Bytes): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
-}
-
-/**
- * Decodes base64 text into bytes for gRPC-Web text responses.
- */
-function base64Decode(text: string): Bytes {
-  const binary = atob(text);
-  const bytes: Bytes = new Uint8Array(binary.length);
-
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-
-  return bytes;
 }
 
 /**

@@ -25,7 +25,7 @@ type WorkbenchViewDerivedScope = {
   currentExamples: SavedExample[];
   draftEffectiveBaseUrl: string;
   draftEffectiveNativeTarget: string;
-  events: UiEvent[];
+  getResponseEvents: () => UiEvent[];
   hydrated: boolean;
   isNativeTransport: boolean;
   lastResult: GrpcResult | null;
@@ -48,7 +48,7 @@ export function useWorkbenchViewDerived(scope: WorkbenchViewDerivedScope) {
     currentExamples,
     draftEffectiveBaseUrl,
     draftEffectiveNativeTarget,
-    events,
+    getResponseEvents,
     hydrated,
     isNativeTransport,
     lastResult,
@@ -94,18 +94,6 @@ export function useWorkbenchViewDerived(scope: WorkbenchViewDerivedScope) {
           ? draftEffectiveNativeTarget
           : draftEffectiveBaseUrl;
 
-  const messageEvents = events.filter((event) => event.kind === "message");
-  const latestResponsePayload = useMemo(() => {
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-      const event = events[index];
-      if (event.kind === "message") return event.fullPayload ?? event.payload;
-    }
-
-    const resultMessages = lastResult?.messages ?? [];
-    if (resultMessages.length > 0) return resultMessages[resultMessages.length - 1];
-
-    return undefined;
-  }, [events, lastResult]);
   const reportPayload = useMemo(
     () => ({
       exportedAt: hydrated ? new Date().toISOString() : "",
@@ -115,7 +103,9 @@ export function useWorkbenchViewDerived(scope: WorkbenchViewDerivedScope) {
       request: safeJsonParse(requestJson),
       metadata: metadata.filter((item) => item.key.trim()),
       result: lastResult,
-      events,
+      get events() {
+        return getResponseEvents();
+      },
     }),
     [
       hydrated,
@@ -128,7 +118,7 @@ export function useWorkbenchViewDerived(scope: WorkbenchViewDerivedScope) {
       requestJson,
       metadata,
       lastResult,
-      events,
+      getResponseEvents,
     ],
   );
   const requestTabItems = useMemo<Array<{ value: RequestTab; label: string }>>(
@@ -180,8 +170,6 @@ export function useWorkbenchViewDerived(scope: WorkbenchViewDerivedScope) {
   const showEmptyWorkbench = hydrated && requestSessions.length === 0 && !hasActiveWorkbenchRequest;
 
   return {
-    latestResponsePayload,
-    messageEvents,
     previewUrl,
     reportPayload,
     requestFields,

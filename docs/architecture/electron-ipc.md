@@ -204,3 +204,58 @@ Logger settings and renderer log forwarding use dedicated IPC channels:
 - `logger:clear` removes existing log files and keeps the logger usable.
 
 Renderer code should use `app/playground/shared/logger.ts` instead of calling these channels directly.
+
+## Utility runtime data plane
+
+Desktop runtime execution defaults to the Electron utility process. Set `LAYANG_RUNTIME_MODE=main` only as a temporary rollback for the legacy Main-owned gRPC/mock path.
+
+```txt
+React renderer
+  |  commands + metadata only
+  v
+preload typed bridge
+  |
+  v
+Electron Main
+  |  lifecycle / IPC routing only
+  |  MessagePort
+  v
+Utility process
+  |- gRPC client execution
+  |- gRPC / REST / WebSocket mocks
+  |- protobuf encode/decode
+  |- payload document retention
+  |- line windows / search / copy-on-demand
+  v
+network
+```
+
+Native gRPC message bodies are registered in the utility-owned payload store before an event leaves the utility process. The renderer receives a `documentRef` and message metadata, never `serializedValueUtf8` or the decoded full object on the hot stream path.
+
+Response viewers pull data only when required:
+
+```txt
+Latest / selected message
+  -> payload.getLines(documentId, start, count)
+  -> visible lines only
+
+Search
+  -> payload.search(documentIds, query)
+  -> match metadata only
+
+Copy JSON
+  -> payload.getText(documentId, format)
+  -> full text only on explicit user action
+```
+
+### Runtime recovery
+
+Each utility-process instance has a generation ID. Utility-owned native gRPC document IDs include that generation. If the child process exits unexpectedly, the host:
+
+1. marks the runtime unavailable and rejects pending commands;
+2. emits `runtime.unavailable` without silently replaying active RPC calls;
+3. performs one bounded automatic restart by default;
+4. emits `runtime.generationChanged` after the replacement runtime is ready;
+5. clears renderer response-session references and transport lifecycle counters tied to the old generation.
+
+An explicit application shutdown disables restart, so a delayed child `exit` event cannot resurrect the runtime.

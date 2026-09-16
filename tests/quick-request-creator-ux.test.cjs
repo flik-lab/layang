@@ -48,13 +48,14 @@ test("bulk create skips an existing schema RPC by identity in one state update",
   assert.doesNotMatch(actions, /methodsToCreate\.forEach\([\s\S]{0,250}setCollections/);
 });
 
-test("schema and service actions use the same multi-method creator", () => {
+test("schema action uses the shared multi-method creator from the Proto source workspace", () => {
   const schema = read("app/playground/features/proto-registry/proto-schema-workspace.tsx");
   const sidebar = read("app/playground/features/shell/workbench-sidebar.tsx");
 
-  assert.match(schema, /Create all \{methods\.length \|\| ""\} requests/);
-  assert.match(schema, /Create all \{serviceMethods\.length\} requests/);
-  assert.match(schema, /openGrpcMethodsRequestDialog\(serviceMethods, library\.id, version\.id\)/);
+  assert.match(schema, />\s*Create requests\s*</);
+  assert.match(schema, /openGrpcMethodsRequestDialog\(methods, library\.id, version\.id\)/);
+  assert.match(schema, /data-layout="schema-proto-workspace"/);
+  assert.doesNotMatch(schema, />\s*Create all\s*</);
   assert.match(sidebar, /<SchemaSidebarTree/);
   assert.doesNotMatch(sidebar, /Create all \{methodCount\} requests/);
 });
@@ -104,7 +105,7 @@ test("proto upload from request flow creates a schema collection and opens the c
   const actions = read("app/playground/features/collection/use-collection-actions.ts");
   const io = read("app/playground/features/workspace/use-workspace-io-actions.ts");
 
-  assert.match(io, /addGrpcMethodsToCollection\(\s*pendingCollectionId \|\| NEW_SCHEMA_COLLECTION_TARGET,\s*\[method\]/);
+  assert.match(io, /addGrpcMethodsToCollection\(\s*pendingCollectionId \|\| NEW_SCHEMA_COLLECTION_TARGET,\s*compiled\.loaded\.methods/);
   assert.match(actions, /selectCollectionRequest\(workingCollection, requests\[0\]\)/);
   assert.match(actions, /setSideSection\("collections"\)/);
   assert.match(actions, /requestIds: requests\.map\(\(request\) => request\.id\)/);

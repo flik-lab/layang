@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, type ChangeEvent, type DragEvent as ReactDragEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type DragEvent as ReactDragEvent,
+  type ReactNode,
+} from "react";
 import {
   Box,
   Button,
@@ -42,7 +49,7 @@ import {
   railWidth,
 } from "../../shared/workbench-constants";
 import { loadProtoFiles } from "@/lib/proto-loader";
-import type { ProtoSourceFile } from "@/lib/types";
+import type { LoadedProto, ProtoSourceFile } from "@/lib/types";
 import {
   assessProtoLibraryImport,
   prepareProtoVersionImport,
@@ -50,8 +57,12 @@ import {
   type ProtoVersionImportPlan,
 } from "../proto-library/proto-version-management";
 import type { SettingsSection, SideSection } from "../../shared/workbench-types";
-import type { WorkbenchViewContext } from "./use-workbench-container-model";
-import { MockingSidebarTree } from "../services/mocking-sidebar-tree";
+import { NEW_SCHEMA_COLLECTION_TARGET } from "../collection/quick-request-creator-domain";
+import type { ProtoLibrary, ProtoLibraryVersion } from "../proto-library/proto-library-types";
+import type { WorkbenchSidebarModel } from "./workbenchShell.types";
+import { setWorkbenchSideSection, useWorkbenchSideSection } from "./workbench-navigation-store";
+import { interactionStartedAt, measureInteraction } from "../../shared/performance/interaction-performance";
+import { MockingSidebar } from "../mock-server/sidebar/MockingSidebar";
 import { SchemaSidebarTree } from "../proto-registry/schema-sidebar-tree";
 
 const settingsItems: Array<{ value: SettingsSection; label: string }> = [
@@ -75,9 +86,11 @@ type GlobalProtoImportReview = {
   assessment: ProtoLibraryImportAssessment;
   plan: ProtoVersionImportPlan;
   versionLabel: string;
+  destination: "schemas" | "requests";
+  targetCollectionId: string;
 };
 
-export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
+export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchSidebarModel }) {
   const {
     FeatureCollectionSidebar,
     UnifiedDocsSidebar,
@@ -88,6 +101,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
     beginSidebarResize,
     buildAllDocumentation,
     checkDocumentationBuild,
+    addGrpcMethodsToCollection,
     collectionFilter,
     collections,
     createCollectionFolder,
@@ -104,7 +118,6 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
     importWorkspaceFiles,
     mockScenarioInputRef,
     mockSelectedMethodKey,
-    mockServer,
     setMockSelectedMethodKey,
     openAddCollectionDialog,
     openAddCollectionRequestDialog,
@@ -132,11 +145,9 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
     setServiceProtocol,
     setServicesSection,
     setSettingsSection,
-    setSideSection,
     setSidebarOpen,
     setSidebarWidthPx,
     settingsSection,
-    sideSection,
     sidebarOpen,
     sidebarWidthPx,
     moveCollectionTreeNode,
@@ -152,8 +163,11 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
   const [globalProtoImportReview, setGlobalProtoImportReview] = useState<GlobalProtoImportReview | null>(null);
   const [globalProtoImportError, setGlobalProtoImportError] = useState("");
   const [protoDropTarget, setProtoDropTarget] = useState<"requests" | "schemas" | null>(null);
+  const sideSection = useWorkbenchSideSection();
+  const visualSideSection = sideSection;
   const globalProtoFileInputRef = useRef<HTMLInputElement | null>(null);
   const globalProtoFolderInputRef = useRef<HTMLInputElement | null>(null);
+
 
   const railItems: RailItem[] = [
     { section: "collections", label: "Collections", icon: <Api fontSize="small" /> },
@@ -175,6 +189,9 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
             : sideSection === "source-control"
               ? "Source Control"
               : "Settings";
+
+
+
 
 
 
@@ -239,11 +256,10 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
     setProtoDropTarget(null);
     const files = event.dataTransfer.files;
     if (target === "schemas") {
-      await reviewGlobalProtoFiles(files);
+      await reviewGlobalProtoFiles(files, "schemas", "");
       return;
     }
-    const destination = quickRequestDestination();
-    await handleProtoFiles(files, destination?.collectionId ?? "");
+    await reviewGlobalProtoFiles(files, "requests", "");
   }
 
   useEffect(() => {
@@ -267,7 +283,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
 
   function openGlobalProtoImporter(mode: "files" | "folder") {
     setProtoImportAnchor(null);
-    setSideSection("proto-schemas");
+    setWorkbenchSideSection("proto-schemas");
     setSidebarOpen(true);
     window.setTimeout(() => {
       const target = mode === "folder" ? globalProtoFolderInputRef.current : globalProtoFileInputRef.current;
@@ -281,7 +297,11 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
     }, 0);
   }
 
-  async function reviewGlobalProtoFiles(files: FileList | null) {
+  async function reviewGlobalProtoFiles(
+    files: FileList | null,
+    destination: "schemas" | "requests" = "schemas",
+    targetCollectionId = "",
+  ) {
     if (!files || files.length === 0) return;
     try {
       const selected = Array.from(files).filter((file) => file.name.toLowerCase().endsWith(".proto"));
@@ -297,7 +317,15 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
       const schemaName = firstPath.includes("/") ? firstPath.split("/")[0] : firstPath.replace(/\.proto$/i, "");
       const assessment = assessProtoLibraryImport(protoLibraries, sources);
       if (!assessment) {
-        createProtoLibraryFromImport(schemaName || "Proto Schema", "Revision 1", sources);
+        const imported = createProtoLibraryFromImport(schemaName || "Proto Schema", "Revision 1", sources);
+        if (destination === "requests" && imported.version) {
+          createRequestsForImportedProtoReview(
+            imported.library,
+            imported.version,
+            imported.loaded,
+            targetCollectionId,
+          );
+        }
         setGlobalProtoImportError("");
         return;
       }
@@ -311,7 +339,15 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
         importMode: "complete-revision",
         allowDuplicateChecksum: assessment.kind === "exact",
       });
-      setGlobalProtoImportReview({ schemaName, sources, assessment, plan, versionLabel });
+      setGlobalProtoImportReview({
+        schemaName,
+        sources,
+        assessment,
+        plan,
+        versionLabel,
+        destination,
+        targetCollectionId,
+      });
       setGlobalProtoImportError("");
     } catch (error) {
       setGlobalProtoImportError(error instanceof Error ? error.message : String(error));
@@ -321,22 +357,56 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
     }
   }
 
+  function createRequestsForImportedProtoReview(
+    library: ProtoLibrary,
+    version: ProtoLibraryVersion,
+    loadedProto: LoadedProto,
+    targetCollectionId: string,
+  ) {
+    if (loadedProto.methods.length === 0) {
+      setGlobalProtoImportError("Proto loaded, but no RPC methods were found.");
+      return;
+    }
+    addGrpcMethodsToCollection(
+      targetCollectionId || NEW_SCHEMA_COLLECTION_TARGET,
+      loadedProto.methods,
+      { library, version, loaded: loadedProto },
+      null,
+      false,
+      true,
+    );
+  }
+
   function useExistingGlobalProtoImport() {
     if (!globalProtoImportReview) return;
-    selectProtoLibraryVersion(
-      globalProtoImportReview.assessment.library.id,
-      globalProtoImportReview.assessment.version.id,
-    );
+    const { assessment, destination, targetCollectionId } = globalProtoImportReview;
+    selectProtoLibraryVersion(assessment.library.id, assessment.version.id);
+    if (destination === "requests") {
+      createRequestsForImportedProtoReview(
+        assessment.library,
+        assessment.version,
+        loadProtoFiles(assessment.version.files),
+        targetCollectionId,
+      );
+    }
     setGlobalProtoImportReview(null);
   }
 
   function createSeparateGlobalProtoImport() {
     if (!globalProtoImportReview) return;
-    createProtoLibraryFromImport(
+    const imported = createProtoLibraryFromImport(
       globalProtoImportReview.schemaName || "Proto Schema",
       "Revision 1",
       globalProtoImportReview.sources,
     );
+    if (globalProtoImportReview.destination === "requests" && imported.version) {
+      createRequestsForImportedProtoReview(
+        imported.library,
+        imported.version,
+        imported.loaded,
+        globalProtoImportReview.targetCollectionId,
+      );
+    }
     setGlobalProtoImportReview(null);
   }
 
@@ -358,6 +428,14 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
         plan.impacts.filter((impact) => impact.canUpdate).map((impact) => impact.requestId),
       );
       applyProtoVersionImportPlan(plan, selectedRequestIds, true);
+      if (globalProtoImportReview.destination === "requests") {
+        createRequestsForImportedProtoReview(
+          globalProtoImportReview.assessment.library,
+          plan.candidateVersion,
+          loadProtoFiles(plan.candidateVersion.files),
+          globalProtoImportReview.targetCollectionId,
+        );
+      }
       setGlobalProtoImportReview(null);
       setGlobalProtoImportError("");
     } catch (error) {
@@ -366,8 +444,14 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
   }
 
   function openRailSection(section: SideSection) {
-    setSideSection(section);
+    const startedAt = interactionStartedAt();
     setSidebarOpen(true);
+    if (section === sideSection) {
+      window.requestAnimationFrame(() => measureInteraction("sidebar-section-repeat", startedAt));
+      return;
+    }
+    setWorkbenchSideSection(section);
+    window.requestAnimationFrame(() => measureInteraction("sidebar-section-switch", startedAt));
   }
 
 
@@ -420,7 +504,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
         multiple
         type="file"
         accept=".proto,text/x-protobuf"
-        onChange={(event) => void reviewGlobalProtoFiles(event.target.files)}
+        onChange={(event) => void reviewGlobalProtoFiles(event.target.files, "schemas", "")}
       />
       <input
         ref={globalProtoFolderInputRef}
@@ -429,7 +513,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
         type="file"
         accept=".proto,text/x-protobuf"
         {...{ webkitdirectory: "", directory: "" }}
-        onChange={(event) => void reviewGlobalProtoFiles(event.target.files)}
+        onChange={(event) => void reviewGlobalProtoFiles(event.target.files, "schemas", "")}
       />
       <Box
           component="nav"
@@ -457,7 +541,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
                 <Button
                   size="small"
                   aria-label={item.label}
-                  aria-current={sideSection === item.section ? "page" : undefined}
+                  aria-current={visualSideSection === item.section ? "page" : undefined}
                   onClick={() => openRailSection(item.section)}
                   sx={{
                     minWidth: 0,
@@ -465,11 +549,11 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
                     height: "var(--rail-button-size, 48px)",
                     p: 0,
                     borderRadius: 0,
-                    color: sideSection === item.section ? "primary.main" : "text.secondary",
-                    bgcolor: sideSection === item.section ? "action.selected" : "transparent",
+                    color: visualSideSection === item.section ? "primary.main" : "text.secondary",
+                    bgcolor: visualSideSection === item.section ? "action.selected" : "transparent",
                     position: "relative",
                     "&::before":
-                      sideSection === item.section
+                      visualSideSection === item.section
                         ? {
                             content: '""',
                             position: "absolute",
@@ -510,7 +594,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
             <Button
               size="small"
               aria-label="Settings"
-              aria-current={sideSection === "settings" ? "page" : undefined}
+              aria-current={visualSideSection === "settings" ? "page" : undefined}
               onClick={() => openRailSection("settings")}
               sx={{
                 minWidth: 0,
@@ -518,8 +602,9 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
                 height: "var(--rail-button-size, 48px)",
                 p: 0,
                 borderRadius: 0,
-                color: sideSection === "settings" ? "primary.main" : "text.secondary",
-                bgcolor: sideSection === "settings" ? "action.selected" : "transparent",
+                color: visualSideSection === "settings" ? "primary.main" : "text.secondary",
+                bgcolor: visualSideSection === "settings" ? "action.selected" : "transparent",
+                position: "relative",
               }}
             >
               <SettingsIcon fontSize="small" />
@@ -572,6 +657,8 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
 
           </SidebarHeader>
 
+
+
           <Menu anchorEl={newMenuAnchor} open={Boolean(newMenuAnchor)} onClose={() => setNewMenuAnchor(null)}>
             <MenuItem onClick={() => openQuickRequest("")}>Quick create…</MenuItem>
             <MenuItem onClick={() => openQuickRequest("grpc")}>Request from schema</MenuItem>
@@ -598,6 +685,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
                 sx={{
                   minHeight: 0,
                   height: "100%",
+                  display: "flex",
                   outlineWidth: protoDropTarget === "requests" ? 2 : 0,
                   outlineStyle: "solid",
                   outlineColor: "primary.main",
@@ -669,6 +757,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
                 sx={{
                   minHeight: 0,
                   height: "100%",
+                  display: "flex",
                   outlineWidth: protoDropTarget === "schemas" ? 2 : 0,
                   outlineStyle: "solid",
                   outlineColor: "primary.main",
@@ -709,17 +798,6 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
                       selectProtoLibraryVersion(libraryId, versionId);
                       window.setTimeout(() => window.dispatchEvent(new CustomEvent("layang:schema-select", { detail: { libraryId, versionId } })), 0);
                     }}
-                    onSelectMethod={(libraryId, versionId, method) => {
-                      setProtoPreview(null);
-                      selectProtoLibraryVersion(libraryId, versionId);
-                      window.setTimeout(() => {
-                        window.dispatchEvent(
-                          new CustomEvent("layang:schema-select", {
-                            detail: { libraryId, versionId, methodKey: `${method.serviceName}/${method.methodName}` },
-                          }),
-                        );
-                      }, 0);
-                    }}
                   />
                 </Box>
               </Stack>
@@ -727,15 +805,13 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
 
             {sideSection === "services" && (
               <Box sx={{ py: 0.35 }}>
-                <MockingSidebarTree
-                  protoLibraries={protoLibraries}
-                  mockServer={mockServer}
-                  mockServerStatus={ctx.mockServerStatus}
+                <MockingSidebar
+                  running={Boolean(ctx.mockServerStatus?.running)}
                   selectedMethodKey={mockSelectedMethodKey}
                   serviceProtocol={serviceProtocol}
-                  onSelectGrpcMethod={(libraryId, versionId, method) => {
-                    selectProtoLibraryVersion(libraryId, versionId);
-                    setMockSelectedMethodKey(`${method.serviceName}/${method.methodName}`);
+                  onSelectGrpcMethod={(row) => {
+                    selectProtoLibraryVersion(row.libraryId, row.versionId, { persistDefault: false });
+                    setMockSelectedMethodKey(row.methodKey);
                     setServicesSection("mock-servers");
                     setServiceProtocol("grpc-mock");
                   }}
@@ -743,6 +819,11 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchViewContext }) {
                     setServicesSection("mock-servers");
                     if (protocol === "grpc-mock") setMockSelectedMethodKey(grpcMockOverviewMethodKey);
                     setServiceProtocol(protocol);
+                  }}
+                  onOpenGrpcHome={() => {
+                    setServicesSection("mock-servers");
+                    setMockSelectedMethodKey(grpcMockOverviewMethodKey);
+                    setServiceProtocol("grpc-mock");
                   }}
                 />
               </Box>

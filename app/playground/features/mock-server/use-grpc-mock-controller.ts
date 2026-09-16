@@ -4,9 +4,9 @@ import type {
   MockFormat,
   MockMethodScenarioFile,
   MockServerProject,
-  MockServerStatus,
 } from "../../shared/workbench-types";
 import { createDefaultMockServerProject, normalizeMockServerProject } from "./mock-scenario-model";
+import { mockRuntimeStore } from "./runtime/mockRuntime.store";
 
 type ToastSeverity = "info" | "success" | "warning" | "error";
 
@@ -24,8 +24,10 @@ export function useGrpcMockController({
   showToast,
 }: UseGrpcMockControllerOptions) {
   const [mockServer, setMockServerState] = useState<MockServerProject>(() => createDefaultMockServerProject());
-  const [mockServerStatus, setMockServerStatus] = useState<MockServerStatus>({ running: false });
-  const [webAccessStatus, setWebAccessStatus] = useState<MockServerStatus>({ running: false, runtimeKind: "gateway" });
+  const mockServerStatus = mockRuntimeStore.getGrpc();
+  const setMockServerStatus = mockRuntimeStore.patchGrpc;
+  const webAccessStatus = mockRuntimeStore.getWebAccess();
+  const setWebAccessStatus = mockRuntimeStore.patchWebAccess;
   const [mockSettingsOpen, setMockSettingsOpen] = useState(false);
   const [mockScenarioEditorDraft, setMockScenarioEditorDraft] = useState<{
     methodKey: string;
@@ -137,37 +139,6 @@ export function useGrpcMockController({
     }
     return next;
   }
-
-  useEffect(() => {
-    if (!webAccessStatus.running || !window.electronGateway?.status) return;
-    const profileId = mockServer.activeGatewayProfileId;
-    let cancelled = false;
-    const refresh = async () => {
-      const result = await window.electronGateway?.status?.({ profileId });
-      if (cancelled || !result?.ok) return;
-      setWebAccessStatus((current: MockServerStatus) =>
-        current.running
-          ? {
-              ...current,
-              gateway: result,
-              port: result.listenPort ?? current.port,
-              bindHost: result.listenHost ?? current.bindHost,
-              bindAddress: result.bindAddress ?? current.bindAddress,
-              url: result.webUrl ?? result.url ?? current.url,
-              methodCount: result.methodCount ?? current.methodCount,
-              activeCallCount: result.activeCallCount,
-              updatedAt: new Date().toISOString(),
-            }
-          : current,
-      );
-    };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 1000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [webAccessStatus.running, mockServer.activeGatewayProfileId]);
 
   useEffect(() => {
     mockServerRef.current = mockServer;

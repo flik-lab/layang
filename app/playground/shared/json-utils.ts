@@ -85,7 +85,15 @@ export function isPlainRecord(value: unknown): value is Record<string, unknown> 
 
 /** Builds an internal Layang preview wrapper for large payloads. */
 export function createLayangPayloadPreview(value: unknown, maxPreviewChars: number): LayangPayloadPreview {
-  const serialized = safeJsonStringify(value);
+  return createLayangPayloadPreviewFromSerialized(value, safeJsonStringify(value), maxPreviewChars);
+}
+
+/** Builds a preview from an already serialized payload so hot stream paths stringify only once. */
+export function createLayangPayloadPreviewFromSerialized(
+  value: unknown,
+  serialized: string,
+  maxPreviewChars: number,
+): LayangPayloadPreview {
   return {
     __layangPreview: true,
     kind: inferPayloadPreviewKind(value),
@@ -172,6 +180,14 @@ function inferPayloadOriginalType(value: unknown): PayloadOriginalType {
 
 function inferPayloadPreviewKind(value: unknown): "json" | "text" {
   return typeof value === "string" ? "text" : "json";
+}
+
+
+/** Returns the known original character size without serializing preview payloads again. */
+export function payloadOriginalChars(value: unknown): number {
+  if (isPayloadPreview(value)) return unwrapPayloadPreview(value).originalChars;
+  if (typeof value === "string") return value.length;
+  return 0;
 }
 
 /** Searches deeply through JSON-like values, including generated object paths. */

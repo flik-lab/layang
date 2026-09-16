@@ -1,23 +1,38 @@
 "use client";
 
+import { useState } from "react";
 import { Terminal } from "@/components/shadcn/icons";
 import { Box, Button, Stack, Typography } from "@/components/shadcn/compat";
+import { PerformanceStatsPanel } from "../../shared/performance/PerformanceStatsPanel";
+import {
+  useGrpcMockRuntimeStatus,
+  useRestMockRuntimeStatus,
+  useWebAccessRuntimeStatus,
+  useWebSocketMockRuntimeStatus,
+} from "../mock-server/runtime/useMockRuntimeSelector";
+import type { WorkbenchCliPanelModel, WorkbenchStatusBarModel } from "./workbenchShell.types";
+import {
+  DEFAULT_PERFORMANCE_DIAGNOSTICS_ENABLED,
+  performanceStats,
+} from "../../shared/performance/performance-stats.store";
 
-type ViewContext = Record<string, any>;
-
-export function WorkbenchStatusBar({ ctx }: { ctx: ViewContext }) {
-  const {
-    mockServerStatus,
-    webAccessStatus,
-    restMockStatus,
-    wsMockStatus,
-    workspaceFolderPath,
-    cliPanelOpen,
-    setCliPanelOpen,
-  } = ctx;
+export function WorkbenchStatusBar({
+  ctx,
+  cliPanelOpen,
+  setCliPanelOpen,
+}: {
+  ctx: WorkbenchStatusBarModel;
+} & WorkbenchCliPanelModel) {
+  performanceStats.recordRenderInvocation("statusBar");
+  const [perfOpen, setPerfOpen] = useState(DEFAULT_PERFORMANCE_DIAGNOSTICS_ENABLED);
+  const { workspaceFolderPath } = ctx;
+  const mockServerStatus = useGrpcMockRuntimeStatus();
+  const webAccessStatus = useWebAccessRuntimeStatus();
+  const restMockStatus = useRestMockRuntimeStatus();
+  const wsMockStatus = useWebSocketMockRuntimeStatus();
   const serviceLabels = [
     mockServerStatus?.running ? `gRPC Mock :${mockServerStatus.port ?? 50055}` : null,
-    webAccessStatus?.running ? `Web Access :${webAccessStatus.port ?? webAccessStatus.webPort ?? 8080}` : null,
+    webAccessStatus?.running ? `Web Access :${webAccessStatus.port ?? 8080}` : null,
     restMockStatus?.running ? `REST mock :${restMockStatus.port ?? 3001}` : null,
     wsMockStatus?.running ? `WebSocket mock :${wsMockStatus.port ?? 3101}` : null,
   ].filter(Boolean) as string[];
@@ -53,6 +68,14 @@ export function WorkbenchStatusBar({ ctx }: { ctx: ViewContext }) {
         <Box sx={{ flex: 1 }} />
         <Button
           size="small"
+          variant={perfOpen ? "contained" : "text"}
+          aria-pressed={perfOpen}
+          onClick={() => setPerfOpen((current: boolean) => !current)}
+          title="Toggle performance diagnostics"
+          sx={{ minWidth: 42, height: 20, px: 0.6, borderRadius: 0 }}
+        >Perf</Button>
+        <Button
+          size="small"
           variant={cliPanelOpen ? "contained" : "text"}
           aria-pressed={Boolean(cliPanelOpen)}
           onClick={() => setCliPanelOpen?.((current: boolean) => !current)}
@@ -65,6 +88,12 @@ export function WorkbenchStatusBar({ ctx }: { ctx: ViewContext }) {
           Local
         </Typography>
       </Stack>
+      <PerformanceStatsPanel
+        open={perfOpen}
+        onClose={() => setPerfOpen(false)}
+        streamActive={Boolean(ctx.activeRunning)}
+        mockActive={Boolean(mockServerStatus?.running || restMockStatus?.running || wsMockStatus?.running || webAccessStatus?.running)}
+      />
     </Box>
   );
 }

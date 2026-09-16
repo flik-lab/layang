@@ -19,3 +19,9 @@ test('View Proto renders source text from the request proto revision', () => {
   assert.match(source, /activeRequestProtoLibrary\?\.name/);
   assert.match(source, /activeRequestProtoVersion\?\.version/);
 });
+
+
+test('View Proto uses the shared readable code viewer instead of an isolated dense pre style', () => {
+  assert.match(source, /className="code-viewer code-viewer--proto request-proto-viewer"/);
+  assert.match(source, /<code>\{activeRequestProtoSourceFile\.text\}<\/code>/);
+});

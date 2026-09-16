@@ -8,16 +8,15 @@ const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "u
 
 test("Web Access lives inside the gRPC service instead of a standalone sidebar item", () => {
   const sidebar = read("app/playground/features/shell/workbench-sidebar.tsx");
-  const mockingTree = read("app/playground/features/services/mocking-sidebar-tree.tsx");
+  const mockingSidebar = read("app/playground/features/mock-server/sidebar/MockingSidebar.tsx");
   const services = read("app/playground/features/services/services-workspace.tsx");
 
-  assert.match(sidebar, /<MockingSidebarTree/);
-  assert.match(mockingTree, />\s*gRPC\s*<\/Button>/);
-  assert.doesNotMatch(mockingTree, />\s*Web Access\s*<\/Button>/);
-  assert.match(mockingTree, /serviceProtocol === "grpc-mock" \|\| serviceProtocol === "web-access"/);
+  assert.match(sidebar, /<MockingSidebar/);
+  assert.match(mockingSidebar, />gRPC<\/Button>/);
+  assert.doesNotMatch(mockingSidebar, />\s*Web Access\s*<\/Button>/);
+  assert.match(mockingSidebar, /serviceProtocol === "grpc-mock" \|\| props\.serviceProtocol === "web-access"|props\.serviceProtocol === "grpc-mock" \|\| props\.serviceProtocol === "web-access"/);
 
-  assert.match(services, /const grpcMockTabs = \["scenarios", "proto", "web-access", "activity"\]/);
-  assert.match(services, /label:\s*value === "scenarios"[\s\S]*?"Web access"/);
+  assert.match(services, /\{ value: "web-access", label: "Web Access" \}/);
   assert.match(services, /<WebAccessPanel ctx=\{ctx\} requestedSection=\{webAccessSectionRequest\} \/>/);
   assert.doesNotMatch(services, /function WebAccessWorkspace/);
 });
@@ -30,11 +29,11 @@ test("gRPC uses one persistent run-mode toolbar on every integrated tab", () => 
   assert.match(types, /runMode: "native" \| "web-access"/);
   assert.match(core, /runMode: "native"/);
   assert.match(core, /runMode: input\?\.runMode === "web-access" \? "web-access" : "native"/);
-  assert.match(services, /Run mode/);
+  assert.match(services, /"aria-label": "gRPC run mode"/);
   assert.match(services, /<MenuItem value="native">Native gRPC<\/MenuItem>/);
   assert.match(services, /<MenuItem value="web-access">Web access<\/MenuItem>/);
-  assert.match(services, /minWidth: 112/);
-  assert.match(services, /runModeRunning[\s\S]*?\? "Stop"[\s\S]*?: "Start"/);
+  assert.match(services, /width: \{ xs: "100%", md: 180 \}/);
+  assert.match(services, /runModeRunning \? "Stop" : "Start"/);
   assert.doesNotMatch(services, /tab !== "web-access" \? \(/);
   assert.doesNotMatch(services, /Save & Start/);
 });
@@ -62,7 +61,7 @@ test("portal layers keep notifications above dialogs, menus, and tooltips", () =
   assert.match(compat, /notification: 2147483600/);
   assert.match(compat, /zIndex: portalLayer\.dialog/);
   assert.match(compat, /zIndex: portalLayer\.notification/);
-  const response = read("app/playground/features/shell/workbench-main-panel.tsx");
+  const response = read("app/playground/features/response-viewer/response-workbench-panel.tsx");
   assert.match(response, /zIndex: 2147483100/);
 });
 

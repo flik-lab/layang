@@ -53,6 +53,8 @@ export function useWorkbenchLayout() {
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const sidebarResizeRef = useRef(false);
   const responseResizeRef = useRef(false);
+  const resizeFrameRef = useRef<number | null>(null);
+  const resizePointRef = useRef<{ clientX: number; clientY: number } | null>(null);
 
   const horizontalLayoutAvailable =
     viewportSize.width === 0 ||
@@ -201,16 +203,11 @@ export function useWorkbenchLayout() {
   ]);
 
   useEffect(() => {
-    function stopResize() {
-      sidebarResizeRef.current = false;
-      responseResizeRef.current = false;
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    }
+    function applyResizePoint(point: { clientX: number; clientY: number } | null) {
+      if (!point) return;
 
-    function handleResizeMove(event: MouseEvent) {
       if (sidebarResizeRef.current) {
-        const nextWidth = event.clientX - railWidth;
+        const nextWidth = point.clientX - railWidth;
         if (nextWidth < minSidebarWidth - 36) {
           setSidebarOpen(false);
           sidebarResizeRef.current = false;
@@ -224,17 +221,48 @@ export function useWorkbenchLayout() {
       if (responseResizeRef.current) {
         if (effectiveRequestResponseLayout === "horizontal") {
           const maxWidth = maxResponseWidthForViewport(window.innerWidth, sidebarOpen, sidebarWidthPx);
-          setResponseWidth(clamp(window.innerWidth - event.clientX - 10, minResponseWidth, maxWidth));
+          setResponseWidth(clamp(window.innerWidth - point.clientX - 10, minResponseWidth, maxWidth));
         } else {
           const maxHeight = maxResponseHeightForViewport(window.innerHeight);
-          setResponseHeight(clamp(window.innerHeight - event.clientY - 10, minResponseHeight, maxHeight));
+          setResponseHeight(clamp(window.innerHeight - point.clientY - 10, minResponseHeight, maxHeight));
         }
       }
+    }
+
+    function flushResizeFrame() {
+      resizeFrameRef.current = null;
+      const point = resizePointRef.current;
+      resizePointRef.current = null;
+      applyResizePoint(point);
+    }
+
+    function stopResize() {
+      if (resizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(resizeFrameRef.current);
+        resizeFrameRef.current = null;
+      }
+      const finalPoint = resizePointRef.current;
+      resizePointRef.current = null;
+      applyResizePoint(finalPoint);
+      sidebarResizeRef.current = false;
+      responseResizeRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+
+    function handleResizeMove(event: MouseEvent) {
+      if (!sidebarResizeRef.current && !responseResizeRef.current) return;
+      resizePointRef.current = { clientX: event.clientX, clientY: event.clientY };
+      if (resizeFrameRef.current !== null) return;
+      resizeFrameRef.current = window.requestAnimationFrame(flushResizeFrame);
     }
 
     window.addEventListener("mousemove", handleResizeMove);
     window.addEventListener("mouseup", stopResize);
     return () => {
+      if (resizeFrameRef.current !== null) window.cancelAnimationFrame(resizeFrameRef.current);
+      resizeFrameRef.current = null;
+      resizePointRef.current = null;
       window.removeEventListener("mousemove", handleResizeMove);
       window.removeEventListener("mouseup", stopResize);
     };

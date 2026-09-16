@@ -16,7 +16,7 @@ test("gRPC mock serves traffic without retaining client request payloads", () =>
   assert.match(runtime, /requestLogsEnabled:\s*false/);
   assert.match(runtime, /const requestLog = null/);
   assert.match(model, /requestLogs:\s*false/);
-  assert.match(workspace, /items=\{\[\{ value: "logs", label: "Logs" \}\]\}/);
+  assert.match(workspace, /<RuntimeLogs status=\{mockServerStatus\} \/>/);
   assert.doesNotMatch(workspace, /aria-label="Request logging"/);
   assert.doesNotMatch(workspace, /const gatewayLogs = status\.gateway\?\.logs/);
 });

@@ -6,6 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { performance } = require("node:perf_hooks");
 const { readGitWorkspace } = require("../../lib/git-workspace.cjs");
+const { parseScenarioBundle } = require("../../lib/workspace-v6-codec.cjs");
 const grpc = require("@grpc/grpc-js");
 const protoLoader = require("@grpc/proto-loader");
 const { readJsonIfExists, walkDirectory, writeProtoWorkspace } = require("../utils/file-utils.cjs");
@@ -139,13 +140,13 @@ async function startMockServerNow(payload) {
   const bindHost = normalizeMockBindHost(payload.bindHost);
   const protoFiles = Array.isArray(payload.protoFiles) ? payload.protoFiles : [];
   const methods = Array.isArray(payload.methods) ? payload.methods : [];
-  const scenarios = Array.isArray(payload.scenarios) ? payload.scenarios : [];
+  const scenarios = resolveRuntimeScenarios(payload);
   const streamDefaults = normalizeRuntimeStreamSettings(payload.streamDefaults || {}, {
     intervalMs: 1000,
     loop: false,
     maxLoops: 0,
   });
-  const activeScenarioIds = normalizeActiveScenarioIds(payload.activeScenarioIds || payload.selectedScenarioIds || {});
+  const activeScenarioIds = resolveRuntimeActiveScenarioIds(scenarios, payload.activeScenarioIds || payload.selectedScenarioIds || {});
   const enabledMethods = normalizeEnabledMethods(payload.enabledMethods || payload.enabled_methods || {});
   const workspaceDirectory =
     payload.workspaceDirectory && typeof payload.workspaceDirectory === "string" ? payload.workspaceDirectory : "";
@@ -348,6 +349,44 @@ function findServiceDefinitionKey(serviceDefinition, protoMethodName) {
   return insensitive || lowerCamel;
 }
 
+function resolveRuntimeActiveScenarioIds(scenarios, selectedScenarioIds) {
+  const requested = normalizeActiveScenarioIds(selectedScenarioIds || {});
+  const grouped = new Map();
+  for (const scenario of Array.isArray(scenarios) ? scenarios : []) {
+    const service = String(scenario?.service || "");
+    const method = String(scenario?.method || "");
+    const id = String(scenario?.id || "");
+    if (!service || !method || !id) continue;
+    const key = getRuntimeMethodKey(service, method);
+    const list = grouped.get(key) || [];
+    list.push(id);
+    grouped.set(key, list);
+  }
+  const resolved = {};
+  for (const [key, ids] of grouped.entries()) {
+    const dotKey = key.replace("/", ".");
+    const requestedId = requested[key] || requested[dotKey];
+    resolved[key] = requestedId && ids.includes(requestedId) ? requestedId : ids[0];
+  }
+  return resolved;
+}
+
+function hasRuntimeScenarioSource(payload) {
+  return Boolean(Array.isArray(payload?.scenarios) || (payload?.methodFiles && typeof payload.methodFiles === "object"));
+}
+
+function resolveRuntimeScenarios(payload) {
+  if (Array.isArray(payload?.scenarios)) return payload.scenarios;
+  const methodFiles = payload?.methodFiles && typeof payload.methodFiles === "object" ? payload.methodFiles : {};
+  const scenarios = [];
+  for (const file of Object.values(methodFiles)) {
+    const parsed = parseScenarioBundle(file);
+    if (parsed?.invalidSource) throw new Error("Mock scenario file is invalid.");
+    if (Array.isArray(parsed?.scenarios)) scenarios.push(...parsed.scenarios);
+  }
+  return scenarios;
+}
+
 /**
  * Creates a mutable runtime config that can be hot-swapped while the server keeps running.
  */
@@ -444,7 +483,7 @@ function createMockProtoSignature(protoFiles) {
 }
 
 function createRuntimeConfigSignature(payload, fallbackRuntime) {
-  const scenarios = Array.isArray(payload?.scenarios) ? payload.scenarios : fallbackRuntime?.scenarioIndex || [];
+  const scenarios = hasRuntimeScenarioSource(payload) ? resolveRuntimeScenarios(payload) : fallbackRuntime?.scenarioIndex || [];
   const streamDefaults = payload?.streamDefaults || fallbackRuntime?.streamDefaults || {};
   const activeScenarioIds =
     payload?.activeScenarioIds || payload?.selectedScenarioIds || fallbackRuntime?.activeScenarioIds || {};
@@ -482,7 +521,7 @@ async function updateActiveMockServer(payload, source) {
       bindHost: nextBindHost,
       protoFiles: nextProtoFiles,
       methods: nextMethods,
-      scenarios: Array.isArray(payload.scenarios) ? payload.scenarios : runtime.scenarioIndex,
+      scenarios: hasRuntimeScenarioSource(payload) ? resolveRuntimeScenarios(payload) : runtime.scenarioIndex,
       streamDefaults: payload.streamDefaults || runtime.streamDefaults,
       activeScenarioIds: payload.activeScenarioIds || payload.selectedScenarioIds || runtime.activeScenarioIds,
       enabledMethods: payload.enabledMethods || runtime.enabledMethods,
@@ -547,8 +586,10 @@ async function updateActiveMockServer(payload, source) {
     source === "file" && active.hasUiStreamDefaultsOverride
       ? runtime.streamDefaults
       : payload.streamDefaults || runtime.streamDefaults;
-  const nextScenarios = Array.isArray(payload.scenarios) ? payload.scenarios : runtime.scenarioIndex;
-  const nextActiveScenarioIds = payload.activeScenarioIds || payload.selectedScenarioIds || runtime.activeScenarioIds;
+  const nextScenarios = hasRuntimeScenarioSource(payload) ? resolveRuntimeScenarios(payload) : runtime.scenarioIndex;
+  const nextActiveScenarioIds = hasRuntimeScenarioSource(payload)
+    ? resolveRuntimeActiveScenarioIds(nextScenarios, payload.activeScenarioIds || payload.selectedScenarioIds || runtime.activeScenarioIds)
+    : (payload.activeScenarioIds || payload.selectedScenarioIds || runtime.activeScenarioIds);
   const nextEnabledMethods = payload.enabledMethods || runtime.enabledMethods;
   const nextSignature = createRuntimeConfigSignature(
     {
@@ -1107,11 +1148,12 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
   }
 
   const initialResponses = getRuntimeStreamResponses(initialScenario);
+  const initialFingerprints = createRuntimeStreamResponseFingerprints(initialResponses);
   const initialTiming = getRuntimeStreamTiming(initialScenario, runtime);
   let currentScenarioId = initialScenario.id;
-  let currentResponseSignature = createRuntimeStreamResponsesSignature(initialResponses);
+  let currentResponseSignature = initialFingerprints.join("\n");
   let cachedSnapshotVersion = runtime.configVersion;
-  let cachedSnapshot = { scenario: initialScenario, responses: initialResponses, timing: initialTiming };
+  let cachedSnapshot = { scenario: initialScenario, responses: initialResponses, fingerprints: initialFingerprints, timing: initialTiming };
   let sentResponseCounts = new Map();
   let index = 0;
   let completedCycles = 0;
@@ -1159,8 +1201,9 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
       return undefined;
     }
     const responses = getRuntimeStreamResponses(scenario);
+    const fingerprints = createRuntimeStreamResponseFingerprints(responses);
     const timing = getRuntimeStreamTiming(scenario, runtime);
-    const responseSignature = createRuntimeStreamResponsesSignature(responses);
+    const responseSignature = fingerprints.join("\n");
     const scenarioChanged = Boolean(currentScenarioId && scenario.id !== currentScenarioId);
     const responseStackChanged = Boolean(
       !scenarioChanged &&
@@ -1184,7 +1227,7 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
         completedCycles = 0;
         pendingCompletedCycle = false;
       } else {
-        const nextUnsentIndex = findFirstUnsentRuntimeStreamResponseIndex(responses, sentResponseCounts);
+        const nextUnsentIndex = findFirstUnsentRuntimeStreamResponseIndex(fingerprints, sentResponseCounts);
         if (
           nextUnsentIndex >= 0 &&
           (pendingActionKind === "finish" || index >= responses.length || nextUnsentIndex < index)
@@ -1201,7 +1244,7 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
       currentResponseSignature = responseSignature;
     }
 
-    cachedSnapshot = { scenario, responses, timing };
+    cachedSnapshot = { scenario, responses, fingerprints, timing };
     return cachedSnapshot;
   };
 
@@ -1350,7 +1393,7 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
       return;
     }
 
-    const { scenario, responses, timing } = snapshot;
+    const { scenario, responses, fingerprints, timing } = snapshot;
     if (!responses.length) {
       failStream(
         grpc.status.FAILED_PRECONDITION,
@@ -1375,7 +1418,7 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
     }
 
     const wrote = call.write(item.data === undefined ? {} : item.data);
-    recordRuntimeStreamResponseSent(sentResponseCounts, item);
+    recordRuntimeStreamResponseSent(sentResponseCounts, fingerprints[index]);
     index += 1;
     if (index >= responses.length) {
       completedCycles += 1;
@@ -1434,21 +1477,20 @@ function createRuntimeStreamResponseFingerprint(item) {
   });
 }
 
-function createRuntimeStreamResponsesSignature(responses) {
-  return (Array.isArray(responses) ? responses : []).map(createRuntimeStreamResponseFingerprint).join("\n");
+function createRuntimeStreamResponseFingerprints(responses) {
+  return (Array.isArray(responses) ? responses : []).map(createRuntimeStreamResponseFingerprint);
 }
 
-function recordRuntimeStreamResponseSent(sentCounts, item) {
-  if (!sentCounts || typeof sentCounts.set !== "function") return;
-  const fingerprint = createRuntimeStreamResponseFingerprint(item);
+function recordRuntimeStreamResponseSent(sentCounts, fingerprint) {
+  if (!sentCounts || typeof sentCounts.set !== "function" || !fingerprint) return;
   sentCounts.set(fingerprint, (sentCounts.get(fingerprint) || 0) + 1);
 }
 
-function findFirstUnsentRuntimeStreamResponseIndex(responses, sentCounts) {
-  if (!Array.isArray(responses) || !responses.length) return -1;
+function findFirstUnsentRuntimeStreamResponseIndex(fingerprints, sentCounts) {
+  if (!Array.isArray(fingerprints) || !fingerprints.length) return -1;
   const seenInNextStack = new Map();
-  for (let index = 0; index < responses.length; index += 1) {
-    const fingerprint = createRuntimeStreamResponseFingerprint(responses[index]);
+  for (let index = 0; index < fingerprints.length; index += 1) {
+    const fingerprint = fingerprints[index];
     const nextCount = (seenInNextStack.get(fingerprint) || 0) + 1;
     seenInNextStack.set(fingerprint, nextCount);
     if (nextCount > (sentCounts?.get?.(fingerprint) || 0)) return index;

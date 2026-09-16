@@ -1,28 +1,21 @@
 "use strict";
-
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const path = require("node:path");
 const test = require("node:test");
+const read = (path) => fs.readFileSync(path, "utf8");
 
-const root = path.resolve(__dirname, "..");
-const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
-
-test("response search navigates highlighted matches with next and previous controls", () => {
+test("response search navigation delegates virtual JSON matches to the paged document viewer", () => {
   const toolbar = read("app/playground/features/response-viewer/response-toolbar.tsx");
-  const panel = read("app/playground/features/shell/workbench-main-panel.tsx");
+  const viewer = read("app/playground/features/response-viewer/json-document/JsonDocumentViewer.tsx");
   const styles = read("app/globals.css");
-
-  assert.match(toolbar, /querySelectorAll<HTMLElement>\("mark\.search-highlight"\)/);
-  assert.match(toolbar, /new MutationObserver/);
-  assert.match(toolbar, /document\.getElementById\(searchRootId\)/);
-  assert.match(toolbar, /activeMatchIndexRef\.current/);
-  assert.match(toolbar, /const retainedIndex = Math\.min/);
-  assert.match(toolbar, /scrollIntoView\(\{ behavior: "smooth", block: "center"/);
-  assert.match(toolbar, /Previous response search match/);
-  assert.match(toolbar, /Next response search match/);
-  assert.match(toolbar, /event\.shiftKey \? -1 : 1/);
-  assert.match(panel, /highlightQuery=\{deferredResponseFilter\}/);
-  assert.match(panel, /searchScopeKey=\{responseTab\}/);
+  assert.match(toolbar, /\.virtual-json-viewer/);
+  assert.match(toolbar, /layang-virtual-search/);
+  assert.match(toolbar, /layang-virtual-search-state/);
+  assert.match(viewer, /payloadDocumentService\.search/);
+  assert.match(viewer, /scrollToIndex/);
+  assert.match(viewer, /useFixedVirtualWindow/);
+  assert.doesNotMatch(viewer, /@tanstack\/react-virtual|useVirtualizer|flushSync/);
+  assert.match(viewer, /dataset\.virtualSearchCount/);
+  assert.match(viewer, /className="virtual-json-viewer"/);
   assert.match(styles, /\.search-highlight\.search-highlight--active/);
 });

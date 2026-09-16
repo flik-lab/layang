@@ -5,7 +5,7 @@
 # Layang
 
 [![Website](https://img.shields.io/badge/website-layang.mff.web.id-blue)](https://layang.mff.web.id/)
-[![Version](https://img.shields.io/badge/version-1.1.3-blue)](https://github.com/flik-lab/layang/releases)
+[![Version](https://img.shields.io/badge/version-1.1.4-blue)](https://github.com/flik-lab/layang/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Layang is a workspace-based API workbench for testing, mocking, benchmarking, documenting, and automating APIs across REST, WebSocket, gRPC, and gRPC-Web.
@@ -49,6 +49,28 @@ The desktop UI uses a permanent icon rail for **Requests**, **Schemas**, **Servi
 - Use the CLI in CI to validate workspaces, list saved requests, check mock scenarios, and run native gRPC requests.
 - Use the WebSocket workbench for live connections, message sending, local mock responses, benchmark exports, and generated docs.
 - Use the REST workbench for params, headers, auth, bodies, docs, examples, local mocks, scenario matching, and templates.
+
+## Release 1.1.4
+
+The `1.1.4` patch release finalizes the streaming performance work for release and keeps performance diagnostics disabled by default unless explicitly opened by the user.
+
+Highlights:
+
+- Performance diagnostics are inactive by default and only start sampling while the Performance panel is open.
+- Electron gRPC-Web uses disposable transport utility processes so Stop/Start gets a fresh transport generation.
+- Message retention is user-selectable at 5, 10, 20, 50, or 100 and applies to the real retained payload window.
+- Live Messages support manual follow-latest control, Show Latest, compact Mocking stream controls, and `Ctrl+S` / `Cmd+S` scenario saving.
+
+## Release 1.1.4
+
+The `1.1.4` patch release focuses on gRPC-Web compatibility, live gRPC mock scenario updates, Proto import correctness, and a cleaner response-viewer layout.
+
+Highlights:
+
+- Unary gRPC-Web responses preserve the negotiated `grpc-web-text` content type for generated browser clients.
+- New gRPC mock scenarios resolve against the correct Proto revision and can be used without restarting an already-running mock runtime.
+- Drag-and-drop Proto imports preserve all RPC methods and reuse schema/revision validation.
+- Expanded response payloads use one outer scroll container instead of nested JSON/table scrollbars.
 
 ## Release 1.1.3
 
@@ -133,6 +155,8 @@ layang gateway:status ./workspace --profile "Track Gateway"
 ```
 
 Web Access supports HTTP, Local HTTPS, custom PEM, and PFX/P12 certificates. The Local HTTPS wizard detects Windows or Linux, includes the configured listener host in SAN, offers Current User or UAC-approved All Users trust on Windows, uses the available system/NSS trust adapter on Linux, validates the certificate, and keeps machine-local certificate paths and PFX passphrases outside the workspace.
+
+When a custom reverse proxy forwards browser gRPC-Web traffic, keep unary and server-streaming requests in `application/grpc-web-text+proto`. Forward the complete Base64 request body without truncating or decoding individual chunks, return the gRPC-Web text response body unchanged, and preserve the full `/<package>.<Service>/<Method>` path. The browser client still accepts an explicit binary gRPC-Web response when the proxy deliberately returns `application/grpc-web+proto`, but text is the default for both unary and streaming calls.
 
 ## CLI
 

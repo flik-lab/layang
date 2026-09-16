@@ -21,9 +21,11 @@ export function createRequestSession(
   } = {},
 ): RequestSession {
   const now = new Date().toISOString();
+  const id = createId();
   const title = options.titleSuffix ? `${method.methodName} · ${options.titleSuffix}` : method.methodName;
   return {
-    id: createId(),
+    id,
+    responseSessionId: id,
     methodKey: methodKey(method),
     title,
     serviceName: method.serviceName,
@@ -35,9 +37,6 @@ export function createRequestSession(
     environmentKey: options.environmentKey ?? "default",
     assertionJson: options.assertionJson ?? defaultAssertion,
     responseTab: "messages",
-    events: [],
-    lastResult: null,
-    assertionResults: [],
     running: false,
     status: "idle",
     openedAt: now,

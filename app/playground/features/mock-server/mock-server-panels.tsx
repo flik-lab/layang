@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type UIEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type UIEvent } from "react";
 
 import { PlayArrow, StopCircle } from "@/components/shadcn/icons";
 import {
@@ -681,26 +681,34 @@ export function MockServerSettingsDialog({
                   }
                 />
               </Stack>
-              <Stack direction="row" spacing={0.8} alignItems="center" flexWrap="wrap">
-                <TextField
-                  size="small"
-                  type="number"
-                  label={uiCopy.fields.intervalMs}
-                  value={String(streamDefaults.intervalMs ?? 0)}
-                  onChange={(event: TextInputChangeEvent) =>
-                    onStreamBaseChange({
-                      intervalMs: Math.max(0, Math.floor(Number(event.target.value) || 0)),
-                    })
-                  }
-                  sx={{ width: 130 }}
-                />
+              <Box
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: { xs: "1fr", sm: "130px 120px 130px" },
+                  gap: 0.8,
+                  alignItems: "start",
+                }}
+              >
                 <Stack spacing={0.3}>
-                  <Typography variant="caption" color="text.secondary" display="block">
-                    Loop
-                  </Typography>
-                  <FormControl size="small" sx={{ width: 120 }}>
+                  <Typography variant="caption" color="text.secondary">Interval (ms)</Typography>
+                  <TextField
+                    size="small"
+                    type="number"
+                    value={String(streamDefaults.intervalMs ?? 0)}
+                    inputProps={{ "aria-label": "Interval (ms)" }}
+                    onChange={(event: TextInputChangeEvent) =>
+                      onStreamBaseChange({
+                        intervalMs: Math.max(0, Math.floor(Number(event.target.value) || 0)),
+                      })
+                    }
+                  />
+                </Stack>
+                <Stack spacing={0.3}>
+                  <Typography variant="caption" color="text.secondary">Loop</Typography>
+                  <FormControl size="small">
                     <Select
                       value={streamDefaults.loop ? "yes" : "no"}
+                      inputProps={{ "aria-label": "Loop" }}
                       onChange={(event: SelectInputChangeEvent) =>
                         onStreamBaseChange({
                           loop: event.target.value === "yes",
@@ -712,20 +720,22 @@ export function MockServerSettingsDialog({
                     </Select>
                   </FormControl>
                 </Stack>
-                <TextField
-                  size="small"
-                  type="number"
-                  label="Loop count"
-                  value={String(streamDefaults.maxLoops ?? 0)}
-                  onChange={(event: TextInputChangeEvent) =>
-                    onStreamBaseChange({
-                      maxLoops: Math.max(0, Math.floor(Number(event.target.value) || 0)),
-                    })
-                  }
-                  helperText={uiCopy.helper.zeroMeansUnlimited}
-                  sx={{ width: 130 }}
-                />
-              </Stack>
+                <Stack spacing={0.3}>
+                  <Typography variant="caption" color="text.secondary">Loop count</Typography>
+                  <TextField
+                    size="small"
+                    type="number"
+                    value={String(streamDefaults.maxLoops ?? 0)}
+                    inputProps={{ "aria-label": "Loop count" }}
+                    onChange={(event: TextInputChangeEvent) =>
+                      onStreamBaseChange({
+                        maxLoops: Math.max(0, Math.floor(Number(event.target.value) || 0)),
+                      })
+                    }
+                    helperText={uiCopy.helper.zeroMeansUnlimited}
+                  />
+                </Stack>
+              </Box>
             </Stack>
           </Paper>
 
@@ -833,26 +843,34 @@ export function MockServerSettingsDialog({
                               </TableCell>
                               <TableCell sx={{ minWidth: 360 }}>
                                 {canStream ? (
-                                  <Stack direction="row" spacing={0.6} alignItems="center" flexWrap="wrap">
-                                    <TextField
-                                      size="small"
-                                      type="number"
-                                      label="Interval"
-                                      value={String(stream?.intervalMs ?? streamDefaults.intervalMs ?? 0)}
-                                      onChange={(event: TextInputChangeEvent) =>
-                                        onScenarioStreamSettingsChange(row.method, row.activeScenarioId, {
-                                          intervalMs: Math.max(0, Math.floor(Number(event.target.value) || 0)),
-                                        })
-                                      }
-                                      sx={{ width: 110 }}
-                                    />
+                                  <Box
+                                    sx={{
+                                      display: "grid",
+                                      gridTemplateColumns: "110px 110px 100px",
+                                      gap: 0.6,
+                                      alignItems: "start",
+                                    }}
+                                  >
                                     <Stack spacing={0.3}>
-                                      <Typography variant="caption" color="text.secondary" display="block">
-                                        Loop
-                                      </Typography>
-                                      <FormControl size="small" sx={{ width: 110 }}>
+                                      <Typography variant="caption" color="text.secondary">Interval (ms)</Typography>
+                                      <TextField
+                                        size="small"
+                                        type="number"
+                                        value={String(stream?.intervalMs ?? streamDefaults.intervalMs ?? 0)}
+                                        inputProps={{ "aria-label": "Interval (ms)" }}
+                                        onChange={(event: TextInputChangeEvent) =>
+                                          onScenarioStreamSettingsChange(row.method, row.activeScenarioId, {
+                                            intervalMs: Math.max(0, Math.floor(Number(event.target.value) || 0)),
+                                          })
+                                        }
+                                      />
+                                    </Stack>
+                                    <Stack spacing={0.3}>
+                                      <Typography variant="caption" color="text.secondary">Loop</Typography>
+                                      <FormControl size="small">
                                         <Select
                                           value={(stream?.loop ?? streamDefaults.loop) ? "yes" : "no"}
+                                          inputProps={{ "aria-label": "Loop" }}
                                           onChange={(event: SelectInputChangeEvent) =>
                                             onScenarioStreamSettingsChange(row.method, row.activeScenarioId, {
                                               loop: event.target.value === "yes",
@@ -864,19 +882,21 @@ export function MockServerSettingsDialog({
                                         </Select>
                                       </FormControl>
                                     </Stack>
-                                    <TextField
-                                      size="small"
-                                      type="number"
-                                      label="Max"
-                                      value={String(stream?.maxLoops ?? streamDefaults.maxLoops ?? 0)}
-                                      onChange={(event: TextInputChangeEvent) =>
-                                        onScenarioStreamSettingsChange(row.method, row.activeScenarioId, {
-                                          maxLoops: Math.max(0, Math.floor(Number(event.target.value) || 0)),
-                                        })
-                                      }
-                                      sx={{ width: 100 }}
-                                    />
-                                  </Stack>
+                                    <Stack spacing={0.3}>
+                                      <Typography variant="caption" color="text.secondary">Loop count</Typography>
+                                      <TextField
+                                        size="small"
+                                        type="number"
+                                        value={String(stream?.maxLoops ?? streamDefaults.maxLoops ?? 0)}
+                                        inputProps={{ "aria-label": "Loop count" }}
+                                        onChange={(event: TextInputChangeEvent) =>
+                                          onScenarioStreamSettingsChange(row.method, row.activeScenarioId, {
+                                            maxLoops: Math.max(0, Math.floor(Number(event.target.value) || 0)),
+                                          })
+                                        }
+                                      />
+                                    </Stack>
+                                  </Box>
                                 ) : (
                                   <Typography variant="caption" color="text.secondary" display="block">
                                     {row.mode === "unary" ? "Unary method" : "Streaming type not supported"}
@@ -968,6 +988,20 @@ export function MockServerPanel({
   const streamBase = streamDefaults ?? createDefaultMockStreamDefaults();
   const activeStream = currentRow?.activeScenario?.stream;
   const selectedScenarioId = currentRow?.activeScenarioId || currentScenarios[0]?.id || "";
+  const scenarioLoopEnabled = Boolean(activeStream?.loop ?? streamBase.loop);
+
+  useEffect(() => {
+    const handleSaveShortcut = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "s") return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest('[role="dialog"]')) return;
+      event.preventDefault();
+      if (selectedMethod && editorDirty) onSaveScenarioText();
+    };
+    window.addEventListener("keydown", handleSaveShortcut);
+    return () => window.removeEventListener("keydown", handleSaveShortcut);
+  }, [editorDirty, onSaveScenarioText, selectedMethod]);
+
   return (
     <Stack spacing={1.2}>
       <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1} flexWrap="wrap">
@@ -1043,50 +1077,52 @@ export function MockServerPanel({
                 activeScenario={currentRow?.activeScenario ?? null}
               />
               {selectedMethod.responseStream && currentRow?.activeScenario ? (
-                <Stack direction="row" spacing={0.7} alignItems="center" flexWrap="wrap">
-                  <TextField
-                    size="small"
-                    type="number"
-                    label={uiCopy.fields.intervalMs}
-                    value={String(activeStream?.intervalMs ?? streamBase.intervalMs ?? 0)}
-                    onChange={(event: TextInputChangeEvent) =>
-                      onScenarioStreamSettingsChange(selectedMethod, selectedScenarioId, {
-                        intervalMs: Math.max(0, Math.floor(Number(event.target.value) || 0)),
-                      })
-                    }
-                    sx={{ width: 130 }}
-                  />
-                  <Stack spacing={0.3}>
-                    <Typography variant="caption" color="text.secondary" display="block">
-                      Loop
-                    </Typography>
-                    <FormControl size="small" sx={{ width: 120 }}>
-                      <Select
-                        value={(activeStream?.loop ?? streamBase.loop) ? "yes" : "no"}
-                        onChange={(event: SelectInputChangeEvent) =>
-                          onScenarioStreamSettingsChange(selectedMethod, selectedScenarioId, {
-                            loop: event.target.value === "yes",
-                          })
-                        }
-                      >
-                        <MenuItem value="no">No</MenuItem>
-                        <MenuItem value="yes">Yes</MenuItem>
-                      </Select>
-                    </FormControl>
+                <Stack direction="row" spacing={0.8} alignItems="center" sx={{ flexWrap: "nowrap" }}>
+                  <Stack direction="row" spacing={0.45} alignItems="center" sx={{ flexShrink: 0 }}>
+                    <Typography variant="caption">Interval (ms)</Typography>
+                    <TextField
+                      size="small"
+                      type="number"
+                      value={String(activeStream?.intervalMs ?? streamBase.intervalMs ?? 0)}
+                      inputProps={{ min: 0, step: 1, "aria-label": "Scenario interval (ms)" }}
+                      onChange={(event: TextInputChangeEvent) =>
+                        onScenarioStreamSettingsChange(selectedMethod, selectedScenarioId, {
+                          intervalMs: Math.max(0, Math.floor(Number(event.target.value) || 0)),
+                        })
+                      }
+                      sx={{ width: 112, "& .MuiInputBase-root": { minHeight: 32, height: 32 } }}
+                    />
                   </Stack>
-                  <TextField
-                    size="small"
-                    type="number"
-                    label={uiCopy.fields.loopCount}
-                    value={String(activeStream?.maxLoops ?? streamBase.maxLoops ?? 0)}
-                    onChange={(event: TextInputChangeEvent) =>
-                      onScenarioStreamSettingsChange(selectedMethod, selectedScenarioId, {
-                        maxLoops: Math.max(0, Math.floor(Number(event.target.value) || 0)),
-                      })
-                    }
-                    helperText={uiCopy.helper.zeroMeansUnlimited}
-                    sx={{ width: 130 }}
-                  />
+                  <Stack direction="row" spacing={0.45} alignItems="center" sx={{ minHeight: 36 }}>
+                    <Typography variant="body2">Loop</Typography>
+                    <Switch
+                      size="small"
+                      checked={scenarioLoopEnabled}
+                      inputProps={{ "aria-label": "Scenario loop" }}
+                      onChange={(_event: ChangeEvent<HTMLInputElement>, checked: boolean) =>
+                        onScenarioStreamSettingsChange(selectedMethod, selectedScenarioId, { loop: checked })
+                      }
+                    />
+                  </Stack>
+                  <Stack direction="row" spacing={0.45} alignItems="center" sx={{ flexShrink: 0 }}>
+                    <Typography variant="caption">Count</Typography>
+                    <TextField
+                      size="small"
+                      type="number"
+                      value={String(activeStream?.maxLoops ?? streamBase.maxLoops ?? 0)}
+                      disabled={!scenarioLoopEnabled}
+                      inputProps={{ min: 0, step: 1, "aria-label": "Scenario loop count" }}
+                      onChange={(event: TextInputChangeEvent) =>
+                        onScenarioStreamSettingsChange(selectedMethod, selectedScenarioId, {
+                          maxLoops: Math.max(0, Math.floor(Number(event.target.value) || 0)),
+                        })
+                      }
+                      sx={{ width: 96, "& .MuiInputBase-root": { minHeight: 32, height: 32 } }}
+                    />
+                  </Stack>
+                  <Typography variant="caption" color="text.secondary" noWrap>
+                    0 = unlimited
+                  </Typography>
                   <Chip
                     size="small"
                     label={`${currentRow.activeScenario.stream?.responses?.length ?? 0} stream response`}

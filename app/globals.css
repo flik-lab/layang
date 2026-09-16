@@ -665,8 +665,62 @@ button:disabled {
   max-height: none;
 }
 
+/* Response payloads expand with their content. The RESPONSE panel owns scrolling;
+   nested code viewers must never create a second scroll viewport. */
+.response-selectable .code-viewer {
+  flex: 0 0 auto;
+  height: auto;
+  max-height: none;
+  overflow: visible;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.response-selectable .code-viewer code {
+  min-width: 0;
+  max-width: 100%;
+  white-space: inherit;
+}
+
+/* Large JSON stays in the outer RESPONSE scroller while TanStack Virtual only mounts visible lines. */
+.response-selectable .virtual-json-viewer {
+  overflow: visible;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.response-selectable .virtual-json-viewer code {
+  position: relative;
+  min-width: max-content;
+  max-width: none;
+  white-space: pre;
+}
+
+.virtual-json-line {
+  position: absolute;
+  top: 12px;
+  left: 0;
+  display: block;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
+  padding: 0 14px;
+  line-height: 20px;
+  white-space: pre;
+}
+
 .code-viewer--proto {
   max-height: min(64vh, 620px);
+}
+
+.request-proto-viewer {
+  min-height: 280px;
+  max-height: 62vh;
+  background: var(--background);
+  font-size: 12.5px;
+  line-height: 1.72;
 }
 
 .code-viewer code,
@@ -1111,4 +1165,30 @@ button:disabled {
 .grpc-mock-status-chip > span {
   min-height: 16px;
   line-height: 16px;
+}
+
+/* Performance: let the browser skip layout/paint for offscreen rows while preserving
+   natural document flow and the existing single-scroll response behavior. */
+.performance-list-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 40px;
+}
+
+.performance-panel {
+  contain: layout paint style;
+}
+
+
+/* Large expanded response messages own a stable inner scroll surface so live rows above cannot invalidate virtual offsets. */
+.virtual-json-scroll-host {
+  position: relative;
+  max-height: min(56vh, 560px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  contain: layout paint style;
+}
+
+.virtual-json-scroll-host--plain .code-viewer {
+  min-height: 0;
 }

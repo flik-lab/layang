@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -302,7 +303,11 @@ export function CollectionSidebar({
   onMoveNode: (source: CollectionNodeRef, target: CollectionDropTarget) => boolean;
   onRepairGrpcRequest: (collectionId: string, requestId: string, candidate: ProtoRepairCandidate) => void;
 }) {
-  const filteredCollections = useMemo(() => filterCollections(collections, filterQuery), [collections, filterQuery]);
+  const deferredFilterQuery = useDeferredValue(filterQuery);
+  const filteredCollections = useMemo(
+    () => filterCollections(collections, deferredFilterQuery),
+    [collections, deferredFilterQuery],
+  );
 
   const grpcMethodPresentation = useMemo(() => {
     const result = new Map<string, "Unary" | "Stream">();
@@ -604,7 +609,7 @@ export function CollectionSidebar({
       return (
         <Box key={key} sx={{ position: "relative" }}>
           <Stack
-            className="collection-tree-row"
+            className="collection-tree-row performance-list-row"
             role="treeitem"
             aria-level={depth + 2}
             aria-expanded={expanded}
@@ -706,7 +711,7 @@ export function CollectionSidebar({
                 onDoubleClick={() => beginRename({ type: "folder", collection, folder: node.folder })}
                 sx={{ ...labelSx, flex: 1, minWidth: 0, fontWeight: 600 }}
               >
-                <SearchHighlightedText text={node.folder.name} query={filterQuery} />
+                <SearchHighlightedText text={node.folder.name} query={deferredFilterQuery} />
               </Typography>
             )}
             <IconButton
@@ -764,6 +769,7 @@ export function CollectionSidebar({
     const requestRow = (
       <ListItemButton
         key={key}
+        className="performance-list-row"
         component="div"
         tabIndex={0}
         selected={active}
@@ -861,7 +867,7 @@ export function CollectionSidebar({
             noWrap
             sx={{ ...labelSx, flex: 1, minWidth: 0, fontWeight: 400 }}
           >
-            <SearchHighlightedText text={request.name} query={filterQuery} />
+            <SearchHighlightedText text={request.name} query={deferredFilterQuery} />
           </Typography>
         )}
       </ListItemButton>
@@ -872,7 +878,7 @@ export function CollectionSidebar({
   if (collections.length === 0) return <SmallEmpty body="No collection yet. Use the + menu to create one." />;
   if (filteredCollections.length === 0) return <SmallEmpty body="No matching collection, folder, or request." />;
 
-  const queryActive = Boolean(filterQuery.trim());
+  const queryActive = Boolean(deferredFilterQuery.trim());
   return (
     <>
       <WorkbenchTree aria-label="Requests">
@@ -890,7 +896,7 @@ export function CollectionSidebar({
               sx={{ position: "relative" }}
             >
               <Stack
-                className="collection-tree-row"
+                className="collection-tree-row performance-list-row"
                 tabIndex={0}
                 onKeyDown={(event: ReactKeyboardEvent<HTMLElement>) => {
                   if (event.key === "Enter" || event.key === " ") {
@@ -977,7 +983,7 @@ export function CollectionSidebar({
                     onDoubleClick={() => beginRename({ type: "collection", collection })}
                     sx={{ ...labelSx, flex: 1, minWidth: 0, fontWeight: 600 }}
                   >
-                    <SearchHighlightedText text={collection.name} query={filterQuery} />
+                    <SearchHighlightedText text={collection.name} query={deferredFilterQuery} />
                   </Typography>
                 )}
                 <IconButton

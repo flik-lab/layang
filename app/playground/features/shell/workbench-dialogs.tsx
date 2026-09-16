@@ -18,6 +18,7 @@ import {
 } from "../proto-library/proto-version-management";
 import { canReplaceGrpcRequestName, uniqueCollectionRequestName } from "../collection/grpc-request-name";
 import { NEW_SCHEMA_COLLECTION_TARGET } from "../collection/quick-request-creator-domain";
+import type { WorkbenchDialogsModel } from "./workbenchShell.types";
 
 type TextInputChangeEvent = ChangeEvent<HTMLInputElement | HTMLTextAreaElement>;
 type SelectInputChangeEvent = ChangeEvent<HTMLSelectElement>;
@@ -31,9 +32,7 @@ type ProtoImportReviewState = {
   versionLabel: string;
 };
 
-type WorkbenchViewContext = Record<string, any>;
-
-export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
+export function WorkbenchDialogs(props: { ctx: WorkbenchDialogsModel }) {
   const {
     Alert,
     Box,
@@ -669,15 +668,9 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchViewContext }) {
                       value={requestNameDraft}
                       onChange={(event: TextInputChangeEvent) => setRequestNameDraft(event.target.value)}
                       onKeyDown={(event: TextInputKeyboardEvent) => {
-                        if (event.key === "Enter" && requestKindDraft !== "grpc") confirmAddCollectionRequest();
+                        if (event.key === "Enter") confirmAddCollectionRequest();
                       }}
-                      placeholder={
-                        requestKindDraft === "grpc"
-                          ? "Subscribe Track"
-                          : requestKindDraft === "websocket"
-                            ? "Track Events"
-                            : "List Tracks"
-                      }
+                      placeholder={requestKindDraft === "websocket" ? "Track Events" : "List Tracks"}
                       fullWidth
                       sx={{ minWidth: 0, overflow: "visible" }}
                     />

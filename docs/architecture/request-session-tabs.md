@@ -1,208 +1,46 @@
 # Request Session Tabs
 
-This document defines the request/session domain model used by Layang.
+Request tabs are the **control plane** for runnable requests. A `RequestSession` owns editable request configuration and stable identity; it does not own streamed response payloads.
 
-The important rule is: **tabs are not just UI widgets; they are domain sessions.** A tab represents an editable or runnable request session with identity, source reference, runtime events, and response state.
+## Ownership boundary
 
-## Why this is a domain model
-
-Layang supports multiple request sources:
-
-- REST requests from collections.
-- WebSocket requests from collections.
-- gRPC methods imported from proto files.
-- Temporary/manual requests.
-- Saved examples opened as runnable requests.
-
-If each feature directly edits tab arrays, tabs can become stale when a collection, request, or proto is deleted.
-
-Therefore all tab/session mutation must go through request session actions.
-
-## Core concepts
-
-### RequestSession
-
-A `RequestSession` is the runtime/editing representation of an opened request.
-
-Recommended shape:
-
-```ts
-export type RequestSessionKind = "rest" | "grpc" | "websocket";
-
-export type RequestSessionSource =
-  | {
-      type: "collection-request";
-      collectionId: string;
-      requestId: string;
-    }
-  | {
-      type: "proto-method";
-      protoId: string;
-      service: string;
-      method: string;
-    }
-  | {
-      type: "manual";
-    }
-  | {
-      type: "example";
-      exampleId: string;
-    };
-
-export interface RequestSession {
-  id: string;
-  kind: RequestSessionKind;
-  title: string;
-  source: RequestSessionSource;
-  requestJson: string;
-  metadata: MetadataPair[];
-  events: RuntimeEvent[];
-  lastResult: RequestResult | null;
-  assertionResults: AssertionResult[];
-  dirty: boolean;
-}
-```
-
-The exact project type names may differ, but the ownership rule should stay the same.
-
-### Active session
-
-Only one session should be active at a time.
+Each session contains request-side state such as its id, source request, transport, request body, metadata, environment, status, selected response tab, and `responseSessionId`.
 
 ```txt
-requestSessions[]
-activeRequestId
-activeRequestIdRef
+RequestSession (React/control plane)
+  ├─ request identity and editor state
+  ├─ transport/configuration
+  ├─ running/status flags
+  └─ responseSessionId ───────────────┐
+                                      ▼
+                            ResponseSessionRegistry
+                            (response data plane)
 ```
 
-`activeRequestIdRef` is useful for async runtime events because streaming/WebSocket events may arrive after React state has changed.
+`events`, `lastResult`, and `assertionResults` are accepted only as legacy workspace input types. Normalization strips those fields. New live requests and new workspace saves must not write response payloads back into `RequestSession`.
 
-## Required request session actions
+## Response ownership
 
-All tab/session updates should go through a single action surface.
+`ResponseSessionRegistry` is keyed by `responseSessionId`. It owns the bounded `ResponseStore`, result summary, and assertion results for each open request session. Streaming events for inactive tabs are routed directly to the matching runtime by session id; they do not clone or mutate the `requestSessions[]` array.
 
-```ts
-openRequestSession(session)
-activateRequestSession(session)
-upsertRequestSessionPreservingOrder(session)
-updateRequestSession(id, patch)
-closeRequestSession(id)
-closeAllRequestSessions()
-closeOtherRequestSessions(id)
-closeSessionsByCollection(collectionId)
-closeSessionsByRequest(collectionId, requestId)
-closeSessionsByProto(protoId)
-closeSessionsByMethod(service, method)
-```
+Closing a request session must close its response runtime as part of the same lifecycle so referenced payload documents can be released.
 
-Feature modules should not directly mutate `requestSessions` unless they are inside the request-session module.
+## Activation
 
-## Activation rule
+Activating session B preserves the request/editor state of session A, switches `activeRequestId`, then resolves B's response runtime through `responseSessionId`. Response history is not copied through the parent Workbench model.
 
-Activating a session must persist the current active session first.
+## Source cleanup
 
-```txt
-activate session B
-  -> if session A is active, store A's current events/result/assertions/body/metadata
-  -> set activeRequestId to B
-  -> load B's body/metadata/events/result into the editor area
-```
+Collection, request, Proto, and method deletion must still close their related request sessions. Source ownership uses stable ids/bindings rather than display titles.
 
-This prevents a user from losing edits when switching tabs.
+## Persistence
 
-## Add request flow
+Workspace persistence stores the request control plane. Runtime response payloads and worker `documentId` values are transient. A response becomes durable only through explicit features such as saved documentation results; it is not implicitly serialized with every request tab.
 
-When adding a request from a collection:
+## Regression requirements
 
-```txt
-create collection request
-  -> create request session
-  -> upsert session
-  -> activate session
-  -> set request editor tab to Body
-```
-
-The collection feature should call request-session actions instead of implementing activation itself.
-
-## WebSocket flow
-
-When sending a WebSocket request:
-
-```txt
-prepare WebSocket session
-  -> upsert request session
-  -> activate request session
-  -> clear previous events/result if needed
-  -> connect or send message
-```
-
-The WebSocket runner must receive a real `activateRequestSession` function from the request-session domain, not a placeholder or ref object.
-
-## Delete cleanup rules
-
-When a source entity is deleted, related sessions must be closed.
-
-| Deleted entity | Action |
-| --- | --- |
-| Collection | `closeSessionsByCollection(collectionId)` |
-| Request | `closeSessionsByRequest(collectionId, requestId)` |
-| Proto | `closeSessionsByProto(protoId)` |
-| gRPC method | `closeSessionsByMethod(service, method)` |
-
-If the active session is closed, activate the nearest remaining session. If no session remains, clear the editor and response view.
-
-## Source identity rule
-
-Do not infer tab ownership from title text. Use stable ids from `source`.
-
-Bad:
-
-```txt
-close tabs where title starts with collection name
-```
-
-Good:
-
-```txt
-close tabs where session.source.collectionId === deletedCollectionId
-```
-
-## Runtime event ownership
-
-Streaming and WebSocket events may arrive for inactive sessions.
-
-The event handler must append events to the correct session by id.
-
-```txt
-runtime event arrives
-  -> find session id
-  -> append to that session
-  -> if it is active, also update visible event list
-```
-
-Do not assume incoming events always belong to the active tab.
-
-## Domain boundary
-
-Recommended module:
-
-```txt
-features/request-editor/use-request-session-controller.ts
-features/request-editor/use-request-session-actions.ts
-features/request-editor/request-session-model.ts
-```
-
-Other features may depend on the request-session action interface, but should not own request session arrays.
-
-## Regression tests
-
-Required tests:
-
-- Add REST request opens a session.
-- Add WebSocket request opens a session.
-- Run WebSocket uses an active session function.
-- Delete request closes its tab.
-- Delete collection closes all child request tabs.
-- Delete proto closes gRPC method tabs.
-- Streaming event for inactive tab updates the correct tab.
-- Switching tabs preserves request body and response history.
+- Opening REST, WebSocket, and gRPC requests creates control-plane sessions with a `responseSessionId`.
+- Streaming an inactive request updates its `ResponseSessionRegistry` runtime without cloning `requestSessions[]`.
+- Switching tabs does not copy response arrays through Workbench state.
+- Closing a tab releases its response runtime/documents.
+- Legacy workspaces containing `events` or `lastResult` still load, but normalized/saved sessions omit them.

@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.1.4
+
+### Improvements
+
+* Improved response viewer performance and live message handling.
+* Improved mock server and Web Access stability.
+* Improved gRPC-Web payload processing and runtime cleanup.
+* Refined request, response, and service workspace behavior.
+
+### Fixes
+
+* Fixed several live response, payload, and transport lifecycle issues.
+* Fixed gRPC-Web text stream handling.
+* Fixed TypeScript and lint issues across the application.
+* Removed redundant and outdated tests.
+
 ## 1.1.3
 
 ### Added
@@ -15,6 +31,7 @@
 
 ### Fixed
 
+- Kept browser unary and server-streaming gRPC-Web calls in `grpc-web-text` mode and prevented native upstream protocol metadata such as `content-type: application/grpc+proto` from overriding the negotiated gRPC-Web response headers.
 - Prevented empty collection state from flashing during workspace hydration and preserved the latest mock scenario text during save.
 - Prevented repeated runtime switch clicks from starting overlapping operations.
 - Fixed stacked gRPC import behavior when selecting a service.
