@@ -8,145 +8,148 @@
 [![Version](https://img.shields.io/badge/version-1.1.5-blue)](https://github.com/flik-lab/layang/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Layang is a workspace-based API workbench for testing, mocking, benchmarking, documenting, and automating APIs across REST, WebSocket, gRPC, and gRPC-Web.
-
-The current workbench refactor focuses on a clearer request-first workflow: a permanent icon rail with a contextual sidebar, protocol-aware request and response panels, a dedicated gRPC Mock workspace, simplified Web Access, and a compact Schemas workspace.
+Layang is a desktop API workbench for REST, WebSocket, gRPC, and gRPC-Web. It uses workspace folders as the source of truth, so the same requests, schemas, mocks, environments, and documentation can be used from both the desktop app and CLI.
 
 ![Layang workbench](github-pages/assets/layang-app-screenshot.png)
 
 ## Download
 
-- Website: [layang.mff.web.id](https://layang.mff.web.id/)
-- Windows and release files: [GitHub Releases](https://github.com/flik-lab/layang/releases)
-- Source code: [github.com/flik-lab/layang](https://github.com/flik-lab/layang)
-
-## Workbench UX
-
-The desktop UI uses a permanent icon rail for **Requests**, **Schemas**, **Services**, **Docs**, and **Settings**, plus a contextual panel for the selected area. Services contains **gRPC**, REST Mock, and WebSocket Mock. The gRPC workspace includes Methods, Proto, Web access, and Activity in one place. Request-specific examples and documentation remain inside each request.
-
-## What Layang Does
-
-- Test REST, WebSocket, gRPC, and gRPC-Web APIs in one desktop workspace.
-- Save requests, examples, docs, environments, mocks, and service profiles as readable files.
-- Run local mock servers for gRPC, WebSocket, and REST workflows.
-- Reload mock scenario files manually when they are edited outside Layang.
-- Trust internal HTTPS/APISIX certificates through imported `.pem`, `.crt`, or `.cer` files.
-- Generate Markdown or HTML docs from proto files, saved examples, mocks, and responses.
-- Run CLI checks for CI/CD against the same workspace used in the desktop app.
+* [Website](https://layang.mff.web.id/)
+* [GitHub Releases](https://github.com/flik-lab/layang/releases)
+* [Source code](https://github.com/flik-lab/layang)
 
 ## Features
 
-- Import `.proto` files and browse services, methods, request types, and response types.
-- Run unary and server-streaming calls over gRPC-Web or native gRPC.
-- Save request tabs, metadata, environments, examples, tests, and docs metadata in a workspace folder.
-- Edit per-method mock scenarios and run a local mock server from the desktop app.
-- Use **Update from file** to pull external edits from `mocks/grpc/server.yml` and `mocks/grpc/methods/**` into the editor and running mock server.
-- Tune streaming mock interval, loop mode, max loops, and response sequences.
-- Import multiple trusted HTTPS certificates and review them by file name, source path, and SHA-256 fingerprint.
-- Use `Ctrl++`, `Ctrl+-`, and `Ctrl+0` to resize the desktop UI.
-- Run latency benchmarks and export benchmark JSON reports.
-- Generate Markdown or HTML API docs from proto files, saved examples, mocks, and latest responses.
-- Use the CLI in CI to validate workspaces, list saved requests, check mock scenarios, and run native gRPC requests.
-- Use the WebSocket workbench for live connections, message sending, local mock responses, benchmark exports, and generated docs.
-- Use the REST workbench for params, headers, auth, bodies, docs, examples, local mocks, scenario matching, and templates.
+* REST, WebSocket, gRPC, and gRPC-Web requests in one workspace.
+* Unary and server-streaming calls over gRPC-Web and native gRPC.
+* Proto import with service, method, request, and response browsing.
+* Local gRPC, REST, and WebSocket mock servers.
+* Saved requests, environments, examples, tests, documentation, and service profiles.
+* gRPC mock response sequences with interval, loop, max-loop, Live Push, and manual send controls.
+* HTTPS certificate trust for internal and self-signed development endpoints.
+* Markdown and HTML documentation generation.
+* Latency benchmarks with exportable reports.
+* CLI support for validation, request execution, mocks, schema workflows, docs, benchmarks, Git, and CI.
+* Git-friendly workspace files that can be reviewed and versioned normally.
+
+## Desktop Layout
+
+The main navigation contains **Requests**, **Schemas**, **Services**, **Docs**, **Source Control**, and **Settings**.
+
+The gRPC service workspace groups:
+
+* Methods
+* Proto
+* Native gRPC Mock
+* Web Access
+* Activity
+
+Request-specific examples and documentation stay with the request instead of being managed from a separate global screen.
 
 ## Release 1.1.5
 
-The `1.1.5` patch release focuses on transport compatibility and tighter desktop/mock workflows.
+Version `1.1.5` focuses on mock workflows, Web Access, and live response handling.
 
-Highlights:
+* Added persistent gRPC Mock Live Push and manual sending from saved scenarios.
+* Improved Web Access HTTPS, HTTP/2, certificate trust, and runtime settings.
+* Improved live response scrolling and latest-message rendering without blanking the viewer.
+* Fixed Proto drag-and-drop state and direct collection imports.
+* Changed the local desktop renderer port to `12999`.
 
-- Improved gRPC-Web compatibility through HTTPS reverse proxies such as APISIX.
-- Added persistent gRPC Mock Live Push so users can send updated stream data on demand without closing the stream.
-- Improved paused live-message retention and direct Proto drop into collections.
-- `pnpm desktop` now uses port `12999` for the local Next.js renderer.
-
-## Release 1.1.4
-
-The `1.1.4` patch release focuses on gRPC-Web compatibility, live gRPC mock scenario updates, Proto import correctness, and a cleaner response-viewer layout.
-
-Highlights:
-
-- Unary gRPC-Web responses preserve the negotiated `grpc-web-text` content type for generated browser clients.
-- New gRPC mock scenarios resolve against the correct Proto revision and can be used without restarting an already-running mock runtime.
-- Drag-and-drop Proto imports preserve all RPC methods and reuse schema/revision validation.
-- Expanded response payloads use one outer scroll container instead of nested JSON/table scrollbars.
-
-## Release 1.1.3
-
-The `1.1.3` release focuses on smoother editing, predictable runtime controls, and configurable gRPC timeouts.
-
-Highlights:
-
-- Responsive buffered editors for request bodies and mock scenarios.
-- Per-request unary and stream-idle timeouts across native gRPC and gRPC-Web, including unlimited streams.
-- Locked runtime switchers with compact in-switch loading indicators.
-- A consistently docked contextual sidebar at every zoom level.
-
-## Release 1.1.0
-
-The `1.1.0` release is a major workflow and platform update across workspaces, schemas, mocks, documentation, and browser access.
-
-Highlights:
-
-- Git-friendly Workspace Format v6 with split YAML files, immutable proto snapshots, migration, and validation.
-- Clearer Collections, Proto Schemas, request tabs, and grouped gRPC Mock scenario workflows.
-- Unified Markdown documentation with generated references, static-site and wiki exports, and CLI build checks.
-- Embedded gRPC Gateway and browser gRPC-Web access with streaming, TLS/mTLS, and traffic controls.
-- Cross-platform HTTPS certificate setup and a normalized, accessible design system.
+See [CHANGELOG.md](./CHANGELOG.md) for the full release history.
 
 ## Install
 
-For most users, the simplest path is:
+For Windows:
 
 1. Download `LayangSetup.exe` from [GitHub Releases](https://github.com/flik-lab/layang/releases).
 2. Run the installer.
 3. Open Layang from the Start Menu or Desktop shortcut.
-4. On first launch, choose the workspace folder location you want to use.
+4. Choose a workspace folder on first launch.
 
-Windows packaging and auto-update details are documented in [WINDOWS_SETUP.md](./WINDOWS_SETUP.md).
+Packaging and update details are documented in [WINDOWS_SETUP.md](./WINDOWS_SETUP.md).
 
-## Mocking And Streaming
+## Workspace
+
+A workspace is a normal directory containing Layang project data.
+
+The default location is:
+
+```text
+Documents/Layang/Workspace
+```
+
+A typical workspace looks like this:
+
+```text
+workspace/
+├── layang.yml
+├── collections/
+├── protos/
+├── environments/
+├── mocks/
+├── workspace-schemas/
+├── docs/
+└── .layang/
+```
+
+The main folders are:
+
+* `collections/` — saved requests and examples.
+* `protos/` — immutable Proto revision snapshots.
+* `environments/` — shared targets and non-secret variables.
+* `mocks/` — gRPC, REST, and WebSocket mock scenarios.
+* `docs/` — generated and authored documentation.
+* `.layang/` — local state such as open tabs, cache, results, and machine-specific paths.
+
+Desktop and CLI use the same files.
+
+Workspace v5 and legacy v4 folders remain readable. To inspect or run a migration:
+
+```bash
+layang workspace:migrate . --check
+layang workspace:migrate .
+```
+
+See [Workspace Format v6](./docs/architecture/workspace-format.md) for the complete format.
+
+## gRPC Mock
 
 ![Layang mock streaming](github-pages/assets/layang-mock-stream.png)
 
-gRPC mock scenarios live with the workspace and use YAML as the canonical editor and file format. Existing JSON/YAML files can still be imported. Server-streaming methods can use repeated responses with interval and loop controls. When a scenario file is edited in another editor, click **Update from file** in Layang to refresh the UI and running mock server.
+gRPC mock scenarios are stored with the workspace and use YAML as the canonical format.
 
-## Certificate Settings
+Server-streaming scenarios support:
 
-Certificate settings are available from **Settings → Network**. Import one or more `.pem`, `.crt`, or `.cer` files to trust internal HTTPS, APISIX, gRPC-Web, or native gRPC lab targets. Layang shows the imported certificate list and SHA-256 fingerprints; the raw PEM editor is intentionally not shown in the UI.
+* response sequences
+* configurable interval
+* loop mode
+* max loops
+* Live Push
+* manual response sending
 
-For local/self-signed development endpoints, **Bypass TLS errors** remains an explicit opt-in escape hatch. It accepts certificate validation failures but does not convert plain HTTP into HTTPS or repair a TLS server that sends no certificate.
+Manual Send can publish a saved scenario response to an active Live Push stream without closing the connection.
 
-## Documentation
+If a scenario file is changed outside Layang, use **Update from file** to reload it into the editor and running mock server.
 
-![Layang documentation](github-pages/assets/layang-app-documentation.png)
+## Web Access
 
-Layang provides unified REST, WebSocket, and pinned-gRPC documentation:
+Web Access exposes browser-compatible gRPC-Web endpoints backed by the local mock server or another configured gRPC target.
 
-- Edit Git-friendly Markdown and front matter at workspace, collection, folder, and request level.
-- Generate workspace/folder operation indexes plus complete endpoint, request, response, schema, error, example, mock, related-operation, and source sections.
-- Preview reader-facing pages with an outline, validation diagnostics, and normal request-editor handoff for testing.
-- Generate redacted Layang CLI, cURL/grpcurl/wscat, JavaScript, and Python samples.
-- Publish one complete Markdown page per API operation and a responsive static portal with full-text search, protocol filters, anchors, breadcrumbs, code copy, and previous/next navigation.
-- Generate `docs/wiki-export/` with clean linked Markdown, `README.md`, and `SUMMARY.md` for Outline, GitBook, Docusaurus, MkDocs, or another wiki.
-- Expand nested JSON/proto fields, `oneof` members, RPC comments, WebSocket events/close codes, examples, and mock request/response payloads into readable reference sections.
-- Exclude disabled parameters, headers, examples, and mocks while redacting secrets from documentation and code samples.
-- Detect stale generated pages, unresolved proto references, missing response/error coverage, and broken local links.
+It supports:
 
-```powershell
-layang docs:build ./workspace
-layang docs:check ./workspace
-layang docs:build ./workspace --check
-```
+* HTTP
+* HTTPS
+* HTTP/2 over HTTPS
+* gRPC-Web unary requests
+* gRPC-Web server streaming
+* configurable CORS origins
+* local or custom upstream targets
+* certificate-based TLS configuration
 
-After `docs:build`, import the `docs/wiki-export/` directory into a wiki or use `SUMMARY.md` to preserve the workspace → collection → folder → operation hierarchy.
+Native gRPC and Web Access are separate runtimes and can be started or stopped independently.
 
-## Web Access and legacy gateway CLI
-
-The desktop UX exposes **Web access** inside the gRPC workspace. A persistent **Run mode** selector switches between Native gRPC and Web access while keeping status and Start/Stop controls in the same toolbar position on every gRPC tab. Advanced browser endpoint, TLS, CORS, target, and log settings remain in the Web access tab.
-
-Legacy gateway profiles and CLI commands remain readable for compatibility and advanced headless workflows, but Gateway/Hybrid/Proxy modes are no longer presented as the primary desktop UX. Browser gRPC-Web supports unary and server streaming, while native clients keep client-streaming and bidirectional support.
+Legacy gateway profiles and CLI commands remain available for compatibility:
 
 ```bash
 layang gateway:list ./workspace
@@ -154,85 +157,125 @@ layang gateway:start ./workspace --profile "Track Gateway" --daemon
 layang gateway:status ./workspace --profile "Track Gateway"
 ```
 
-Web Access supports HTTP, Local HTTPS, custom PEM, and PFX/P12 certificates. The Local HTTPS wizard detects Windows or Linux, includes the configured listener host in SAN, offers Current User or UAC-approved All Users trust on Windows, uses the available system/NSS trust adapter on Linux, validates the certificate, and keeps machine-local certificate paths and PFX passphrases outside the workspace.
+## Certificates and Trust
 
-When a custom reverse proxy forwards browser gRPC-Web traffic, keep unary and server-streaming requests in `application/grpc-web-text+proto`. Forward the complete Base64 request body without truncating or decoding individual chunks, return the gRPC-Web text response body unchanged, and preserve the full `/<package>.<Service>/<Method>` path. The browser client still accepts an explicit binary gRPC-Web response when the proxy deliberately returns `application/grpc-web+proto`, but text is the default for both unary and streaming calls.
+Certificate settings are available under **Settings → Network**.
+
+Layang can import `.pem`, `.crt`, and `.cer` files into its own trust configuration. Imported CA certificates are used by new HTTPS and gRPC-Web requests without modifying the Windows certificate store.
+
+For development environments, **Bypass TLS errors** remains available as an explicit opt-in setting.
+
+Use CA import when possible. Bypass mode is intended for local or controlled development environments.
+
+## Response Viewer
+
+The response viewer supports:
+
+* latest response view
+* message history
+* JSON and table views
+* response search
+* pause/freeze
+* pinned messages
+* large streaming payloads
+
+Live updates do not force the JSON viewport back to the top. Scrolling does not freeze the stream; only the explicit pause/freeze controls stop live updates.
+
+When switching to the latest response, the existing payload remains visible until the new document is ready, avoiding an empty intermediate state.
+
+## Documentation
+
+![Layang documentation](github-pages/assets/layang-app-documentation.png)
+
+Documentation can be authored at workspace, collection, folder, and request level.
+
+Layang can generate:
+
+* Markdown API pages
+* static HTML documentation
+* wiki exports
+* request and response examples
+* schema references
+* mock examples
+* CLI and client command samples
+
+Common CLI commands:
+
+```bash
+layang docs:build ./workspace
+layang docs:check ./workspace
+layang docs:build ./workspace --check
+```
+
+Generated wiki output is written to `docs/wiki-export/`.
 
 ## CLI
 
-The CLI uses the same Git-friendly workspace data as the UI. Headless workflows cover request execution, variables/auth, assertions, examples, mocks, proto revisions and line diffs, documentation/wiki export, benchmarks, normalized results, and gateway profiles.
+The CLI uses the same workspace as the desktop app.
 
-```powershell
-pnpm run cli -- parity ./workspace
-pnpm run cli -- validate ./workspace --json
-pnpm run cli -- run ./workspace --request "Get Track" --var token=... --strict-variables --strict-mock
-pnpm run cli -- example:run ./workspace --example "Track found" --reporter junit --output reports/examples.xml
-pnpm run cli -- example:create ./workspace --request "Get Track" --name "Friendly track"
-pnpm run cli -- schema:diff ./workspace --schema "Track API" --file ./proto-next
-pnpm run cli -- mock:start ./workspace --protocol all --daemon
-pnpm run cli -- benchmark ./workspace --request "Get Track" --iterations 50 --threshold-p95 250
-pnpm run cli -- docs:build ./workspace
+Typical commands:
+
+```bash
+layang validate ./workspace --json
+
+layang run ./workspace \
+  --request "Get Track" \
+  --env dev \
+  --reporter junit \
+  --output reports/layang-junit.xml
+
+layang mock:start ./workspace \
+  --protocol all \
+  --daemon
+
+layang benchmark ./workspace \
+  --request "Get Track" \
+  --iterations 50
+
+layang docs:build ./workspace --check
+
+layang ui ./workspace
 ```
 
-Native gRPC supports unary, server-streaming, client-streaming, and bidirectional methods. gRPC-Web supports unary and server-streaming, matching browser protocol limits. Visual dialogs remain in the UI; the equivalent CLI workflows use readable text, JSON, JUnit, and unified line-diff output.
+Other CLI workflows cover:
 
-When the package is linked or installed, the command is exposed as `layang`.
+* examples
+* Proto revisions and diffs
+* mock validation
+* documentation generation
+* benchmarks
+* Git
+* gateway profiles
+* workspace migration
 
-Windows and Linux releases also publish standalone CLI packages with a private Node.js runtime, so Electron and a system Node installation are not required for CLI-only use. The same workspace can be opened later in the optional desktop app with `layang ui <workspace>`. See [CLI_STANDALONE.md](CLI_STANDALONE.md).
+Native gRPC supports unary, server-streaming, client-streaming, and bidirectional methods. gRPC-Web supports unary and server-streaming.
 
-## Workspace
+Windows and Linux releases also provide standalone CLI packages with their own Node.js runtime. A system Node installation is not required for CLI-only use.
 
-The desktop app can create or open a workspace folder. A workspace stores a snapshot plus Git-friendly files under folders such as `protos/`, `requests/`, `examples/`, `docs/`, `environments/`, and `mocks/`. Legacy history data remains readable for migration but is no longer presented as a primary UI workflow.
+See [CLI_STANDALONE.md](./CLI_STANDALONE.md).
 
-Machine-local settings such as imported certificates, TLS bypass, logger settings, and zoom level are stored under Electron `userData`, not inside the workspace.
+## Source Control
 
-The default desktop workspace is:
+The desktop **Source Control** workspace uses the native Git executable.
 
-```text
-Documents/Layang/Workspace
-```
+Supported operations include:
 
-You can also choose a custom workspace folder on first launch in the desktop app.
+* repository initialization
+* clone
+* status and diff
+* stage and unstage
+* discard
+* pre-commit checks
+* commit history
+* branch create and switch
+* remote setup
+* fetch
+* fast-forward pull
+* push
+* conflict detection
+* merge continue and abort
 
-## For Contributors
-
-Development setup, local build commands, and packaging notes are in [CONTRIBUTING.md](./CONTRIBUTING.md).
-
-## Mock Guides
-
-- [gRPC mock scenarios](guide-scenario-mock-grpc.md)
-- [REST mock scenarios](guide-scenario-mock-rest.md)
-- [WebSocket mock scenarios](guide-scenario-mock-websocket.md)
-
-## License
-
-MIT
-
-## Git-friendly workspace v6
-
-Layang workspace folders use a human-readable filesystem as the canonical source of truth:
-
-```text
-workspace/
-├── layang.yml
-├── collections/        # one native YAML file per request; examples live beside requests
-├── protos/             # immutable full-snapshot revisions containing raw .proto files
-├── environments/       # shared targets and non-secret variables
-├── mocks/              # native YAML gRPC/REST/WebSocket scenarios
-├── workspace-schemas/  # JSON Schema for external editors and CI
-├── docs/
-└── .layang/            # ignored local tabs, paths, last-used environments, cache, results
-```
-
-Desktop and CLI read the same files. Request bodies, assertions, examples, and mock payloads are native YAML values rather than JSON strings inside YAML. Proto revisions are self-contained snapshots and are checksum-verified on load. Absolute local paths and per-user environment selections stay in `.layang/local.yml`.
-
-Workspace v5 and legacy v4 folders remain readable. Use `layang workspace:migrate . --check` to inspect migration and `layang workspace:migrate .` to create v6 files with a local backup. See [Workspace Format v6](./docs/architecture/workspace-format.md).
-
-## Git-native Source Control MVP
-
-The desktop rail now includes a **Source Control** workspace backed by the native Git executable. It supports repository initialization, clone, entity-aware status and source diff, stage/unstage, guarded discard, pre-commit checks, commit history, branch create/switch, remote setup, fetch, fast-forward pull, push, conflict detection, and merge continue/abort. Pending editor changes are saved before Git operations, while save, stage, commit, and push remain separate user actions.
-
-The same workflow is available headlessly:
+Equivalent CLI commands are available:
 
 ```bash
 layang git:init ./workspace --branch main
@@ -244,4 +287,27 @@ layang git:remote-add ./workspace --url git@gitea.company.id:team/track-api.git
 layang git:push ./workspace --set-upstream
 ```
 
-See [`docs/architecture/workspace-format.md`](docs/architecture/workspace-format.md) for the complete format.
+## Development
+
+Development setup, build commands, tests, and packaging notes are documented in [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+`pnpm desktop` runs the local Next.js renderer on port `12999`.
+
+Before submitting changes, run:
+
+```bash
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+```
+
+## Mock Guides
+
+* [gRPC mock scenarios](guide-scenario-mock-grpc.md)
+* [REST mock scenarios](guide-scenario-mock-rest.md)
+* [WebSocket mock scenarios](guide-scenario-mock-websocket.md)
+
+## License
+
+MIT
