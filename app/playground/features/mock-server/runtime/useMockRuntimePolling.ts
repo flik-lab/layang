@@ -70,10 +70,10 @@ export function useMockRuntimePolling({ mockServer }: UseMockRuntimePollingOptio
           ? {
               ...current,
               gateway: result,
-              port: result.listenPort ?? current.port,
-              bindHost: result.listenHost ?? current.bindHost,
-              bindAddress: result.bindAddress ?? current.bindAddress,
-              url: result.webUrl ?? result.url ?? current.url,
+              port: result.webPort ?? current.port,
+              bindHost: result.webHost ?? current.bindHost,
+              bindAddress: result.webUrl ?? current.bindAddress,
+              url: result.webUrl ?? current.url,
               methodCount: result.methodCount ?? current.methodCount,
               activeCallCount: result.activeCallCount,
             }

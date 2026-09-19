@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -236,6 +237,21 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchSidebarModel }) {
     return Array.from(event.dataTransfer.types).includes("Files");
   }
 
+  const clearProtoDropState = useCallback(() => {
+    setProtoDropTarget(null);
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("drop", clearProtoDropState);
+    window.addEventListener("dragend", clearProtoDropState);
+    window.addEventListener("blur", clearProtoDropState);
+    return () => {
+      window.removeEventListener("drop", clearProtoDropState);
+      window.removeEventListener("dragend", clearProtoDropState);
+      window.removeEventListener("blur", clearProtoDropState);
+    };
+  }, [clearProtoDropState]);
+
   function activateProtoDropTarget(event: ReactDragEvent<HTMLElement>, target: "requests" | "schemas") {
     if (!isFileDrag(event)) return;
     event.preventDefault();
@@ -253,7 +269,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchSidebarModel }) {
     if (!isFileDrag(event)) return;
     event.preventDefault();
     event.stopPropagation();
-    setProtoDropTarget(null);
+    clearProtoDropState();
     const files = event.dataTransfer.files;
     if (target === "schemas") {
       await reviewGlobalProtoFiles(files, "schemas", "");
@@ -735,6 +751,10 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchSidebarModel }) {
                     onRenameCollectionRequest={renameCollectionRequest}
                     onRemoveCollectionRequest={removeCollectionRequest}
                     onMoveNode={moveCollectionTreeNode}
+                    onDropProtoFiles={(collectionId, files) => {
+                      clearProtoDropState();
+                      void reviewGlobalProtoFiles(files, "requests", collectionId);
+                    }}
                     onRepairGrpcRequest={repairCollectionGrpcRequest}
                   />
                 ) : (

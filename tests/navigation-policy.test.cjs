@@ -11,9 +11,9 @@ const {
 } = require("../electron/window/navigation-policy.cjs");
 
 test("development renderer navigation stays on the configured Layang origin", () => {
-  const options = { isDev: true, startUrl: "http://localhost:3000/playground" };
-  assert.equal(isAllowedRendererNavigation("http://localhost:3000/playground", options), true);
-  assert.equal(isAllowedRendererNavigation("http://localhost:3000/playground?tab=grpc", options), true);
+  const options = { isDev: true, startUrl: "http://localhost:12999/playground" };
+  assert.equal(isAllowedRendererNavigation("http://localhost:12999/playground", options), true);
+  assert.equal(isAllowedRendererNavigation("http://localhost:12999/playground?tab=grpc", options), true);
   assert.equal(isAllowedRendererNavigation("https://example.com/", options), false);
   assert.equal(isAllowedRendererNavigation("file:///tmp/evil.html", options), false);
 });

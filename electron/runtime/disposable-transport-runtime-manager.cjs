@@ -2,12 +2,18 @@
 
 const path = require("node:path");
 const { createUtilityRuntimeHost } = require("./utility-runtime-host.cjs");
+const { getNodeTlsRuntimeEnvironment } = require("../utils/certificate-settings.cjs");
 
 const DEFAULT_EVENT_FLUSH_MS = 250;
 
 function createDisposableTransportRuntimeManager(options = {}) {
   const entryPath = options.entryPath || path.join(__dirname, "transport-runtime-entry.cjs");
-  const createHost = options.createHost || (() => createUtilityRuntimeHost({ entryPath, maxRestarts: 0 }));
+  const createHost = options.createHost || ((context = {}) => createUtilityRuntimeHost({
+    entryPath,
+    maxRestarts: 0,
+    env: context.env || {},
+  }));
+  const getTlsEnvironment = options.getTlsEnvironment || getNodeTlsRuntimeEnvironment;
   const eventFlushMs = Math.max(1, Number(options.eventFlushMs) || DEFAULT_EVENT_FLUSH_MS);
   const runs = new Map();
   const documentOwners = new Map();
@@ -19,7 +25,8 @@ function createDisposableTransportRuntimeManager(options = {}) {
     const runId = normalizeRunId(runIdInput);
     await disposeRun(runId, "replaced by a fresh transport generation");
 
-    const host = createHost(runId);
+    const env = isHttpsUrl(payload?.url) ? { ...getTlsEnvironment() } : {};
+    const host = createHost({ runId, env });
     const state = {
       runId,
       host,
@@ -267,6 +274,10 @@ function createDisposableTransportRuntimeManager(options = {}) {
   }
 
   return { invoke, cancel, invokePayload, disposeRun, disposeAll, getStatus };
+}
+
+function isHttpsUrl(value) {
+  try { return new URL(String(value || "")).protocol === "https:"; } catch { return false; }
 }
 
 function normalizeRetentionLimit(value) {

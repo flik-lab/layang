@@ -10,6 +10,7 @@ const {
   applyCertificateSettings,
   clearCertificatePem,
   configureCertificateSettings,
+  getNodeTlsRuntimeEnvironment,
   importCertificatePems,
   normalizePemCertificate,
   shouldAllowCertificateError,
@@ -118,4 +119,63 @@ test("certificate settings deduplicate imported certificates by fingerprint", ()
   ]);
 
   assert.equal(updated.settings.caCertificates.length, 1);
+});
+
+
+test("certificate settings expose a per-process Node TLS environment", () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), "layang-cert-node-tls-"));
+  configureCertificateSettings({ userDataPath });
+
+  applyCertificateSettings({ caCertificatePem: samplePem, bypassTlsErrors: false });
+  const trustedEnvironment = getNodeTlsRuntimeEnvironment();
+  assert.equal(trustedEnvironment.NODE_USE_SYSTEM_CA, "1");
+  assert.equal(trustedEnvironment.NODE_TLS_REJECT_UNAUTHORIZED, undefined);
+  assert.ok(trustedEnvironment.NODE_EXTRA_CA_CERTS);
+  assert.equal(fs.existsSync(trustedEnvironment.NODE_EXTRA_CA_CERTS), true);
+  assert.match(fs.readFileSync(trustedEnvironment.NODE_EXTRA_CA_CERTS, "utf8"), /BEGIN CERTIFICATE/);
+
+  applyCertificateSettings({ bypassTlsErrors: true });
+  const bypassEnvironment = getNodeTlsRuntimeEnvironment();
+  assert.equal(bypassEnvironment.NODE_TLS_REJECT_UNAUTHORIZED, "0");
+  assert.equal(bypassEnvironment.NODE_EXTRA_CA_CERTS, trustedEnvironment.NODE_EXTRA_CA_CERTS);
+
+  clearCertificatePem();
+  const clearedEnvironment = getNodeTlsRuntimeEnvironment();
+  assert.equal(clearedEnvironment.NODE_USE_SYSTEM_CA, "1");
+  assert.equal(clearedEnvironment.NODE_EXTRA_CA_CERTS, undefined);
+  assert.equal(clearedEnvironment.NODE_TLS_REJECT_UNAUTHORIZED, "0");
+});
+
+test("HTTPS endpoint testing uses the live Layang trust store", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "electron/utils/web-https-certificates.cjs"), "utf8");
+  assert.match(source, /getCurrentCertificateSettings/);
+  assert.match(source, /rejectUnauthorized:\s*!certificateSettings\.bypassTlsErrors/);
+  assert.match(source, /certificateSettings\.caCertificatePem/);
+});
+
+test("certificate settings UI makes immediate client trust explicit and provides a test endpoint", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "..", "app/playground/features/shell/workbench-dialogs.tsx"),
+    "utf8",
+  );
+  assert.match(source, /Applies immediately to new requests/);
+  assert.match(source, /Test trusted endpoint/);
+  assert.match(source, /testHttpsEndpoint/);
+});
+
+test("imported CA can trust a presented certificate chain, not only the leaf certificate", () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), "layang-cert-chain-"));
+  configureCertificateSettings({ userDataPath });
+  importCertificatePems([{ name: "internal-root.pem", pemText: samplePem }]);
+
+  const decision = shouldAllowCertificateError(
+    {
+      data: secondSamplePem,
+      issuerCert: { data: samplePem },
+    },
+    { url: "https://apisix.internal.example" },
+  );
+
+  assert.equal(decision.allow, true);
+  assert.equal(decision.reason, "imported-certificate-chain-match");
 });

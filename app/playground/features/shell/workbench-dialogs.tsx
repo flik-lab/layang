@@ -6,7 +6,7 @@ import { Checkbox } from "@/components/shadcn/compat";
 import type { ProtoSourceFile, RpcMethodInfo } from "@/lib/types";
 import { loadProtoFiles } from "@/lib/proto-loader";
 import type { LayangLoggerSettings, LayangLogLevel } from "../../shared/logger";
-import type { LayangCertificateSettings } from "../../shared/certificate-settings";
+import { testHttpsEndpoint, type LayangCertificateSettings } from "../../shared/certificate-settings";
 import { getCollectionNodeBreadcrumb } from "../collection/collection-tree-domain";
 import { methodKey } from "../../shared/rpc-method-utils";
 import type { ProtoLibrary } from "../proto-library/proto-library-types";
@@ -144,6 +144,11 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchDialogsModel }) {
   const [updateCompatibleRequests, setUpdateCompatibleRequests] = useState(true);
   const [recentSchemaIds, setRecentSchemaIds] = useState<string[]>([]);
   const [recentServices, setRecentServices] = useState<string[]>([]);
+  const [certificateTestUrl, setCertificateTestUrl] = useState("https://");
+  const [certificateTest, setCertificateTest] = useState<{ running: boolean; ok?: boolean; message: string }>({
+    running: false,
+    message: "",
+  });
   const globalProtoSchemas = protoLibraries as ProtoLibrary[];
   const selectedRequestSchema =
     globalProtoSchemas.find((library) => library.id === requestGrpcLibraryIdDraft) ?? globalProtoSchemas[0];
@@ -436,6 +441,36 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchDialogsModel }) {
     }
     selectGrpcMethodDraft(firstMethod, firstMethod ? methodKey(firstMethod) : "");
   };
+
+  async function testTrustedCertificateEndpoint() {
+    if (certificateTest.running) return;
+    const url = certificateTestUrl.trim();
+    if (!url || url === "https://") {
+      setCertificateTest({ running: false, ok: false, message: "Enter an HTTPS endpoint first." });
+      return;
+    }
+    setCertificateTest({ running: true, message: "" });
+    try {
+      const result = await testHttpsEndpoint(url);
+      if (!result) {
+        setCertificateTest({ running: false, ok: false, message: "HTTPS test is available only in the desktop app." });
+        return;
+      }
+      setCertificateTest({
+        running: false,
+        ok: result.ok,
+        message: result.ok
+          ? `Trusted connection succeeded${result.protocol ? ` via ${result.protocol}` : ""}.`
+          : result.error || `HTTPS returned status ${result.statusCode ?? "unknown"}.`,
+      });
+    } catch (error) {
+      setCertificateTest({
+        running: false,
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   return (
     <>
@@ -1429,7 +1464,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchDialogsModel }) {
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
                       {certificateDraft.caCertificates.length} certificate
-                      {certificateDraft.caCertificates.length === 1 ? "" : "s"} trusted by Layang.
+                      {certificateDraft.caCertificates.length === 1 ? "" : "s"} trusted by Layang. Applies immediately to new requests.
                     </Typography>
                   </Box>
                   <Button size="small" variant="outlined" onClick={() => void importCertificateSettingsFile()}>
@@ -1475,6 +1510,39 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchDialogsModel }) {
                     )}
                   </Stack>
                 )}
+              </Stack>
+            </Paper>
+            <Paper variant="outlined" sx={{ p: 1.25, borderRadius: 2 }}>
+              <Stack spacing={1}>
+                <Box>
+                  <Typography variant="body2" fontWeight={600}>Test trusted endpoint</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Verify the current Layang client trust without leaving Certificate settings.
+                  </Typography>
+                </Box>
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={0.75}>
+                  <TextField
+                    size="small"
+                    fullWidth
+                    label="HTTPS endpoint"
+                    placeholder="https://apisix.internal/healthz"
+                    value={certificateTestUrl}
+                    onChange={(event: TextInputChangeEvent) => setCertificateTestUrl(event.target.value)}
+                  />
+                  <Button
+                    variant="outlined"
+                    disabled={certificateTest.running}
+                    onClick={() => void testTrustedCertificateEndpoint()}
+                    sx={{ flexShrink: 0 }}
+                  >
+                    {certificateTest.running ? "Testing…" : "Test connection"}
+                  </Button>
+                </Stack>
+                {certificateTest.message ? (
+                  <Alert severity={certificateTest.ok ? "success" : "error"} variant="outlined">
+                    {certificateTest.message}
+                  </Alert>
+                ) : null}
               </Stack>
             </Paper>
             <Paper variant="outlined" sx={{ p: 1.25, borderRadius: 2 }}>

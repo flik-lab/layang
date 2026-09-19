@@ -30,3 +30,23 @@ test("dropping Proto onto Requests reuses schema revision validation before crea
   assert.match(sidebar, /destination: "schemas" \| "requests"/);
   assert.match(sidebar, /createRequestsForImportedProtoReview/);
 });
+
+test("Proto files dropped directly on a collection create requests in that collection", () => {
+  const collectionSidebar = fs.readFileSync(
+    path.join(root, "app/playground/features/collection/collection-sidebar.tsx"),
+    "utf8",
+  );
+
+  assert.match(collectionSidebar, /onDropProtoFiles: \(collectionId: string, files: FileList\) => void/);
+  assert.match(collectionSidebar, /isFileDrag\(event\)/);
+  assert.match(collectionSidebar, /onDropProtoFiles\(target\.collectionId, event\.dataTransfer\.files\)/);
+  assert.match(sidebar, /reviewGlobalProtoFiles\(files, "requests", collectionId\)/);
+  assert.match(sidebar, /onDropProtoFiles=\{\(collectionId, files\)/);
+});
+
+
+test("Proto drop visual state is cleared before opening revision review", () => {
+  assert.match(sidebar, /(?:function|const) clearProtoDropState/);
+  assert.match(sidebar, /clearProtoDropState\(\);[\s\S]*?reviewGlobalProtoFiles\(files, "requests", collectionId\)/);
+  assert.match(sidebar, /window\.addEventListener\("drop", clearProtoDropState/);
+});

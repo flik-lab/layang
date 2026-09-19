@@ -34,6 +34,8 @@ function normalizeGrpcWebConfig(input = {}) {
   const security = normalizeWebSecurity(input.security);
   const allowedOrigins = uniqueStrings(
     input.cors?.allowedOrigins || [
+      "http://localhost:12999",
+      "http://127.0.0.1:12999",
       "http://localhost:3000",
       "http://127.0.0.1:3000",
       "http://localhost:5173",

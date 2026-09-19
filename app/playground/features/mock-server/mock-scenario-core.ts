@@ -1166,6 +1166,9 @@ function validateMockStreamShape(value: unknown, path: string): string | null {
       if (error) return error;
     }
   }
+  if (Object.hasOwn(value, "mode") && value.mode !== "scheduled" && value.mode !== "live-push") {
+    return `${path}.mode must be "scheduled" or "live-push".`;
+  }
   return null;
 }
 
@@ -1414,13 +1417,21 @@ export function normalizeMockStreamSettings(
   fallback: Partial<MockStreamSettings> = {},
 ): MockStreamSettings {
   const record = isPlainRecord(value) ? value : {};
+  const modeRaw = record.mode ?? record.streamMode ?? record.stream_mode;
   const intervalRaw = record.intervalMs ?? record.interval_ms;
   const maxLoopsRaw = record.maxLoops ?? record.max_loops;
   const hasLoop = Object.hasOwn(record, "loop");
+  const fallbackMode = fallback.mode;
   const fallbackInterval = fallback.intervalMs;
   const fallbackLoop = fallback.loop;
   const fallbackMaxLoops = fallback.maxLoops;
   return {
+    mode:
+      modeRaw !== undefined
+        ? String(modeRaw).trim().toLowerCase() === "live-push"
+          ? "live-push"
+          : "scheduled"
+        : fallbackMode,
     intervalMs: intervalRaw !== undefined ? Math.max(0, Math.floor(Number(intervalRaw) || 0)) : fallbackInterval,
     loop: hasLoop ? Boolean(record.loop) : fallbackLoop,
     maxLoops: maxLoopsRaw !== undefined ? Math.max(0, Math.floor(Number(maxLoopsRaw) || 0)) : fallbackMaxLoops,

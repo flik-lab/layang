@@ -564,8 +564,7 @@ export function useRequestRunnerActions(ctx: ActionContext) {
   function updateWebSocketLiveResult(client: ManagedWebSocketClient) {
     const result = buildWebSocketResult(client);
     responseSessionRegistry.getOrCreate(client.sessionId).setResultSummary(summarizeGrpcResult(result));
-    if (activeRequestIdRef.current === client.sessionId) setResponseTab("messages");
-    updateRequestSession(client.sessionId, { responseTab: "messages", status: "running" });
+    updateRequestSession(client.sessionId, { status: "running" });
   }
 
   function prepareWebSocketClientSession(url: string) {

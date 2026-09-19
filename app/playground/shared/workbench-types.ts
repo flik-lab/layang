@@ -239,7 +239,10 @@ export type MockMethodScenarioFile = {
   catalogScenarios?: MockScenarioCatalogEntry[];
 };
 
+export type MockStreamMode = "scheduled" | "live-push";
+
 export type MockStreamSettings = {
+  mode?: MockStreamMode;
   intervalMs?: number;
   loop?: boolean;
   maxLoops?: number;
@@ -469,6 +472,13 @@ export type MockServerStatus = {
   configVersion?: number;
   activeCallCount?: number;
   pendingTimerCount?: number;
+  activeLivePushStreamCount?: number;
+  livePushStreams?: Array<{
+    serviceName: string;
+    methodName: string;
+    scenarioId?: string;
+    clientCount: number;
+  }>;
   runtimeKind?: "mock" | "gateway";
   requestLog?: GrpcMockRequestLog[];
   gateway?: GrpcGatewayStatus;

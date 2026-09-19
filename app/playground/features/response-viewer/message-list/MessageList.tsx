@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { Box, Typography } from "@/components/shadcn/compat";
 import { useFixedVirtualWindow } from "../../../shared/use-fixed-virtual-window";
 import type { ResponseStore } from "../model/response.store";
@@ -34,7 +34,7 @@ export const MessageList = memo(function MessageList({
   );
   const newestFirstIds = useMemo(() => [...visibleIds].reverse(), [visibleIds]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const previousCountRef = useRef(visibleIds.length);
+  const previousNewestFirstIdsRef = useRef<readonly string[]>(newestFirstIds);
   const virtualWindow = useFixedVirtualWindow({
     count: newestFirstIds.length,
     itemSize: ROW_HEIGHT,
@@ -48,24 +48,18 @@ export const MessageList = memo(function MessageList({
     if (newestId) onSelect(newestId);
   }, [onSelect, selectedMessageId, visibleIds]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const node = scrollRef.current;
-    if (!node || selectedMessageId !== newestFirstIds[0]) return;
-    node.scrollTop = 0;
-  }, [newestFirstIds, selectedMessageId]);
+    const previousIds = previousNewestFirstIdsRef.current;
+    previousNewestFirstIdsRef.current = newestFirstIds;
+    if (!node || node.scrollTop <= 0 || previousIds.length === 0 || newestFirstIds.length === 0) return;
 
-  useEffect(() => {
-    const node = scrollRef.current;
-    const added = visibleIds.length - previousCountRef.current;
-    previousCountRef.current = visibleIds.length;
-    if (!node || added <= 0) return;
-    if (selectedMessageId === newestFirstIds[0]) {
-      node.scrollTop = 0;
-      return;
-    }
-    if (node.scrollTop < ROW_HEIGHT) return;
-    node.scrollTop += added * ROW_HEIGHT;
-  }, [newestFirstIds, selectedMessageId, visibleIds.length]);
+    const previousIndex = Math.min(previousIds.length - 1, Math.floor(node.scrollTop / ROW_HEIGHT));
+    const rowOffset = node.scrollTop - previousIndex * ROW_HEIGHT;
+    const anchor = findRetainedAnchor(previousIds, newestFirstIds, previousIndex);
+    if (!anchor) return;
+    node.scrollTop = anchor.nextIndex * ROW_HEIGHT + rowOffset;
+  }, [newestFirstIds]);
 
   return (
     <Box
@@ -92,6 +86,25 @@ export const MessageList = memo(function MessageList({
     </Box>
   );
 });
+
+function findRetainedAnchor(
+  previousIds: readonly string[],
+  nextIds: readonly string[],
+  preferredIndex: number,
+): { id: string; nextIndex: number } | undefined {
+  for (let distance = 0; distance < previousIds.length; distance += 1) {
+    const candidates = distance === 0
+      ? [preferredIndex]
+      : [preferredIndex - distance, preferredIndex + distance];
+    for (const candidateIndex of candidates) {
+      if (candidateIndex < 0 || candidateIndex >= previousIds.length) continue;
+      const id = previousIds[candidateIndex];
+      const nextIndex = nextIds.indexOf(id);
+      if (nextIndex >= 0) return { id, nextIndex };
+    }
+  }
+  return undefined;
+}
 
 const MessageRow = memo(function MessageRow({
   record,

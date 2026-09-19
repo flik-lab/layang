@@ -107,3 +107,97 @@ test("headers matcher can be combined with request data matcher", () => {
     false,
   );
 });
+
+test("live push sends multiple on-demand messages through the same open gRPC stream", () => {
+  const { createGrpcMockLivePushRegistry } = require("../lib/grpc-mock-live-push.cjs");
+  const registry = createGrpcMockLivePushRegistry();
+  const writes = [];
+  let ended = 0;
+  const unregister = registry.register({
+    call: {
+      write(value) {
+        writes.push(value);
+        return true;
+      },
+      end() {
+        ended += 1;
+      },
+    },
+    serviceName: "demo.TrackService",
+    methodName: "WatchTracks",
+    scenarioId: "live-track",
+    requestContext: { data: { subscriber: "alpha" } },
+  });
+
+  registry.send({
+    serviceName: "demo.TrackService",
+    methodName: "WatchTracks",
+    scenarioId: "live-track",
+    resolveOutput: () => ({ data: { id: "T1", x: 10 } }),
+  });
+  registry.send({
+    serviceName: "demo.TrackService",
+    methodName: "WatchTracks",
+    scenarioId: "live-track",
+    resolveOutput: () => ({ data: { id: "T1", x: 20 } }),
+  });
+
+  assert.deepEqual(writes, [{ id: "T1", x: 10 }, { id: "T1", x: 20 }]);
+  assert.equal(ended, 0);
+  assert.equal(registry.count({ serviceName: "demo.TrackService", methodName: "WatchTracks" }), 1);
+  unregister();
+  assert.equal(registry.count({ serviceName: "demo.TrackService", methodName: "WatchTracks" }), 0);
+});
+
+
+
+test("manual live push can select one or all responses from any saved scenario", () => {
+  const { selectGrpcMockManualResponses } = require("../lib/grpc-mock-live-push.cjs");
+  const scenario = {
+    id: "warning",
+    stream: {
+      responses: [
+        { data: { id: "A", state: "one" } },
+        { data: { id: "A", state: "two" } },
+        { data: { id: "A", state: "three" } },
+      ],
+    },
+  };
+
+  assert.deepEqual(selectGrpcMockManualResponses(scenario, { responseIndex: 1 }), [
+    { data: { id: "A", state: "two" } },
+  ]);
+  assert.deepEqual(selectGrpcMockManualResponses(scenario, { sendAll: true }), scenario.stream.responses);
+});
+
+test("utility mock runtime routes grpc live push send", async () => {
+  const { createMockRuntime } = require("../lib/runtime/mock/mock-runtime.cjs");
+  const calls = [];
+  const mockRuntime = createMockRuntime({
+    services: {
+      grpc: {
+        start: async () => ({ running: true }),
+        update: async () => ({ running: true }),
+        stop: async () => ({ running: false }),
+        status: async () => ({ running: true, activeLivePushStreamCount: 1 }),
+        send: async (payload) => {
+          calls.push(payload);
+          return { running: true, sent: 1 };
+        },
+      },
+      rest: { start() {}, update() {}, stop() {}, status: () => ({ running: false }) },
+      websocket: { start() {}, update() {}, send() {}, stop() {}, status: () => ({ running: false }) },
+    },
+  });
+
+  const result = await mockRuntime.handle("mock.grpc.send", {
+    serviceName: "demo.TrackService",
+    methodName: "WatchTracks",
+    scenarioId: "live-track",
+    responseIndex: 2,
+  });
+
+  assert.equal(result.sent, 1);
+  assert.deepEqual(calls, [{ serviceName: "demo.TrackService", methodName: "WatchTracks", scenarioId: "live-track", responseIndex: 2 }]);
+  await mockRuntime.dispose();
+});

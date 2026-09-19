@@ -11,8 +11,10 @@ import type {
   MockServerProject,
   RequestSession,
   RestMockProject,
+  RestMockScenario,
   TransportMode,
   WebSocketMockProject,
+  WebSocketMockScenario,
 } from "../../shared/workbench-types";
 import type { LoadedProto, MetadataPair, RpcMethodInfo } from "@/lib/types";
 import type { ProtoRuntimeRegistry } from "@/lib/proto-runtime-registry";
@@ -535,19 +537,29 @@ export function useCollectionActions(ctx: ActionContext) {
       return;
     }
     if (nextName === collection.name) return;
+
+    const updatedAt = new Date().toISOString();
     const requestIds = new Set(collection.requests.map((request) => request.id));
-    setCollections((current) =>
-      current.map((item) =>
-        item.id === collectionId ? { ...item, name: nextName, updatedAt: new Date().toISOString() } : item,
-      ),
+    const nextCollections = collections.map((item) =>
+      item.id === collectionId ? { ...item, name: nextName, updatedAt } : item,
     );
-    setRequestSessions((current) =>
-      current.map((session) =>
-        requestIds.has(session.sourceRequestId ?? session.methodKey)
-          ? { ...session, serviceName: nextName, updatedAt: new Date().toISOString() }
-          : session,
-      ),
+    const nextSessions = requestSessions.map((session) =>
+      requestIds.has(session.sourceRequestId ?? session.methodKey)
+        ? { ...session, serviceName: nextName, updatedAt }
+        : session,
     );
+
+    setCollections(nextCollections);
+    setRequestSessions(nextSessions);
+    void persistProjectSnapshotNow({
+      ...getProjectSnapshot(),
+      updatedAt,
+      collections: nextCollections,
+      requestTabs: nextSessions.map(compactRequestSessionForStorage),
+    }).catch((error: unknown) => {
+      console.warn("Persisting collection rename failed.", error);
+      showToast("Collection renamed locally, but saving the workspace failed.", "warning");
+    });
     showToast("Collection renamed.", "success");
   }
 
@@ -561,50 +573,67 @@ export function useCollectionActions(ctx: ActionContext) {
       return;
     }
     if (nextName === request.name) return;
-    setCollections((current) =>
-      current.map((item) =>
-        item.id === collectionId
-          ? {
-              ...item,
-              requests: item.requests.map((candidate) =>
-                candidate.id === requestId
-                  ? { ...candidate, name: nextName, updatedAt: new Date().toISOString() }
-                  : candidate,
-              ),
-              updatedAt: new Date().toISOString(),
-            }
-          : item,
-      ),
+
+    const updatedAt = new Date().toISOString();
+    const nextCollections = collections.map((item) =>
+      item.id === collectionId
+        ? {
+            ...item,
+            requests: item.requests.map((candidate) =>
+              candidate.id === requestId ? { ...candidate, name: nextName, updatedAt } : candidate,
+            ),
+            updatedAt,
+          }
+        : item,
     );
-    setRequestSessions((current) =>
-      current.map((session) =>
-        session.methodKey === requestId || session.sourceRequestId === requestId
-          ? { ...session, title: nextName, updatedAt: new Date().toISOString() }
-          : session,
-      ),
+    const nextSessions = requestSessions.map((session) =>
+      session.methodKey === requestId || session.sourceRequestId === requestId
+        ? { ...session, title: nextName, updatedAt }
+        : session,
     );
+
+    setCollections(nextCollections);
+    setRequestSessions(nextSessions);
+
+    const projectSnapshot = getProjectSnapshot();
+    let nextWsMockServer = projectSnapshot.wsMockServer;
+    let nextRestMockServer = projectSnapshot.restMockServer;
     if (request.kind === "websocket") {
-      setWsMockServer((current) => ({
-        ...current,
-        scenarios: current.scenarios.map((scenario) =>
+      nextWsMockServer = {
+        ...nextWsMockServer,
+        scenarios: nextWsMockServer.scenarios.map((scenario: WebSocketMockScenario) =>
           scenario.requestId === requestId || scenario.id === requestId
             ? { ...scenario, name: scenario.id === requestId ? `${nextName} scenario` : scenario.name }
             : scenario,
         ),
-        updatedAt: new Date().toISOString(),
-      }));
+        updatedAt,
+      };
+      setWsMockServer(nextWsMockServer);
     }
     if (request.kind === "rest") {
-      setRestMockServer((current) => ({
-        ...current,
-        scenarios: current.scenarios.map((scenario) =>
+      nextRestMockServer = {
+        ...nextRestMockServer,
+        scenarios: nextRestMockServer.scenarios.map((scenario: RestMockScenario) =>
           scenario.requestId === requestId || scenario.id === requestId
             ? { ...scenario, name: scenario.id === requestId ? `${nextName} success` : scenario.name }
             : scenario,
         ),
-        updatedAt: new Date().toISOString(),
-      }));
+        updatedAt,
+      };
+      setRestMockServer(nextRestMockServer);
     }
+
+    void persistProjectSnapshotNow({
+      ...projectSnapshot,
+      updatedAt,
+      collections: nextCollections,
+      requestTabs: nextSessions.map(compactRequestSessionForStorage),
+      wsMockServer: nextWsMockServer,
+      restMockServer: nextRestMockServer,
+    }).catch((error: unknown) => {
+      console.warn("Persisting request rename failed.", error);
+      showToast("Request renamed locally, but saving the workspace failed.", "warning");
+    });
     showToast("Request renamed.", "success");
   }
 

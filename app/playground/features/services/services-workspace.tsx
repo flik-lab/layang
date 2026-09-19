@@ -82,7 +82,9 @@ import type {
   MockFormat,
   MockProtoSource,
   MockScenario,
+  MockScenarioResponse,
   MockServerProject,
+  MockServerStatus,
 } from "../../shared/workbench-types";
 
 const cardSx = {
@@ -473,6 +475,7 @@ function GrpcFocusedMockWorkspace({ ctx }: { ctx: ViewContext }) {
     currentMockScenarios,
     discardMockScenarioEditorDraft,
     handleMockFormatChange,
+    handleGrpcMockLivePushSend,
     handleMockMethodEnabledChange,
     handleMockScenarioSelectChange,
     handleMockScenarioTextChange,
@@ -480,6 +483,7 @@ function GrpcFocusedMockWorkspace({ ctx }: { ctx: ViewContext }) {
     mockScenarioEditorError,
     mockSelectedMethod,
     mockServer,
+    mockServerStatus,
     openMockScenarioFolder,
     openMockScenarioManager,
     saveMockScenarioEditorDraft,
@@ -502,6 +506,11 @@ function GrpcFocusedMockWorkspace({ ctx }: { ctx: ViewContext }) {
     0,
     Math.floor(Number(focusedScenario?.stream?.maxLoops ?? mockServer.streamDefaults.maxLoops) || 0),
   );
+  const focusedStreamMode = focusedScenario?.stream?.mode === "live-push" ? "live-push" : "scheduled";
+  const livePushStreams = (mockServerStatus.livePushStreams ?? []) as NonNullable<MockServerStatus["livePushStreams"]>;
+  const activeLivePushClients = livePushStreams
+    .filter((item) => item.serviceName === method?.serviceName && item.methodName === method?.methodName)
+    .reduce((total, item) => total + Math.max(0, Number(item.clientCount) || 0), 0);
   const editorIdentity = `${key}:${selectedScenarioId}:${currentMockFile?.format ?? "yaml"}`;
   const [editorText, setEditorText] = useState(currentMockEditorText ?? "");
   const [editorBaseline, setEditorBaseline] = useState(currentMockEditorText ?? "");
@@ -511,6 +520,25 @@ function GrpcFocusedMockWorkspace({ ctx }: { ctx: ViewContext }) {
   const editorTextRef = useRef(currentMockEditorText ?? "");
   const editorDirtyRef = useRef(Boolean(mockScenarioEditorDirty));
   const editorValidationTimerRef = useRef<number | null>(null);
+  const [manualScenarioId, setManualScenarioId] = useState("");
+  const [manualResponseSelection, setManualResponseSelection] = useState("0");
+  const manualScenario = currentMockScenarios?.find((scenario: MockScenario) => scenario.id === manualScenarioId) ?? null;
+  const manualResponses: MockScenarioResponse[] = manualScenario
+    ? Array.isArray(manualScenario.stream?.responses)
+      ? manualScenario.stream.responses
+      : manualScenario.response || manualScenario.output
+        ? [manualScenario.response ?? manualScenario.output]
+        : []
+    : [];
+  const manualResponseOptions = (() => {
+    const occurrences = new Map<string, number>();
+    return manualResponses.map((response) => {
+      const fingerprint = JSON.stringify(response) ?? "response";
+      const occurrence = occurrences.get(fingerprint) ?? 0;
+      occurrences.set(fingerprint, occurrence + 1);
+      return { key: `${manualScenarioId}:${fingerprint}:${occurrence}`, response };
+    });
+  })();
 
   useEffect(() => {
     if (editorValidationTimerRef.current !== null) window.clearTimeout(editorValidationTimerRef.current);
@@ -528,6 +556,16 @@ function GrpcFocusedMockWorkspace({ ctx }: { ctx: ViewContext }) {
       if (editorValidationTimerRef.current !== null) window.clearTimeout(editorValidationTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    const scenarios = currentMockScenarios ?? [];
+    if (scenarios.some((scenario: MockScenario) => scenario.id === manualScenarioId)) return;
+    setManualScenarioId(scenarios[0]?.id ?? "");
+  }, [key, currentMockScenarios, manualScenarioId]);
+
+  useEffect(() => {
+    setManualResponseSelection("0");
+  }, [manualScenarioId]);
 
   useEffect(() => {
     const handleSaveShortcut = (event: KeyboardEvent) => {
@@ -619,7 +657,7 @@ function GrpcFocusedMockWorkspace({ ctx }: { ctx: ViewContext }) {
     saveMockScenarioEditorDraft(formatted);
   }
 
-  function patchFocusedStream(patch: { intervalMs?: number; loop?: boolean; maxLoops?: number }) {
+  function patchFocusedStream(patch: { mode?: "scheduled" | "live-push"; intervalMs?: number; loop?: boolean; maxLoops?: number }) {
     if (!method || !focusedScenario || editorDirtyRef.current) return;
     const nextScenario: MockScenario = {
       ...focusedScenario,
@@ -697,54 +735,146 @@ function GrpcFocusedMockWorkspace({ ctx }: { ctx: ViewContext }) {
           spacing={0.8}
           sx={{ minHeight: 44, px: 1.5, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
         >
-          <Typography variant="caption" color="text.secondary" sx={{ minWidth: 52 }}>
-            Periodic
+          <Typography variant="caption" color="text.secondary">Mode</Typography>
+          <FormControl size="small" sx={{ minWidth: 128 }}>
+            <Select
+              value={focusedStreamMode}
+              disabled={editorDirty}
+              inputProps={{ "aria-label": `Stream mode for ${method.methodName}` }}
+              onChange={(event: any) =>
+                patchFocusedStream({ mode: String(event.target.value) === "live-push" ? "live-push" : "scheduled" })
+              }
+            >
+              <MenuItem value="scheduled">Scheduled</MenuItem>
+              <MenuItem value="live-push">Live Push</MenuItem>
+            </Select>
+          </FormControl>
+          {focusedStreamMode === "live-push" ? (
+            <>
+              <Chip
+                size="small"
+                variant="outlined"
+                color={activeLivePushClients > 0 ? "success" : "default"}
+                label={`${activeLivePushClients} active stream${activeLivePushClients === 1 ? "" : "s"}`}
+              />
+              <Typography variant="caption" color="text.secondary" noWrap>
+                Keeps matching client streams open for manual publishing.
+              </Typography>
+            </>
+          ) : (
+            <>
+              <Stack direction="row" alignItems="center" spacing={0.45} sx={{ flexShrink: 0 }}>
+                <Typography variant="caption">Interval (ms)</Typography>
+                <TextField
+                  key={`interval:${editorIdentity}:${focusedIntervalMs}`}
+                  size="small"
+                  type="number"
+                  defaultValue={String(focusedIntervalMs)}
+                  disabled={editorDirty}
+                  inputProps={{ min: 0, step: 10, "aria-label": `Interval for ${method.methodName}` }}
+                  onBlur={(event: any) =>
+                    patchFocusedStream({ intervalMs: Math.max(0, Math.floor(Number(event.target.value) || 0)) })
+                  }
+                  sx={{ width: 112, "& .MuiInputBase-root": { minHeight: 32, height: 32 } }}
+                />
+              </Stack>
+              <Stack direction="row" alignItems="center" spacing={0.3}>
+                <Typography variant="caption">Loop</Typography>
+                <Switch
+                  size="small"
+                  checked={focusedLoop}
+                  disabled={editorDirty}
+                  inputProps={{ "aria-label": `Loop ${method.methodName}` }}
+                  onChange={(_event: any, checked: boolean) => patchFocusedStream({ loop: checked })}
+                />
+              </Stack>
+              <Stack direction="row" alignItems="center" spacing={0.45} sx={{ flexShrink: 0 }}>
+                <Typography variant="caption">Count</Typography>
+                <TextField
+                  key={`count:${editorIdentity}:${focusedLoopCount}`}
+                  size="small"
+                  type="number"
+                  defaultValue={String(focusedLoopCount)}
+                  disabled={editorDirty || !focusedLoop}
+                  inputProps={{ min: 0, step: 1, "aria-label": `Loop count for ${method.methodName}` }}
+                  onBlur={(event: any) =>
+                    patchFocusedStream({ maxLoops: Math.max(0, Math.floor(Number(event.target.value) || 0)) })
+                  }
+                  sx={{ width: 96, "& .MuiInputBase-root": { minHeight: 32, height: 32 } }}
+                />
+              </Stack>
+              {focusedLoop ? (
+                <Typography variant="caption" color="text.secondary" noWrap sx={{ flexShrink: 0 }}>
+                  0 = unlimited
+                </Typography>
+              ) : null}
+            </>
+          )}
+        </Stack>
+      ) : null}
+
+      {method.responseStream && currentMockScenarios?.length ? (
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.8}
+          sx={{ minHeight: 46, px: 1.5, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+        >
+          <Typography variant="caption" fontWeight={600} sx={{ flexShrink: 0 }}>Manual Send</Typography>
+          <FormControl size="small" sx={{ minWidth: 180, maxWidth: 280 }}>
+            <Select
+              value={manualScenarioId}
+              inputProps={{ "aria-label": `Manual scenario for ${method.methodName}` }}
+              onChange={(event: any) => setManualScenarioId(String(event.target.value))}
+            >
+              {currentMockScenarios.map((scenario: MockScenario) => (
+                <MenuItem key={scenario.id} value={scenario.id}>
+                  {mockScenarioDisplayName(scenario, method)}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <FormControl size="small" sx={{ minWidth: 150 }}>
+            <Select
+              value={manualResponseSelection}
+              inputProps={{ "aria-label": `Manual response for ${method.methodName}` }}
+              disabled={!manualResponses.length}
+              onChange={(event: any) => setManualResponseSelection(String(event.target.value))}
+            >
+              {manualResponses.length > 1 ? <MenuItem value="all">All responses</MenuItem> : null}
+              {manualResponseOptions.map((option, index: number) => (
+                <MenuItem key={option.key} value={String(index)}>
+                  Response #{index + 1}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <Button
+            size="small"
+            variant="contained"
+            startIcon={<PlayArrow sx={{ fontSize: 15 }} />}
+            disabled={!mockServerStatus.running || !manualScenario || !manualResponses.length}
+            onClick={() =>
+              void handleGrpcMockLivePushSend(
+                method,
+                manualScenarioId,
+                manualResponseSelection === "all"
+                  ? { sendAll: true }
+                  : { responseIndex: Math.max(0, Number(manualResponseSelection) || 0) },
+              )
+            }
+          >
+            Send Now
+          </Button>
+          <Chip
+            size="small"
+            variant="outlined"
+            color={activeLivePushClients > 0 ? "success" : "default"}
+            label={`${activeLivePushClients} active stream${activeLivePushClients === 1 ? "" : "s"}`}
+          />
+          <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0 }}>
+            Sends the saved scenario snapshot; unsaved editor changes are ignored.
           </Typography>
-          <Stack direction="row" alignItems="center" spacing={0.45} sx={{ flexShrink: 0 }}>
-            <Typography variant="caption">Interval (ms)</Typography>
-            <TextField
-              key={`interval:${editorIdentity}:${focusedIntervalMs}`}
-              size="small"
-              type="number"
-              defaultValue={String(focusedIntervalMs)}
-              disabled={editorDirty}
-              inputProps={{ min: 0, step: 10, "aria-label": `Interval for ${method.methodName}` }}
-              onBlur={(event: any) =>
-                patchFocusedStream({ intervalMs: Math.max(0, Math.floor(Number(event.target.value) || 0)) })
-              }
-              sx={{ width: 112, "& .MuiInputBase-root": { minHeight: 32, height: 32 } }}
-            />
-          </Stack>
-          <Stack direction="row" alignItems="center" spacing={0.3}>
-            <Typography variant="caption">Loop</Typography>
-            <Switch
-              size="small"
-              checked={focusedLoop}
-              disabled={editorDirty}
-              inputProps={{ "aria-label": `Loop ${method.methodName}` }}
-              onChange={(_event: any, checked: boolean) => patchFocusedStream({ loop: checked })}
-            />
-          </Stack>
-          <Stack direction="row" alignItems="center" spacing={0.45} sx={{ flexShrink: 0 }}>
-            <Typography variant="caption">Count</Typography>
-            <TextField
-              key={`count:${editorIdentity}:${focusedLoopCount}`}
-              size="small"
-              type="number"
-              defaultValue={String(focusedLoopCount)}
-              disabled={editorDirty || !focusedLoop}
-              inputProps={{ min: 0, step: 1, "aria-label": `Loop count for ${method.methodName}` }}
-              onBlur={(event: any) =>
-                patchFocusedStream({ maxLoops: Math.max(0, Math.floor(Number(event.target.value) || 0)) })
-              }
-              sx={{ width: 96, "& .MuiInputBase-root": { minHeight: 32, height: 32 } }}
-            />
-          </Stack>
-          {focusedLoop ? (
-            <Typography variant="caption" color="text.secondary" noWrap sx={{ flexShrink: 0 }}>
-              0 = unlimited
-            </Typography>
-          ) : null}
         </Stack>
       ) : null}
 
@@ -821,7 +951,8 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
   const [attachVersionId, setAttachVersionId] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPage, setSettingsPage] = useState<GrpcMockSettingsPage>("server");
-  const [runtimeAction, setRuntimeAction] = useState<"start" | "stop" | null>(null);
+  const [nativeRuntimeAction, setNativeRuntimeAction] = useState<"start" | "stop" | null>(null);
+  const [webRuntimeAction, setWebRuntimeAction] = useState<"start" | "stop" | null>(null);
   const [webAccessSectionRequest, setWebAccessSectionRequest] = useState<{
     id: number;
     tab: "overview" | "logs" | "settings";
@@ -845,8 +976,6 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
 
   const nativeRunning = Boolean(mockServerStatus.running);
   const webRunning = Boolean(webAccessStatus?.running);
-  const runMode = mockServer.runMode === "web-access" ? "web-access" : "native";
-  const runModeRunning = runMode === "web-access" ? webRunning : nativeRunning;
   const configuredMethods = catalog.summary.ready + catalog.summary.live;
   const nativeIssues = [
     sourceRefs.length === 0 ? "Attach a Proto" : "",
@@ -854,7 +983,8 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
     catalog.summary.totalScenarios === 0 ? "Create a scenario" : "",
     configuredMethods === 0 ? "Enable a configured scenario" : "",
   ].filter(Boolean);
-  const canStartRuntime = runMode === "web-access" ? sourceRefs.length > 0 : nativeIssues.length === 0;
+  const canStartNative = nativeIssues.length === 0;
+  const canStartWeb = sourceRefs.length > 0;
   const nativeEndpoint = `${mockServer.bindHost}:${mockServerStatus.port ?? mockServer.port}`;
   const activeWebProfile =
     mockServer.gatewayProfiles?.find((item: GrpcGatewayProfile) => item.id === mockServer.activeGatewayProfileId) ??
@@ -866,7 +996,6 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
   const browserUrl =
     webAccessStatus?.url ??
     `${webConfig?.security?.type === "tls" ? "https" : "http"}://${browserHost}:${webConfig?.port ?? 8080}`;
-  const endpoint = runMode === "web-access" ? browserUrl : nativeEndpoint;
 
   const selectCatalogMethod = useCallback(
     (row: MockCatalogMethodRow) => {
@@ -923,104 +1052,118 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios" }: { ctx: View
     }));
   }
 
-  async function toggleRuntime(): Promise<void> {
-    if (runtimeAction) return;
-    if (!runModeRunning && !canStartRuntime) return;
-    setRuntimeAction(runModeRunning ? "stop" : "start");
+  async function toggleGrpcRuntime(): Promise<void> {
+    if (nativeRuntimeAction || (!nativeRunning && !canStartNative)) return;
+    setNativeRuntimeAction(nativeRunning ? "stop" : "start");
     try {
-      if (runMode === "web-access") {
-        if (runModeRunning) await stopWebAccess();
-        else await startWebAccess();
-      } else if (runModeRunning) {
-        await stopMockServer();
-      } else {
-        await startMockServer();
-      }
+      if (nativeRunning) await stopMockServer();
+      else await startMockServer();
     } finally {
-      setRuntimeAction(null);
+      setNativeRuntimeAction(null);
     }
   }
 
-  function changeRunMode(nextMode: "native" | "web-access"): void {
-    if (runtimeAction || runModeRunning || nextMode === runMode) return;
-    setMockServer((current: MockServerProject) => ({
-      ...current,
-      runMode: nextMode,
-      updatedAt: new Date().toISOString(),
-    }));
+  async function toggleWebRuntime(): Promise<void> {
+    if (webRuntimeAction || (!webRunning && !canStartWeb)) return;
+    setWebRuntimeAction(webRunning ? "stop" : "start");
+    try {
+      if (webRunning) await stopWebAccess();
+      else await startWebAccess();
+    } finally {
+      setWebRuntimeAction(null);
+    }
   }
 
   return (
     <WorkspaceFrame title="gRPC" description="Worker-indexed gRPC mock catalog and runtime controls.">
       <Stack spacing={1} sx={{ minHeight: 0, flex: 1 }}>
-        <Paper variant="outlined" sx={{ px: 1, py: 0.65 }}>
-          <Stack direction={{ xs: "column", md: "row" }} spacing={0.8} alignItems={{ md: "center" }}>
-            <FormControl size="small" sx={{ width: { xs: "100%", md: 180 }, flexShrink: 0 }}>
-              <Select
-                value={runMode}
-                disabled={runModeRunning || runtimeAction !== null}
-                inputProps={{ "aria-label": "gRPC run mode" }}
-                onChange={(event: { target: { value: unknown } }) =>
-                  changeRunMode(String(event.target.value) === "web-access" ? "web-access" : "native")
-                }
-              >
-                <MenuItem value="native">Native gRPC</MenuItem>
-                <MenuItem value="web-access">Web access</MenuItem>
-              </Select>
-            </FormControl>
-            <Box sx={{ minWidth: 0, flex: 1 }}>
-              <Stack direction="row" spacing={0.65} alignItems="center" sx={{ minWidth: 0 }}>
-                <Chip
-                  size="small"
-                  color={runModeRunning ? "success" : "default"}
-                  label={
-                    runModeRunning && runMode === "native" && mockServerStatus.runtimeSource === "cli"
-                      ? "Running · CLI"
-                      : runModeRunning
-                        ? "Running"
-                        : "Stopped"
-                  }
-                />
-                <Typography variant="body2" fontFamily="monospace" noWrap title={endpoint}>
-                  {endpoint}
+        <Stack direction={{ xs: "column", lg: "row" }} spacing={0.8}>
+          <Paper variant="outlined" sx={{ px: 1, py: 0.8, flex: 1, minWidth: 0 }}>
+            <Stack direction="row" spacing={0.8} alignItems="center">
+              <Box sx={{ minWidth: 0, flex: 1 }}>
+                <Stack direction="row" spacing={0.65} alignItems="center">
+                  <Typography variant="body2" fontWeight={700}>Native gRPC</Typography>
+                  <Chip
+                    size="small"
+                    color={nativeRunning ? "success" : "default"}
+                    label={
+                      nativeRunning && mockServerStatus.runtimeSource === "cli"
+                        ? "Running · CLI"
+                        : nativeRunning
+                          ? "Running"
+                          : "Stopped"
+                    }
+                  />
+                </Stack>
+                <Typography variant="body2" fontFamily="monospace" noWrap title={nativeEndpoint}>
+                  {nativeEndpoint}
                 </Typography>
-              </Stack>
-              <Typography variant="caption" color="text.secondary" noWrap>
-                {catalog.summary.totalMethods} methods · {catalog.summary.totalScenarios} scenarios · {sourceRefs.length} Proto
+                <Typography variant="caption" color="text.secondary" noWrap>
+                  {catalog.summary.totalMethods} methods · {catalog.summary.totalScenarios} scenarios
+                </Typography>
+              </Box>
+              <Tooltip title="Native gRPC settings">
+                <IconButton aria-label="Open Native gRPC settings" onClick={() => setSettingsOpen(true)}>
+                  <Settings />
+                </IconButton>
+              </Tooltip>
+              <Button
+                size="small"
+                color={nativeRunning ? "error" : "primary"}
+                variant="contained"
+                disabled={nativeRuntimeAction !== null || (!nativeRunning && !canStartNative)}
+                startIcon={nativeRunning ? <StopCircle /> : <PlayArrow />}
+                onClick={() => void toggleGrpcRuntime()}
+              >
+                {nativeRuntimeAction ? (nativeRuntimeAction === "start" ? "Starting…" : "Stopping…") : nativeRunning ? "Stop" : "Start"}
+              </Button>
+            </Stack>
+            {!nativeRunning && nativeIssues.length > 0 ? (
+              <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.45 }}>
+                {nativeIssues.join(" · ")}
               </Typography>
-            </Box>
-            <Tooltip title={runMode === "web-access" ? "Web access settings" : "gRPC Mock settings"}>
-              <IconButton
-                aria-label={runMode === "web-access" ? "Open Web access settings" : "Open gRPC Mock settings"}
-                onClick={() => {
-                  if (runMode === "web-access") {
+            ) : null}
+          </Paper>
+
+          <Paper variant="outlined" sx={{ px: 1, py: 0.8, flex: 1, minWidth: 0 }}>
+            <Stack direction="row" spacing={0.8} alignItems="center">
+              <Box sx={{ minWidth: 0, flex: 1 }}>
+                <Stack direction="row" spacing={0.65} alignItems="center">
+                  <Typography variant="body2" fontWeight={700}>Web Access</Typography>
+                  <Chip size="small" color={webRunning ? "success" : "default"} label={webRunning ? "Running" : "Stopped"} />
+                  {webConfig?.security?.type === "tls" ? <Chip size="small" variant="outlined" label="HTTPS · HTTP/2" /> : null}
+                </Stack>
+                <Typography variant="body2" fontFamily="monospace" noWrap title={browserUrl}>
+                  {browserUrl}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" noWrap>
+                  → Native gRPC {nativeEndpoint}
+                </Typography>
+              </Box>
+              <Tooltip title="Web Access settings">
+                <IconButton
+                  aria-label="Open Web Access settings"
+                  onClick={() => {
                     setWebAccessSectionRequest((current) => ({ id: current.id + 1, tab: "settings" }));
                     setTab("web-access");
-                  } else {
-                    setSettingsOpen(true);
-                  }
-                }}
+                  }}
+                >
+                  <Settings />
+                </IconButton>
+              </Tooltip>
+              <Button
+                size="small"
+                color={webRunning ? "error" : "primary"}
+                variant="contained"
+                disabled={webRuntimeAction !== null || (!webRunning && !canStartWeb)}
+                startIcon={webRunning ? <StopCircle /> : <PlayArrow />}
+                onClick={() => void toggleWebRuntime()}
               >
-                <Settings />
-              </IconButton>
-            </Tooltip>
-            <Button
-              size="small"
-              color={runModeRunning ? "error" : "primary"}
-              variant="contained"
-              disabled={runtimeAction !== null || (!runModeRunning && !canStartRuntime)}
-              startIcon={runModeRunning ? <StopCircle /> : <PlayArrow />}
-              onClick={() => void toggleRuntime()}
-            >
-              {runtimeAction ? (runtimeAction === "start" ? "Starting…" : "Stopping…") : runModeRunning ? "Stop" : "Start"}
-            </Button>
-          </Stack>
-          {!runModeRunning && runMode === "native" && nativeIssues.length > 0 ? (
-            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.45 }}>
-              {nativeIssues.join(" · ")}
-            </Typography>
-          ) : null}
-        </Paper>
+                {webRuntimeAction ? (webRuntimeAction === "start" ? "Starting…" : "Stopping…") : webRunning ? "Stop" : "Start"}
+              </Button>
+            </Stack>
+          </Paper>
+        </Stack>
 
         <WorkbenchTabs
           value={tab}
@@ -1669,7 +1812,7 @@ function GrpcMockSettingsDialog({
             role="tablist"
             aria-label="gRPC Mock settings sections"
           >
-            {(["server", "security", "web-server", "defaults", "advanced"] as const).map((value) => (
+            {(["server", "security", "defaults", "advanced"] as const).map((value) => (
               <Button
                 key={value}
                 size="small"
@@ -1679,7 +1822,7 @@ function GrpcMockSettingsDialog({
                 onClick={() => onPageChange(value)}
                 sx={{ justifyContent: "flex-start" }}
               >
-                {value === "web-server" ? "Web server" : value[0].toUpperCase() + value.slice(1)}
+                {value[0].toUpperCase() + value.slice(1)}
               </Button>
             ))}
           </Stack>
@@ -2862,7 +3005,6 @@ function WebAccessPanel({
                     const nextType = String(event.target.value) === "tls" ? "tls" : "insecure";
                     if (nextType === "tls") {
                       patchWeb({
-                        port: Number(draftWeb.port) === 8080 ? 8443 : draftWeb.port,
                         security:
                           draftWeb.security?.type === "tls"
                             ? draftWeb.security
@@ -2880,10 +3022,7 @@ function WebAccessPanel({
                               },
                       });
                     } else {
-                      patchWeb({
-                        port: Number(draftWeb.port) === 8443 ? 8080 : draftWeb.port,
-                        security: { type: "insecure" },
-                      });
+                      patchWeb({ security: { type: "insecure" } });
                     }
                   }}
                 >
@@ -2891,6 +3030,18 @@ function WebAccessPanel({
                   <MenuItem value="tls">HTTPS</MenuItem>
                 </Select>
               </FormControl>
+              {draftWeb.security?.type === "tls" && Number(draftWeb.port) !== 8443 ? (
+                <Stack direction="row" spacing={0.75} alignItems="center">
+                  <Typography variant="caption" color="text.secondary">Recommended HTTPS port: 8443</Typography>
+                  <Button size="small" variant="text" onClick={() => patchWeb({ port: 8443 })}>Use 8443</Button>
+                </Stack>
+              ) : null}
+              {draftWeb.security?.type !== "tls" && Number(draftWeb.port) !== 8080 ? (
+                <Stack direction="row" spacing={0.75} alignItems="center">
+                  <Typography variant="caption" color="text.secondary">Recommended HTTP port: 8080</Typography>
+                  <Button size="small" variant="text" onClick={() => patchWeb({ port: 8080 })}>Use 8080</Button>
+                </Stack>
+              ) : null}
             </Stack>
           </WebAccessSettingsSection>
 
@@ -2979,6 +3130,24 @@ function WebAccessPanel({
             title="Browser support"
             description="Allow the browser origins that may call this endpoint."
           >
+            <Alert severity={draftWeb.security?.type === "tls" ? "success" : "info"} variant="outlined">
+              {draftWeb.security?.type === "tls"
+                ? `HTTPS uses HTTP/2 with up to ${draftWeb.maxConcurrentStreams ?? 100} concurrent streams per server session. HTTP/1.1 fallback remains enabled.`
+                : "HTTP uses HTTP/1.1. For many parallel long-lived browser streams, use HTTPS so browsers can multiplex over HTTP/2."}
+            </Alert>
+            <TextField
+              size="small"
+              type="number"
+              label="Max concurrent streams"
+              value={String(draftWeb.maxConcurrentStreams ?? 100)}
+              helperText="HTTPS/HTTP2 default is 100. Minimum 6, maximum 1000."
+              onChange={(event: any) =>
+                patchWeb({
+                  maxConcurrentStreams: Math.max(6, Math.min(1000, Math.floor(Number(event.target.value) || 100))),
+                })
+              }
+              sx={{ maxWidth: 260 }}
+            />
             <TextField
               size="small"
               fullWidth

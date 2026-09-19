@@ -1439,6 +1439,62 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
     }
   }
 
+  async function handleGrpcMockLivePushSend(
+    method: RpcMethodInfo,
+    scenarioId: string,
+    options: { responseIndex?: number; sendAll?: boolean } = {},
+  ) {
+    if (!mockServerStatus.running) {
+      showToast("Start gRPC Mock before using Live Push.", "warning");
+      return;
+    }
+    if (!window.electronMock?.sendStream) {
+      showToast("Live Push is unavailable in this runtime.", "warning");
+      return;
+    }
+
+    try {
+      const project = mockServerRef?.current ?? mockServer;
+      await syncRunningMockServerFromEditor({
+        mockServer: project,
+        mockServerStatus,
+        setMockServerStatus,
+        loaded,
+        protoFiles,
+        protoRuntimeRegistry,
+        workspaceFolderPath,
+        activeProtoLibraryId,
+        activeProtoVersionId,
+        updateSeqRef: mockRuntimeUpdateSeqRef,
+        appliedSeqRef: mockRuntimeAppliedSeqRef,
+        lastSyncSignatureRef: mockRuntimeLastSyncSignatureRef,
+      });
+      const result = await window.electronMock.sendStream({
+        serviceName: method.serviceName,
+        methodName: method.methodName,
+        scenarioId,
+        responseIndex: options.responseIndex,
+        sendAll: options.sendAll,
+      });
+      if (!result?.ok) {
+        showToast(result?.error ?? "Live Push failed.", "error");
+        return;
+      }
+      setMockServerStatus((current: MockServerStatus) => ({
+        ...current,
+        activeLivePushStreamCount: result.activeLivePushStreamCount ?? current.activeLivePushStreamCount,
+        livePushStreams: result.livePushStreams ?? current.livePushStreams,
+        message: result.message ?? current.message,
+      }));
+      showToast(
+        result.sent && result.sent > 0 ? result.message ?? "Live gRPC data sent." : result.message ?? "No active Live Push stream.",
+        result.sent && result.sent > 0 ? "success" : "warning",
+      );
+    } catch (error) {
+      showToast(`Live Push failed: ${toErrorMessage(error)}`, "error");
+    }
+  }
+
   /** Stops only the native gRPC mock runtime. */
   async function stopMockServer() {
     // CLI-started runtimes run in their own daemon process. Stop that daemon
@@ -1550,6 +1606,8 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
 
       const previousOrigins = stored.web?.cors?.allowedOrigins ?? [];
       const legacyDefaultOrigins = new Set([
+        "http://localhost:12999",
+        "http://127.0.0.1:12999",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:5173",
@@ -1710,6 +1768,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
     fetchMockScenarioFilesFromWorkspace,
     openMockScenarioFolder,
     startMockServer,
+    handleGrpcMockLivePushSend,
     stopMockServer,
     startWebAccess,
     stopWebAccess,

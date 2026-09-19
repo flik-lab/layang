@@ -27,6 +27,7 @@ export type ResponseStore = {
   setPendingMessageCount(value: StateUpdater<number>): void;
   setShowMessageTopButton(value: StateUpdater<boolean>): void;
   setRetentionLimit(limit: number): void;
+  setPinnedMessageIds(ids: readonly string[]): void;
   reset(): void;
 };
 
@@ -50,6 +51,7 @@ export function createResponseStore(releaseDocuments: ResponseDocumentReleaser =
   const listeners = new Set<() => void>();
   let nextSequence = 0;
   let retentionLimit = DEFAULT_MAX_MESSAGES;
+  let pinnedMessageIds = new Set<string>();
   let notifyTimer: ReturnType<typeof setTimeout> | null = null;
 
   const notifyListeners = () => {
@@ -82,6 +84,7 @@ export function createResponseStore(releaseDocuments: ResponseDocumentReleaser =
     const evicted = ordered.length > retentionLimit ? ordered.splice(0, ordered.length - retentionLimit) : [];
     const released: string[] = [];
     for (const id of evicted) {
+      if (pinnedMessageIds.has(id)) continue;
       const record = nextRecords.get(id);
       if (record?.documentId) released.push(record.documentId);
       nextRecords.delete(id);
@@ -91,7 +94,7 @@ export function createResponseStore(releaseDocuments: ResponseDocumentReleaser =
     const latestMessageId = findLatestMessageId(ordered, nextRecords);
     const nextControls = controlEvents.length ? [...snapshot.controlEvents, ...controlEvents].slice(-100) : snapshot.controlEvents;
     publish({ orderedMessageIds: ordered, latestMessageId, controlEvents: nextControls }, true);
-    performanceStats.setRetainedMessages(ordered.length);
+    performanceStats.setRetainedMessages(nextRecords.size);
     performanceStats.setPayloadDocuments(countDocumentIds(nextRecords));
   };
 
@@ -126,8 +129,14 @@ export function createResponseStore(releaseDocuments: ResponseDocumentReleaser =
     }
     nextSequence = sequence;
     const trimmed = ordered.slice(-retentionLimit);
-    const keep = new Set(trimmed);
+    const keep = new Set([...trimmed, ...pinnedMessageIds]);
     const nextRetainedRecords = new Map([...nextRecords].filter(([id]) => keep.has(id)));
+    for (const id of pinnedMessageIds) {
+      if (!nextRetainedRecords.has(id)) {
+        const pinnedRecord = records.get(id);
+        if (pinnedRecord) nextRetainedRecords.set(id, pinnedRecord);
+      }
+    }
     const retainedDocumentIds = new Set(
       [...nextRetainedRecords.values()].flatMap((record) => record.documentId ? [record.documentId] : []),
     );
@@ -139,7 +148,7 @@ export function createResponseStore(releaseDocuments: ResponseDocumentReleaser =
     records = nextRetainedRecords;
     compatibilityEvents = events.slice(-retentionLimit);
     publish({ orderedMessageIds: trimmed, latestMessageId: findLatestMessageId(trimmed, records), controlEvents: controls });
-    performanceStats.setRetainedMessages(trimmed.length);
+    performanceStats.setRetainedMessages(nextRetainedRecords.size);
     performanceStats.setPayloadDocuments(retainedDocumentIds.size);
   };
 
@@ -159,7 +168,7 @@ export function createResponseStore(releaseDocuments: ResponseDocumentReleaser =
     getRecord: (id) => records.get(id),
     getEvents: () => compatibilityEvents,
     getDebugStats: () => ({
-      retainedRecords: snapshot.orderedMessageIds.length,
+      retainedRecords: records.size,
       referencedDocumentIds: countDocumentIds(records),
       compatibilityEvents: compatibilityEvents.length,
     }),
@@ -182,6 +191,7 @@ export function createResponseStore(releaseDocuments: ResponseDocumentReleaser =
       const released: string[] = [];
       const nextRecords = new Map(records);
       for (const id of evicted) {
+        if (pinnedMessageIds.has(id)) continue;
         const record = nextRecords.get(id);
         if (record?.documentId) released.push(record.documentId);
         nextRecords.delete(id);
@@ -190,13 +200,30 @@ export function createResponseStore(releaseDocuments: ResponseDocumentReleaser =
       records = nextRecords;
       compatibilityEvents = compatibilityEvents.slice(-retentionLimit);
       publish({ orderedMessageIds: ordered, latestMessageId: findLatestMessageId(ordered, records), retentionLimit });
-      performanceStats.setRetainedMessages(ordered.length);
+      performanceStats.setRetainedMessages(records.size);
+      performanceStats.setPayloadDocuments(countDocumentIds(records));
+    },
+    setPinnedMessageIds(ids) {
+      const nextPinnedIds = new Set(ids.filter((id) => records.has(id)));
+      const activeIds = new Set(snapshot.orderedMessageIds);
+      const released: string[] = [];
+      const nextRecords = new Map(records);
+      for (const id of pinnedMessageIds) {
+        if (nextPinnedIds.has(id) || activeIds.has(id)) continue;
+        const record = nextRecords.get(id);
+        if (record?.documentId) released.push(record.documentId);
+        nextRecords.delete(id);
+      }
+      pinnedMessageIds = nextPinnedIds;
+      records = nextRecords;
+      if (released.length) releaseDocuments(released);
+      performanceStats.setRetainedMessages(records.size);
       performanceStats.setPayloadDocuments(countDocumentIds(records));
     },
     reset() {
       const ids = [...records.values()].flatMap((record) => record.documentId ? [record.documentId] : []);
       if (ids.length) releaseDocuments(ids);
-      records = new Map(); compatibilityEvents = []; nextSequence = 0; retentionLimit = DEFAULT_MAX_MESSAGES;
+      records = new Map(); compatibilityEvents = []; nextSequence = 0; retentionLimit = DEFAULT_MAX_MESSAGES; pinnedMessageIds = new Set();
       snapshot = { orderedMessageIds: [], latestMessageId: undefined, version: snapshot.version + 1, responseFilter: "", responseSearchScope: "current", pendingMessageCount: 0, showMessageTopButton: false, retentionLimit: DEFAULT_MAX_MESSAGES, controlEvents: [] };
       performanceStats.setRetainedMessages(0);
       performanceStats.setPayloadDocuments(0);

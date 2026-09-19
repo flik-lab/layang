@@ -358,6 +358,7 @@ contextBridge.exposeInMainWorld("electronMock", {
   start: (payload) => ipcRenderer.invoke("mock-server:start", payload),
   stop: () => ipcRenderer.invoke("mock-server:stop"),
   update: (payload) => ipcRenderer.invoke("mock-server:update", payload),
+  sendStream: (payload) => ipcRenderer.invoke("mock-server:stream-send", payload),
   status: () => ipcRenderer.invoke("mock-server:status"),
   isAvailable: true,
 });

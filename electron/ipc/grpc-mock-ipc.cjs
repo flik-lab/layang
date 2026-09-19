@@ -6,6 +6,7 @@ const {
   startMockServer,
   stopMockServer,
   updateActiveMockServer,
+  sendMockServerStreamMessage,
 } = require("../services/grpc-mock-server.cjs");
 const { errorResponse, okResponse } = require("../utils/ipc-utils.cjs");
 
@@ -46,6 +47,17 @@ function registerGrpcMockIpc(options = {}) {
       const result = runtimeMode === "utility"
         ? await invokeUtility("mock.grpc.update", payload || {})
         : await updateActiveMockServer(payload || {}, "ui");
+      return okResponse(result);
+    } catch (error) {
+      return errorResponse(error);
+    }
+  });
+
+  ipcMain.handle("mock-server:stream-send", async (_event, payload) => {
+    try {
+      const result = runtimeMode === "utility"
+        ? await invokeUtility("mock.grpc.send", payload || {})
+        : await sendMockServerStreamMessage(payload || {});
       return okResponse(result);
     } catch (error) {
       return errorResponse(error);

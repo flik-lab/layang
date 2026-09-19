@@ -31,19 +31,29 @@ export function useJsonViewport(
   const documentId = document.target.documentId;
   const { preparedWindow } = document;
   const lineCount = preparedWindow.lineCount;
+  const initialEnd = preparedWindow.startLine + preparedWindow.lines.length - 1;
   const cacheRef = useRef<CachedDocumentWindow | null>(null);
-  if (!cacheRef.current) {
+  const fallbackLinesRef = useRef<Map<number, string> | null>(null);
+  const generationRef = useRef(1);
+  const pendingPagesRef = useRef(new Set<number>());
+  const desiredRangeRef = useRef<LineRange>({ start: preparedWindow.startLine, end: initialEnd });
+  const visibleRangeRef = useRef<LineRange>({ start: preparedWindow.startLine, end: initialEnd });
+  const activeDocumentIdRef = useRef(documentId);
+
+  if (!cacheRef.current || activeDocumentIdRef.current !== documentId) {
+    const previousCache = cacheRef.current;
     const lines = new Map<number, string>();
     for (let offset = 0; offset < preparedWindow.lines.length; offset += 1) {
       lines.set(preparedWindow.startLine + offset, preparedWindow.lines[offset]);
     }
+    fallbackLinesRef.current = previousCache?.lines ?? null;
     cacheRef.current = { documentId, lines };
+    activeDocumentIdRef.current = documentId;
+    generationRef.current += 1;
+    pendingPagesRef.current.clear();
+    desiredRangeRef.current = { start: preparedWindow.startLine, end: initialEnd };
+    visibleRangeRef.current = { start: preparedWindow.startLine, end: initialEnd };
   }
-  const generationRef = useRef(1);
-  const pendingPagesRef = useRef(new Set<number>());
-  const initialEnd = preparedWindow.startLine + preparedWindow.lines.length - 1;
-  const desiredRangeRef = useRef<LineRange>({ start: preparedWindow.startLine, end: initialEnd });
-  const visibleRangeRef = useRef<LineRange>({ start: preparedWindow.startLine, end: initialEnd });
 
   useEffect(() => () => {
     generationRef.current += 1;
@@ -78,7 +88,13 @@ export function useJsonViewport(
       if (page >= visibleFirstPage && page <= visibleLastPage) visiblePages.push(page);
       else prefetchPages.push(page);
     }
-    if (!visiblePages.length && !prefetchPages.length) return;
+    if (!visiblePages.length && !prefetchPages.length) {
+      if (fallbackLinesRef.current && hasCachedRange(cache.lines, visibleStart, visibleEnd)) {
+        fallbackLinesRef.current = null;
+        setRevision((current: number) => current + 1);
+      }
+      return;
+    }
 
     const groups = [
       ...groupContiguousPages(visiblePages, PAYLOAD_DOCUMENT_MAX_PAGES_PER_REQUEST),
@@ -106,6 +122,9 @@ export function useJsonViewport(
         trimLineCache(cache, desiredRangeRef.current.start, desiredRangeRef.current.end);
         const loadedRange = { start: requestStart, end: requestStart + Math.max(0, lines.length - 1) };
         if (rangesOverlap(loadedRange, visibleRangeRef.current)) {
+          if (hasCachedRange(cache, visibleRangeRef.current.start, visibleRangeRef.current.end)) {
+            fallbackLinesRef.current = null;
+          }
           setRevision((current: number) => current + 1);
         }
       } finally {
@@ -116,7 +135,7 @@ export function useJsonViewport(
 
   const lineAt = useCallback((index: number) => {
     if (cacheRef.current?.documentId !== documentId) return "";
-    return cacheRef.current.lines.get(index) ?? "";
+    return cacheRef.current.lines.get(index) ?? fallbackLinesRef.current?.get(index) ?? "";
   }, [documentId]);
 
   return { lineCount, loadWindow, lineAt };

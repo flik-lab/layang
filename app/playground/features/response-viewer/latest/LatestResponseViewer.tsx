@@ -20,7 +20,7 @@ export function LatestResponseViewer({ store, query }: { store: ResponseStore; q
   const minTargetIntervalMs = (latestRecord?.originalChars ?? 0) >= PAYLOAD_DOCUMENT_LARGE_LIVE_THRESHOLD_CHARS
     ? PAYLOAD_DOCUMENT_LARGE_LIVE_MIN_HYDRATION_INTERVAL_MS
     : 0;
-  const { state, hold, jumpLatest, freeze, unfreeze } = useLatestFollow(latestMessageId, { minTargetIntervalMs });
+  const { state, freeze, unfreeze } = useLatestFollow(latestMessageId, { minTargetIntervalMs });
   const targetRecord = state.targetMessageId ? store.getRecord(state.targetMessageId) : undefined;
   const target = useMemo<DocumentSessionTarget | undefined>(() => {
     if (!targetRecord?.documentId) return undefined;
@@ -48,10 +48,6 @@ export function LatestResponseViewer({ store, query }: { store: ResponseStore; q
     if (text !== undefined) await copyTextWithAnnouncement(text, "Latest response");
   }, [session.committed?.target.documentId]);
 
-  const holdCommitted = useCallback(() => {
-    hold(session.committed?.target.messageId);
-  }, [hold, session.committed?.target.messageId]);
-
   const toggleFreeze = useCallback(() => {
     if (state.mode === "frozen") unfreeze();
     else freeze(session.committed?.target.messageId);
@@ -67,14 +63,11 @@ export function LatestResponseViewer({ store, query }: { store: ResponseStore; q
         <Button size="small" variant={state.mode === "frozen" ? "contained" : "outlined"} onClick={toggleFreeze}>
           {state.mode === "frozen" ? "Unfreeze latest" : "Freeze latest"}
         </Button>
-        {state.mode === "hold" && state.newerCount > 0 ? (
-          <Button size="small" variant="contained" onClick={jumpLatest}>{state.newerCount} newer response{state.newerCount === 1 ? "" : "s"}</Button>
-        ) : null}
         <Button size="small" variant="outlined" startIcon={<ContentCopy />} disabled={!session.committed} onClick={() => void copyJson()}>Copy JSON</Button>
         <Typography variant="caption" color="text.secondary">
           {state.mode === "follow"
             ? catchingUp || session.isPreparing ? "Following latest · preparing newer response" : "Following latest"
-            : state.mode === "hold" ? "Reading current response" : "Frozen snapshot"}
+            : "Frozen snapshot"}
         </Typography>
       </Stack>
       <Box sx={{ flex: 1, minHeight: 0 }}>
@@ -82,7 +75,6 @@ export function LatestResponseViewer({ store, query }: { store: ResponseStore; q
           <JsonDocumentViewer
             document={session.committed}
             query={query}
-            onUserNavigate={holdCommitted}
             priority={state.mode === "follow" ? "background" : "interactive"}
           />
         ) : targetRecord?.documentId ? (

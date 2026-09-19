@@ -21,21 +21,16 @@ test("Web Access lives inside the gRPC service instead of a standalone sidebar i
   assert.doesNotMatch(services, /function WebAccessWorkspace/);
 });
 
-test("gRPC uses one persistent run-mode toolbar on every integrated tab", () => {
+test("gRPC presents Native Mock and Web Access as independent runtimes", () => {
   const services = read("app/playground/features/services/services-workspace.tsx");
-  const types = read("app/playground/shared/workbench-types.ts");
-  const core = read("app/playground/features/mock-server/mock-scenario-core.ts");
 
-  assert.match(types, /runMode: "native" \| "web-access"/);
-  assert.match(core, /runMode: "native"/);
-  assert.match(core, /runMode: input\?\.runMode === "web-access" \? "web-access" : "native"/);
-  assert.match(services, /"aria-label": "gRPC run mode"/);
-  assert.match(services, /<MenuItem value="native">Native gRPC<\/MenuItem>/);
-  assert.match(services, /<MenuItem value="web-access">Web access<\/MenuItem>/);
-  assert.match(services, /width: \{ xs: "100%", md: 180 \}/);
-  assert.match(services, /runModeRunning \? "Stop" : "Start"/);
-  assert.doesNotMatch(services, /tab !== "web-access" \? \(/);
-  assert.doesNotMatch(services, /Save & Start/);
+  assert.doesNotMatch(services, /"aria-label": "gRPC run mode"/);
+  assert.match(services, /Native gRPC/);
+  assert.match(services, /Web Access/);
+  assert.match(services, /nativeEndpoint/);
+  assert.match(services, /browserUrl/);
+  assert.match(services, /toggleGrpcRuntime/);
+  assert.match(services, /toggleWebRuntime/);
 });
 
 test("legacy Web Access workspace state opens the focused gRPC workspace", () => {
@@ -80,4 +75,27 @@ test("Web Access uses centered padded sections instead of edge-aligned controls"
   assert.match(security, /p: \{ xs: 1\.15, sm: 1\.5 \}/);
   assert.match(security, /bgcolor: "action\.hover"/);
   assert.match(security, /direction=\{\{ xs: "column", sm: "row" \}\}/);
+});
+
+
+test("Web Access protocol changes do not silently rewrite the user port", () => {
+  const services = read("app/playground/features/services/services-workspace.tsx");
+  const protocolBlock = services.slice(services.indexOf('inputProps={{ "aria-label": "Browser protocol" }}'), services.indexOf('title="HTTPS certificate"'));
+  assert.doesNotMatch(protocolBlock, /port:\s*Number\(draftWeb\.port\)/);
+  assert.match(services, /Recommended HTTPS port: 8443/);
+});
+
+test("HTTPS Web Access is HTTP/2 and defaults well above five concurrent streams", () => {
+  const proxy = read("electron/services/grpc-web-proxy-server.cjs");
+  assert.match(proxy, /http2\.createSecureServer/);
+  assert.match(proxy, /maxConcurrentStreams: clampInteger\(input\.maxConcurrentStreams, 100, 6, 1000\)/);
+  assert.match(proxy, /allowHTTP1: config\.allowHttp1Fallback/);
+  assert.match(proxy, /maxConcurrentStreams: config\.maxConcurrentStreams/);
+});
+
+test("Native gRPC settings no longer duplicate Web Access settings", () => {
+  const services = read("app/playground/features/services/services-workspace.tsx");
+  const settingsNav = services.slice(services.indexOf('aria-label="gRPC Mock settings sections"'), services.indexOf('role="tabpanel"', services.indexOf('aria-label="gRPC Mock settings sections"')));
+  assert.doesNotMatch(settingsNav, /web-server/);
+  assert.doesNotMatch(settingsNav, /Web server/);
 });

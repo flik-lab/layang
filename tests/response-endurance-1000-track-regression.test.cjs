@@ -123,3 +123,34 @@ test("preview WebSocket request keeps compact response history", () => {
   assert.match(runner, /messages\.push\(compactTransportPreview\(value\)\)/);
   assert.match(runner, /totalMessages/);
 });
+
+test("paused 5-message snapshot keeps records alive until the snapshot is released", () => {
+  const { createResponseStore } = loadTypeScriptModule(
+    "app/playground/features/response-viewer/model/response.store.ts",
+    { prelude: performancePrelude },
+  );
+  const released = [];
+  const store = createResponseStore((ids) => released.push(...ids));
+  store.setRetentionLimit(5);
+
+  for (let sequence = 0; sequence < 5; sequence += 1) {
+    store.appendRecords([createResponseRecord(sequence, 20_000)]);
+  }
+  const pausedIds = [...store.getSnapshot().orderedMessageIds];
+  store.setPinnedMessageIds(pausedIds);
+
+  for (let sequence = 5; sequence < 10; sequence += 1) {
+    store.appendRecords([createResponseRecord(sequence, 20_000)]);
+  }
+
+  assert.deepEqual(store.getSnapshot().orderedMessageIds, [
+    "message-5", "message-6", "message-7", "message-8", "message-9",
+  ]);
+  for (const id of pausedIds) assert.ok(store.getRecord(id), `${id} should stay readable while paused`);
+  assert.deepEqual(released, []);
+
+  store.setPinnedMessageIds([]);
+  for (const id of pausedIds) assert.equal(store.getRecord(id), undefined);
+  assert.deepEqual(released, ["document-0", "document-1", "document-2", "document-3", "document-4"]);
+  store.reset();
+});

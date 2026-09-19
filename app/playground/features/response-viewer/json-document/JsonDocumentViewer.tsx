@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type UIEvent as ReactUIEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box } from "@/components/shadcn/compat";
 import { copyTextWithAnnouncement } from "@/lib/accessibility";
 import { SearchHighlightedText } from "../../../shared/components/search-highlight";
@@ -18,18 +18,16 @@ type DocumentMatch = { lineIndex: number; column: number };
 type JsonDocumentViewerProps = {
   document: CommittedDocument;
   query?: string;
-  onUserNavigate?: () => void;
   priority?: PayloadHydrationPriority;
 };
 
 export const JsonDocumentViewer = memo(function JsonDocumentViewer(props: JsonDocumentViewerProps) {
-  return <JsonDocumentViewport key={props.document.target.documentId} {...props} />;
+  return <JsonDocumentViewport {...props} />;
 });
 
 const JsonDocumentViewport = memo(function JsonDocumentViewport({
   document,
   query = "",
-  onUserNavigate,
   priority = "interactive",
 }: JsonDocumentViewerProps) {
   const documentId = document.target.documentId;
@@ -79,7 +77,6 @@ const JsonDocumentViewport = memo(function JsonDocumentViewport({
       setActiveMatchIndex(-1);
       return;
     }
-    onUserNavigate?.();
     void payloadDocumentService.search([documentId], normalized, 2000).then((next) => {
       if (searchGenerationRef.current !== generation) return;
       const own = next.filter((match: PayloadSearchMatch) => match.documentId === documentId);
@@ -87,7 +84,7 @@ const JsonDocumentViewport = memo(function JsonDocumentViewport({
       setActiveMatchIndex(own.length ? 0 : -1);
       if (own.length) scrollToIndex(own[0].lineIndex, "center");
     });
-  }, [documentId, onUserNavigate, query, scrollToIndex]);
+  }, [documentId, query, scrollToIndex]);
 
   useEffect(() => {
     const host = scrollRef.current;
@@ -126,10 +123,7 @@ const JsonDocumentViewport = memo(function JsonDocumentViewport({
       ref={scrollRef}
       className="virtual-json-viewer"
       data-document-id={documentId}
-      onScroll={(event: ReactUIEvent<HTMLDivElement>) => {
-        onVirtualScroll(event);
-        if (event.nativeEvent.isTrusted) onUserNavigate?.();
-      }}
+      onScroll={onVirtualScroll}
       sx={{ height: "100%", minHeight: 180, overflow: "auto", overflowAnchor: "none", bgcolor: "background.default", fontFamily: "monospace", fontSize: 12 }}
     >
       <Box sx={{ height: virtualTotalSize, width: "100%", position: "relative", minWidth: 0 }}>

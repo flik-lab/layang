@@ -61,3 +61,26 @@ test("Web Access gateway uses the same request matcher as native gRPC mock", () 
   assert.match(nativeMock, /mockMatcherMatches,/);
   assert.doesNotMatch(gateway, /\{ \.\.\.request, headers:/);
 });
+
+test("gRPC server-stream mock exposes persistent Live Push through IPC and focused workspace", () => {
+  const runtime = fs.readFileSync(path.join(root, "electron/services/grpc-mock-server.cjs"), "utf8");
+  const ipc = fs.readFileSync(path.join(root, "electron/ipc/grpc-mock-ipc.cjs"), "utf8");
+  const preload = fs.readFileSync(path.join(root, "electron/preload.cjs"), "utf8");
+  const services = fs.readFileSync(
+    path.join(root, "app/playground/features/services/services-workspace.tsx"),
+    "utf8",
+  );
+
+  assert.match(runtime, /sendMockServerStreamMessage/);
+  assert.match(runtime, /live-push/);
+  assert.match(ipc, /mock-server:stream-send/);
+  assert.match(preload, /sendStream:.*mock-server:stream-send/s);
+  assert.match(services, /Live Push/);
+  assert.match(services, /Manual Send/);
+  assert.match(services, /Manual scenario for/);
+  assert.match(services, /Manual response for/);
+  assert.match(services, /Send Now/);
+  assert.match(runtime, /scenariosByMethod/);
+  assert.match(runtime, /responseIndex/);
+  assert.match(runtime, /sendAll/);
+});

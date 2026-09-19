@@ -32,9 +32,9 @@ test("manual old-message selection disables follow-latest without pausing the li
   assert.match(source, /setFollowingLatest\(true\)/);
 
   const selectStart = source.indexOf("const selectMessage");
-  const pauseStart = source.indexOf("const pauseLive");
-  assert.ok(selectStart >= 0 && pauseStart > selectStart);
-  const selectBlock = source.slice(selectStart, pauseStart);
+  const selectEnd = source.indexOf("const clearFrozenPins");
+  assert.ok(selectStart >= 0 && selectEnd > selectStart);
+  const selectBlock = source.slice(selectStart, selectEnd);
   assert.doesNotMatch(selectBlock, /setReadingLocked\(true\)/);
   assert.doesNotMatch(selectBlock, /setFrozenMessageIds/);
 });

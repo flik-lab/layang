@@ -686,7 +686,7 @@ export function useWorkbenchContainerModel() {
     }
     setCertificateInfo(info);
     setCertificateDraft(info.settings);
-    showToast("Certificate imported.", "success");
+    showToast("Certificate trusted by Layang. New requests use it immediately.", "success");
   }, [showToast]);
 
   const clearCertificateSettingsPem = useCallback(async () => {
@@ -3034,6 +3034,7 @@ export function useWorkbenchContainerModel() {
     fetchMockScenarioFilesFromWorkspace,
     openMockScenarioFolder,
     startMockServer,
+    handleGrpcMockLivePushSend,
     stopMockServer,
     startWebAccess,
     stopWebAccess,
@@ -3912,6 +3913,7 @@ export function useWorkbenchContainerModel() {
     sidebarWidthPx,
     slugify,
     startMockServer,
+    handleGrpcMockLivePushSend,
     startWebAccess,
     startRestMockServer,
     startWebSocketMockServer,

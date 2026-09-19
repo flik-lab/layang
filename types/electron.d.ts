@@ -934,6 +934,28 @@ declare global {
         message?: string;
         error?: string;
       }>;
+      sendStream?: (payload: {
+        serviceName: string;
+        methodName: string;
+        scenarioId?: string;
+        responseIndex?: number;
+        sendAll?: boolean;
+      }) => Promise<{
+        ok: boolean;
+        running?: boolean;
+        matched?: number;
+        sent?: number;
+        backpressured?: number;
+        activeLivePushStreamCount?: number;
+        livePushStreams?: Array<{
+          serviceName: string;
+          methodName: string;
+          scenarioId?: string;
+          clientCount: number;
+        }>;
+        message?: string;
+        error?: string;
+      }>;
       stop?: () => Promise<{ ok: boolean; message?: string }>;
       status?: () => Promise<{
         running: boolean;
@@ -949,6 +971,13 @@ declare global {
         activeScenarioIds?: Record<string, string>;
         enabledMethods?: Record<string, boolean>;
         configVersion?: number;
+        activeLivePushStreamCount?: number;
+        livePushStreams?: Array<{
+          serviceName: string;
+          methodName: string;
+          scenarioId?: string;
+          clientCount: number;
+        }>;
         requestLog?: GrpcMockRequestLog[];
         updatedAt?: string;
         message?: string;

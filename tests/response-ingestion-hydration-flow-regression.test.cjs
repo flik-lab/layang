@@ -55,13 +55,13 @@ test("JSON hydration is priority-aware and user-opened viewers use the interacti
   assert.match(message, /priority="interactive"/);
 });
 
-test("Latest stays live by auto-hydrating a coalesced latest document and locks on user navigation", () => {
+test("Latest stays live while user scrolls and only explicit freeze stops document updates", () => {
   const latest = read("app/playground/features/response-viewer/latest/LatestResponseViewer.tsx");
   const follow = read("app/playground/features/response-viewer/latest/useLatestFollow.ts");
   assert.doesNotMatch(latest, /Inspect latest JSON/);
   assert.match(latest, /JsonDocumentViewer/);
-  assert.match(latest, /onUserNavigate=\{holdCommitted\}/);
+  assert.doesNotMatch(latest, /onUserNavigate=\{holdCommitted\}/);
   assert.match(latest, /Following latest/);
-  assert.match(follow, /mode: "hold"/);
-  assert.match(follow, /jumpLatest/);
+  assert.match(latest, /Freeze latest/);
+  assert.match(follow, /const freeze/);
 });

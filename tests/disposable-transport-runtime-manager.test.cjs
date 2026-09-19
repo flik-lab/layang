@@ -135,3 +135,34 @@ test("retention updates propagate to active and future transport generations", a
   assert.deepEqual(fake.hosts[1].calls[0], { type: "payload.setRetentionLimit", payload: { limit: 20 } });
   await manager.disposeAll();
 });
+
+
+test("HTTPS transport generations inherit Layang TLS settings while HTTP stays unchanged", async () => {
+  const created = [];
+  const createHost = (context = {}) => {
+    created.push(context);
+    const listeners = new Set();
+    return {
+      async start() { return { running: true, generation: "tls-test" }; },
+      async invoke(type, _payload) {
+        if (type === "grpcWeb.invoke") return { httpStatus: 200, headers: {}, trailers: { "grpc-status": "0" }, messages: [], messageDocumentRefs: [] };
+        if (type === "payload.debugStats") return { documentCount: 0, decodedDocumentCount: 0, indexedDocumentCount: 0, pinnedDocumentCount: 0, rawBytes: 0, decodedChars: 0, indexBytes: 0, residentBytes: 0 };
+        return { ok: true };
+      },
+      subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+      getStatus() { return { running: true, generation: "tls-test" }; },
+      async dispose() {},
+    };
+  };
+  const manager = createDisposableTransportRuntimeManager({
+    createHost,
+    getTlsEnvironment: () => ({ NODE_EXTRA_CA_CERTS: "C:/layang/ca.pem", NODE_TLS_REJECT_UNAUTHORIZED: "0" }),
+  });
+
+  await manager.invoke("https-run", { url: "https://gateway.local/service" }, () => undefined);
+  await manager.invoke("http-run", { url: "http://gateway.local/service" }, () => undefined);
+
+  assert.deepEqual(created[0].env, { NODE_EXTRA_CA_CERTS: "C:/layang/ca.pem", NODE_TLS_REJECT_UNAUTHORIZED: "0" });
+  assert.deepEqual(created[1].env, {});
+  await manager.disposeAll();
+});

@@ -5,7 +5,7 @@
 # Layang
 
 [![Website](https://img.shields.io/badge/website-layang.mff.web.id-blue)](https://layang.mff.web.id/)
-[![Version](https://img.shields.io/badge/version-1.1.4-blue)](https://github.com/flik-lab/layang/releases)
+[![Version](https://img.shields.io/badge/version-1.1.5-blue)](https://github.com/flik-lab/layang/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Layang is a workspace-based API workbench for testing, mocking, benchmarking, documenting, and automating APIs across REST, WebSocket, gRPC, and gRPC-Web.
@@ -50,16 +50,16 @@ The desktop UI uses a permanent icon rail for **Requests**, **Schemas**, **Servi
 - Use the WebSocket workbench for live connections, message sending, local mock responses, benchmark exports, and generated docs.
 - Use the REST workbench for params, headers, auth, bodies, docs, examples, local mocks, scenario matching, and templates.
 
-## Release 1.1.4
+## Release 1.1.5
 
-The `1.1.4` patch release finalizes the streaming performance work for release and keeps performance diagnostics disabled by default unless explicitly opened by the user.
+The `1.1.5` patch release focuses on transport compatibility and tighter desktop/mock workflows.
 
 Highlights:
 
-- Performance diagnostics are inactive by default and only start sampling while the Performance panel is open.
-- Electron gRPC-Web uses disposable transport utility processes so Stop/Start gets a fresh transport generation.
-- Message retention is user-selectable at 5, 10, 20, 50, or 100 and applies to the real retained payload window.
-- Live Messages support manual follow-latest control, Show Latest, compact Mocking stream controls, and `Ctrl+S` / `Cmd+S` scenario saving.
+- Improved gRPC-Web compatibility through HTTPS reverse proxies such as APISIX.
+- Added persistent gRPC Mock Live Push so users can send updated stream data on demand without closing the stream.
+- Improved paused live-message retention and direct Proto drop into collections.
+- `pnpm desktop` now uses port `12999` for the local Next.js renderer.
 
 ## Release 1.1.4
 

@@ -44,7 +44,7 @@ function createWindow() {
 function rendererLocation() {
   const isDev = !app.isPackaged && process.env.ELECTRON_LOAD_STATIC !== "1";
   const staticIndexPath = path.join(__dirname, "..", "..", "out", "playground.html");
-  const startUrl = process.env.ELECTRON_START_URL || "http://localhost:3000/playground";
+  const startUrl = process.env.ELECTRON_START_URL || "http://localhost:12999/playground";
   return { isDev, staticIndexPath, startUrl };
 }
 

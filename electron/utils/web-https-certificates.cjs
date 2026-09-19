@@ -11,6 +11,7 @@ const tls = require("node:tls");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const { getSafeStorageInfo, readSecret, storeSecret, storeSessionSecret } = require("./secure-secrets.cjs");
+const { getCurrentCertificateSettings } = require("./certificate-settings.cjs");
 
 const execFileAsync = promisify(execFile);
 const state = { configured: false, certificateDirectory: "", registryPath: "", app: null };
@@ -301,8 +302,25 @@ async function validateHttpsCertificate(payload = {}) {
 async function testHttpsEndpoint(payload = {}) {
   const url = new URL(String(payload.url || ""));
   if (url.protocol !== "https:") throw new Error("HTTPS test URL must start with https://.");
+  const certificateSettings = getCurrentCertificateSettings();
+  const trustedCa = [...tls.rootCertificates];
+  if (typeof tls.getCACertificates === "function") {
+    try {
+      trustedCa.push(...tls.getCACertificates("system"));
+    } catch {
+      // Older Electron/Node builds may not expose system CA enumeration.
+    }
+  }
+  if (certificateSettings.caCertificatePem) trustedCa.push(certificateSettings.caCertificatePem);
   return new Promise((resolve) => {
-    const request = https.get(url, { timeout: 8000 }, (response) => {
+    const request = https.get(
+      url,
+      {
+        timeout: 8000,
+        ca: [...new Set(trustedCa)],
+        rejectUnauthorized: !certificateSettings.bypassTlsErrors,
+      },
+      (response) => {
       const chunks = [];
       response.on("data", (chunk) => chunks.push(chunk));
       response.on("end", () => {
@@ -320,7 +338,8 @@ async function testHttpsEndpoint(payload = {}) {
           protocol: response.socket?.alpnProtocol || "http/1.1",
         });
       });
-    });
+      },
+    );
     request.on("timeout", () => request.destroy(new Error("HTTPS connection timed out.")));
     request.on("error", (error) => resolve({ ok: false, error: error?.message || String(error) }));
   });

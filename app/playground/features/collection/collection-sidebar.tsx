@@ -265,6 +265,10 @@ function readDragPayload(event: ReactDragEvent<HTMLElement>): CollectionNodeRef 
   return null;
 }
 
+function isFileDrag(event: ReactDragEvent<HTMLElement>): boolean {
+  return Array.from(event.dataTransfer.types).includes("Files");
+}
+
 /** Renders a nested, reorderable collection tree without mixing proto registry nodes into it. */
 export function CollectionSidebar({
   collections,
@@ -281,6 +285,7 @@ export function CollectionSidebar({
   onRenameCollectionRequest,
   onRemoveCollectionRequest,
   onMoveNode,
+  onDropProtoFiles,
   onRepairGrpcRequest,
 }: {
   collections: ApiCollection[];
@@ -301,6 +306,7 @@ export function CollectionSidebar({
   onRenameCollectionRequest: (collectionId: string, requestId: string, nextName: string) => void;
   onRemoveCollectionRequest: (collectionId: string, requestId: string) => void;
   onMoveNode: (source: CollectionNodeRef, target: CollectionDropTarget) => boolean;
+  onDropProtoFiles: (collectionId: string, files: FileList) => void;
   onRepairGrpcRequest: (collectionId: string, requestId: string, candidate: ProtoRepairCandidate) => void;
 }) {
   const deferredFilterQuery = useDeferredValue(filterQuery);
@@ -585,8 +591,12 @@ export function CollectionSidebar({
   const performDrop = (event: ReactDragEvent<HTMLElement>, target: CollectionDropTarget, _key: string) => {
     event.preventDefault();
     event.stopPropagation();
-    const source = readDragPayload(event);
     setDropKey("");
+    if (isFileDrag(event)) {
+      onDropProtoFiles(target.collectionId, event.dataTransfer.files);
+      return;
+    }
+    const source = readDragPayload(event);
     if (!source) return;
     if (onMoveNode(source, target) && target.parentId) {
       setExpandedNodeIds((current) => new Set([...current, `folder:${target.parentId}`]));
@@ -630,7 +640,7 @@ export function CollectionSidebar({
             onDragEnd={() => setDropKey("")}
             onDragOver={(event: ReactDragEvent<HTMLElement>) => {
               event.preventDefault();
-              event.dataTransfer.dropEffect = "move";
+              event.dataTransfer.dropEffect = isFileDrag(event) ? "copy" : "move";
               setDropKey(key);
             }}
             onDragLeave={() => setDropKey((current) => (current === key ? "" : current))}
@@ -783,7 +793,7 @@ export function CollectionSidebar({
         onDragEnd={() => setDropKey("")}
         onDragOver={(event: ReactDragEvent<HTMLElement>) => {
           event.preventDefault();
-          event.dataTransfer.dropEffect = "move";
+          event.dataTransfer.dropEffect = isFileDrag(event) ? "copy" : "move";
           setDropKey(key);
         }}
         onDragLeave={() => setDropKey((current) => (current === key ? "" : current))}
@@ -793,6 +803,12 @@ export function CollectionSidebar({
           performDrop(event, { collectionId: collection.id, parentId, index: index + (after ? 1 : 0) }, key);
         }}
         onClick={() => !renaming && onSelectCollectionRequest(collection, request)}
+        onDoubleClick={(event: ReactMouseEvent<HTMLElement>) => {
+          if (renaming) return;
+          event.preventDefault();
+          event.stopPropagation();
+          beginRename({ type: "request", collection, request });
+        }}
         onKeyDown={(event: ReactKeyboardEvent<HTMLElement>) => {
           if (renaming) return;
           if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
@@ -909,7 +925,7 @@ export function CollectionSidebar({
                 alignItems="center"
                 onDragOver={(event: ReactDragEvent<HTMLElement>) => {
                   event.preventDefault();
-                  event.dataTransfer.dropEffect = "move";
+                  event.dataTransfer.dropEffect = isFileDrag(event) ? "copy" : "move";
                   setDropKey(collectionKey);
                 }}
                 onDragLeave={() => setDropKey((current) => (current === collectionKey ? "" : current))}

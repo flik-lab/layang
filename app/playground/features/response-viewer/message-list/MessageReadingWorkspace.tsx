@@ -33,6 +33,7 @@ export const MessageReadingWorkspace = memo(function MessageReadingWorkspace({
   const [frozenMessageIds, setFrozenMessageIds] = useState<readonly string[]>([]);
   const latestSequenceRef = useRef(-1);
   const committedRecordRef = useRef<ResponseMessageRecord | undefined>(undefined);
+  const frozenDocumentIdsRef = useRef<readonly string[]>([]);
 
   const subscribe = useCallback(
     (listener: () => void) => readingLocked ? EMPTY_SUBSCRIBE(listener) : store.subscribe(listener),
@@ -43,6 +44,9 @@ export const MessageReadingWorkspace = memo(function MessageReadingWorkspace({
     [frozenMessageIds, readingLocked, store],
   );
   const orderedIds = useSyncExternalStore(subscribe, getMessageIds, getMessageIds);
+  const selectedOutsideRetention = Boolean(
+    !followingLatest && selectedMessageId && selectedRecord && !orderedIds.includes(selectedMessageId),
+  );
 
   useEffect(() => {
     if (readingLocked || !followingLatest) return;
@@ -93,9 +97,32 @@ export const MessageReadingWorkspace = memo(function MessageReadingWorkspace({
     setSelectedMessageId(id);
   }, [store]);
 
+  const clearFrozenPins = useCallback(() => {
+    store.setPinnedMessageIds([]);
+    for (const documentId of frozenDocumentIdsRef.current) payloadDocumentService.unpin(documentId);
+    frozenDocumentIdsRef.current = [];
+  }, [store]);
+
+  const releaseFrozenSnapshot = useCallback(() => {
+    clearFrozenPins();
+    setFrozenMessageIds([]);
+  }, [clearFrozenPins]);
+
+  useEffect(() => () => clearFrozenPins(), [clearFrozenPins]);
+
   const pauseLive = useCallback(() => {
     const snapshot = store.getSnapshot();
     const currentIds = [...snapshot.orderedMessageIds];
+    const documentIds = [...new Set(
+      currentIds.flatMap((id) => {
+        const documentId = store.getRecord(id)?.documentId;
+        return documentId ? [documentId] : [];
+      }),
+    )];
+    for (const documentId of documentIds) payloadDocumentService.pin(documentId);
+    frozenDocumentIdsRef.current = documentIds;
+    store.setPinnedMessageIds(currentIds);
+
     const currentLatest = snapshot.latestMessageId ? store.getRecord(snapshot.latestMessageId) : undefined;
     latestSequenceRef.current = currentLatest?.sequence ?? selectedRecord?.sequence ?? -1;
     setFrozenMessageIds(currentIds);
@@ -103,10 +130,10 @@ export const MessageReadingWorkspace = memo(function MessageReadingWorkspace({
   }, [selectedRecord?.sequence, store]);
 
   const resumeLive = useCallback(() => {
-    setFrozenMessageIds([]);
+    releaseFrozenSnapshot();
     setFollowingLatest(true);
     setReadingLocked(false);
-  }, []);
+  }, [releaseFrozenSnapshot]);
 
   const showLatest = useCallback(() => {
     const snapshot = store.getSnapshot();
@@ -115,13 +142,13 @@ export const MessageReadingWorkspace = memo(function MessageReadingWorkspace({
     const latestRecord = store.getRecord(latestId);
     if (!latestRecord) return;
     if (readingLocked) {
-      setFrozenMessageIds([...snapshot.orderedMessageIds]);
-      latestSequenceRef.current = latestRecord.sequence;
+      releaseFrozenSnapshot();
+      setReadingLocked(false);
     }
     setFollowingLatest(true);
     setSelectedMessageId(latestId);
     setSelectedRecord(latestRecord);
-  }, [readingLocked, store]);
+  }, [readingLocked, releaseFrozenSnapshot, store]);
 
   useEffect(() => {
     store.setRetentionLimit(messageRetentionLimit);
@@ -133,8 +160,7 @@ export const MessageReadingWorkspace = memo(function MessageReadingWorkspace({
     store.setRetentionLimit(nextLimit);
     payloadDocumentService.setRetentionLimit(nextLimit);
     setMessageRetentionLimit(nextLimit);
-    if (readingLocked) setFrozenMessageIds([...store.getSnapshot().orderedMessageIds]);
-  }, [readingLocked, store]);
+  }, [store]);
 
   if (!orderedIds.length && !selectedRecord && !session.committed) {
     return <Typography variant="body2" color="text.secondary">Run a request to see the response.</Typography>;
@@ -153,6 +179,11 @@ export const MessageReadingWorkspace = memo(function MessageReadingWorkspace({
           <Button size="small" variant="outlined" onClick={pauseLive}>Pause live</Button>
         )}
         <Button size="small" variant="outlined" onClick={showLatest}>Show Latest</Button>
+        {selectedOutsideRetention ? (
+          <Typography variant="caption" color="text.secondary" noWrap>
+            Pinned outside recent {messageRetentionLimit}
+          </Typography>
+        ) : null}
         <Box sx={{ flex: 1 }} />
         <Typography variant="caption" color="text.secondary">Show</Typography>
         <Select

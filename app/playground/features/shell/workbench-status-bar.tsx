@@ -32,7 +32,7 @@ export function WorkbenchStatusBar({
   const wsMockStatus = useWebSocketMockRuntimeStatus();
   const serviceLabels = [
     mockServerStatus?.running ? `gRPC Mock :${mockServerStatus.port ?? 50055}` : null,
-    webAccessStatus?.running ? `Web Access :${webAccessStatus.port ?? 8080}` : null,
+    webAccessStatus?.running ? `Web Access :${webAccessStatus.gateway?.webPort ?? webAccessStatus.port ?? 8080}` : null,
     restMockStatus?.running ? `REST mock :${restMockStatus.port ?? 3001}` : null,
     wsMockStatus?.running ? `WebSocket mock :${wsMockStatus.port ?? 3101}` : null,
   ].filter(Boolean) as string[];

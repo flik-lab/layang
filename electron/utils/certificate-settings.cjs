@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const settingsFileName = "certificate-settings.json";
+const nodeTlsCaBundleFileName = "certificate-ca-bundle.pem";
 const defaultSettings = Object.freeze({
   version: 1,
   caCertificatePem: "",
@@ -17,6 +18,7 @@ const state = {
   initialized: false,
   userDataPath: "",
   settingsFilePath: "",
+  nodeTlsCaBundleFilePath: "",
   settings: { ...defaultSettings },
 };
 
@@ -31,8 +33,10 @@ function configureCertificateSettings(options = {}) {
 
   state.userDataPath = userDataPath;
   state.settingsFilePath = path.join(userDataPath, settingsFileName);
+  state.nodeTlsCaBundleFilePath = path.join(userDataPath, nodeTlsCaBundleFileName);
   state.settings = normalizeCertificateSettings(readSettingsFile(state.settingsFilePath));
   state.initialized = true;
+  syncNodeTlsCaBundle();
   return getCertificateSettingsInfo();
 }
 
@@ -60,6 +64,7 @@ function applyCertificateSettings(settings = {}, options = {}) {
   }
   state.settings = next;
   if (options.persist !== false) writeSettingsFile(state.settingsFilePath, next);
+  syncNodeTlsCaBundle();
   return getCertificateSettingsInfo();
 }
 
@@ -138,8 +143,38 @@ function shouldAllowCertificateError(certificate, context = {}) {
   if (trustedPemBodies.length === 0) return { allow: false, reason: "default-deny" };
 
   const certificateBodies = certificateToPemBodies(certificate);
-  const hasMatch = certificateBodies.some((body) => trustedPemBodies.includes(body));
-  return hasMatch ? { allow: true, reason: "imported-certificate-match" } : { allow: false, reason: "default-deny" };
+  const hasLeafMatch = certificateBodies.some((body) => trustedPemBodies.includes(body));
+  if (hasLeafMatch) return { allow: true, reason: "imported-certificate-match" };
+
+  const chainBodies = certificateChainToPemBodies(certificate);
+  const hasChainMatch = chainBodies.some((body) => trustedPemBodies.includes(body));
+  return hasChainMatch
+    ? { allow: true, reason: "imported-certificate-chain-match" }
+    : { allow: false, reason: "default-deny" };
+}
+
+function getNodeTlsRuntimeEnvironment() {
+  ensureConfigured();
+  const environment = { NODE_USE_SYSTEM_CA: "1" };
+  if (state.settings.caCertificatePem && state.nodeTlsCaBundleFilePath && fs.existsSync(state.nodeTlsCaBundleFilePath)) {
+    environment.NODE_EXTRA_CA_CERTS = state.nodeTlsCaBundleFilePath;
+  }
+  if (state.settings.bypassTlsErrors) {
+    environment.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+  }
+  return environment;
+}
+
+function syncNodeTlsCaBundle() {
+  if (!state.nodeTlsCaBundleFilePath) return;
+  if (!state.settings.caCertificatePem) {
+    try { fs.unlinkSync(state.nodeTlsCaBundleFilePath); } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    return;
+  }
+  fs.mkdirSync(path.dirname(state.nodeTlsCaBundleFilePath), { recursive: true });
+  fs.writeFileSync(state.nodeTlsCaBundleFilePath, state.settings.caCertificatePem, "utf8");
 }
 
 function normalizeCertificateSettings(value = {}, options = {}) {
@@ -278,6 +313,21 @@ function certificateToPemBodies(certificate) {
   return candidates.flatMap(extractPemBodies);
 }
 
+function certificateChainToPemBodies(certificate) {
+  const bodies = [];
+  const visited = new Set();
+  let current = certificate;
+  for (let depth = 0; depth < 16 && current && typeof current === "object"; depth += 1) {
+    if (visited.has(current)) break;
+    visited.add(current);
+    bodies.push(...certificateToPemBodies(current));
+    const issuer = current.issuerCert;
+    if (!issuer || issuer === current) break;
+    current = issuer;
+  }
+  return [...new Set(bodies)];
+}
+
 function derBufferToPem(buffer) {
   const base64 = buffer.toString("base64");
   const lines = base64.match(/.{1,64}/g) || [];
@@ -329,6 +379,7 @@ module.exports = {
   fingerprintPem,
   getCertificateSettingsInfo,
   getCurrentCertificateSettings,
+  getNodeTlsRuntimeEnvironment,
   importCertificatePem,
   importCertificatePems,
   normalizeCertificateSettings,

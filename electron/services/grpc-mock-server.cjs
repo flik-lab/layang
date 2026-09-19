@@ -7,6 +7,7 @@ const path = require("node:path");
 const { performance } = require("node:perf_hooks");
 const { readGitWorkspace } = require("../../lib/git-workspace.cjs");
 const { parseScenarioBundle } = require("../../lib/workspace-v6-codec.cjs");
+const { createGrpcMockLivePushRegistry, selectGrpcMockManualResponses } = require("../../lib/grpc-mock-live-push.cjs");
 const grpc = require("@grpc/grpc-js");
 const protoLoader = require("@grpc/proto-loader");
 const { readJsonIfExists, walkDirectory, writeProtoWorkspace } = require("../utils/file-utils.cjs");
@@ -283,6 +284,7 @@ async function stopMockServerNow() {
   for (const timer of active.timers || []) clearTimeout(timer);
   active.timers?.clear?.();
   active.runtime?.streamReschedulers?.clear?.();
+  active.runtime?.livePushRegistry?.clear?.();
   const stopError = grpcStatusError(grpc.status.UNAVAILABLE, "Mock server stopped. Stream disconnected.");
   for (const call of Array.from(active.activeCalls || [])) {
     try {
@@ -406,6 +408,7 @@ function createMockRuntimeState(scenarios, streamDefaults, activeScenarioIds, en
     updatedAt: new Date().toISOString(),
     source: source || "unknown",
     streamReschedulers: new Set(),
+    livePushRegistry: createGrpcMockLivePushRegistry(),
     scenariosByMethod: new Map(),
     activeScenariosByMethod: new Map(),
   };
@@ -1150,6 +1153,7 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
   const initialResponses = getRuntimeStreamResponses(initialScenario);
   const initialFingerprints = createRuntimeStreamResponseFingerprints(initialResponses);
   const initialTiming = getRuntimeStreamTiming(initialScenario, runtime);
+  const livePushMode = initialScenario.stream?.mode === "live-push";
   let currentScenarioId = initialScenario.id;
   let currentResponseSignature = initialFingerprints.join("\n");
   let cachedSnapshotVersion = runtime.configVersion;
@@ -1166,6 +1170,7 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
   let pendingPlannedDelayMs = 0;
   let pendingCompletedCycle = false;
   let nextRuntimeCadenceAt = 0;
+  let unregisterLivePush = null;
 
   const clearPendingTimer = () => {
     if (!pendingTimer) return;
@@ -1179,6 +1184,10 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
     closed = true;
     clearPendingTimer();
     activeCalls.delete(call);
+    if (unregisterLivePush) {
+      unregisterLivePush();
+      unregisterLivePush = null;
+    }
     if (runtime.streamReschedulers && typeof runtime.streamReschedulers.delete === "function") {
       runtime.streamReschedulers.delete(reschedulePendingStreamTimer);
     }
@@ -1363,17 +1372,30 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
     request,
     initialScenario,
     true,
-    "STREAM",
+    livePushMode ? "LIVE_PUSH" : "STREAM",
     Date.now() - startedAt,
     initialScenario.stream?.responses?.length ?? 0,
   );
   activeCalls.add(call);
-  if (runtime.streamReschedulers && typeof runtime.streamReschedulers.add === "function") {
-    runtime.streamReschedulers.add(reschedulePendingStreamTimer);
-  }
   if (typeof call.on === "function") {
     call.on("cancelled", cleanup);
     call.on("error", cleanup);
+  }
+
+  if (livePushMode) {
+    unregisterLivePush = runtime.livePushRegistry.register({
+      call,
+      method,
+      serviceName: method.serviceName,
+      methodName: method.methodName,
+      scenarioId: initialScenario.id,
+      requestContext,
+    });
+    return;
+  }
+
+  if (runtime.streamReschedulers && typeof runtime.streamReschedulers.add === "function") {
+    runtime.streamReschedulers.add(reschedulePendingStreamTimer);
   }
 
   function writeNext() {
@@ -1708,8 +1730,13 @@ function normalizeRuntimeStream(value) {
   if (!value || typeof value !== "object") return undefined;
   return {
     responses: Array.isArray(value.responses) ? value.responses.map(normalizeRuntimeOutput) : [],
+    mode: normalizeRuntimeStreamMode(value.mode ?? value.streamMode ?? value.stream_mode),
     ...normalizeRuntimeStreamSettings(value, {}),
   };
+}
+
+function normalizeRuntimeStreamMode(value) {
+  return String(value || "").trim().toLowerCase() === "live-push" ? "live-push" : "scheduled";
 }
 
 /**
@@ -2079,6 +2106,85 @@ function grpcStatusError(code, message) {
   return error;
 }
 
+function getMockLivePushStatus(runtime) {
+  const livePushStreams = runtime?.livePushRegistry?.summary?.() || [];
+  return {
+    activeLivePushStreamCount: livePushStreams.reduce((total, item) => total + (Number(item.clientCount) || 0), 0),
+    livePushStreams,
+  };
+}
+
+function findManualPushScenario(runtime, serviceName, methodName, scenarioId) {
+  const key = getRuntimeMethodKey(serviceName, methodName);
+  const candidates = runtime?.scenariosByMethod?.get?.(key) ||
+    (Array.isArray(runtime?.scenarioIndex)
+      ? runtime.scenarioIndex.filter((scenario) => scenario.service === serviceName && scenario.method === methodName)
+      : []);
+  if (!scenarioId) return candidates[0] || null;
+  return candidates.find((scenario) => scenario.id === scenarioId) || null;
+}
+
+function sendMockServerStreamMessage(payload = {}) {
+  if (!activeMockServer) throw new Error("Mock server is not running.");
+  const serviceName = String(payload.serviceName || payload.service || "").trim();
+  const methodName = String(payload.methodName || payload.method || "").trim();
+  const scenarioId = String(payload.scenarioId || "").trim();
+  const sendAll = payload.sendAll === true;
+  const responseIndexRaw = Number(payload.responseIndex ?? 0);
+  const responseIndex = Number.isFinite(responseIndexRaw) ? Math.max(0, Math.floor(responseIndexRaw)) : 0;
+  if (!serviceName || !methodName) throw new Error("serviceName and methodName are required for gRPC manual send.");
+  if (!scenarioId) throw new Error("scenarioId is required for gRPC manual send.");
+
+  const runtime = activeMockServer.runtime;
+  const scenario = findManualPushScenario(runtime, serviceName, methodName, scenarioId);
+  if (!scenario) throw new Error(`Saved scenario ${scenarioId} was not found for ${serviceName}/${methodName}.`);
+
+  const responses = selectGrpcMockManualResponses(scenario, { responseIndex, sendAll });
+  if (!responses.length) {
+    throw new Error(
+      sendAll
+        ? `Scenario ${scenario.id} has no stream responses to send.`
+        : `Scenario ${scenario.id} does not have response #${responseIndex + 1}.`,
+    );
+  }
+  for (const item of responses) {
+    const code = normalizeGrpcStatus(item?.code);
+    if (code !== grpc.status.OK) {
+      throw new Error(
+        `Manual Send keeps streams open and can only publish OK responses. Scenario ${scenario.id} contains status ${code}.`,
+      );
+    }
+  }
+
+  let matched = 0;
+  let sent = 0;
+  let backpressured = 0;
+  for (const item of responses) {
+    const result = runtime.livePushRegistry.send({
+      serviceName,
+      methodName,
+      scenarioId,
+      resolveOutput: () => ({ data: item?.data === undefined ? {} : item.data }),
+    });
+    matched = Math.max(matched, result.matched);
+    sent += result.sent;
+    backpressured += result.backpressured;
+  }
+
+  const responseLabel = sendAll ? `${responses.length} saved responses` : `response #${responseIndex + 1}`;
+  return {
+    running: true,
+    matched,
+    sent,
+    backpressured,
+    ...getMockLivePushStatus(runtime),
+    message:
+      sent > 0
+        ? `Sent ${responseLabel} from ${scenario.id} to ${matched} active stream${matched === 1 ? "" : "s"}.`
+        : `No active Live Push stream is connected for ${serviceName}/${methodName}.`,
+  };
+}
+
 function getMockServerStatus() {
   if (!activeMockServer) return { running: false };
   return createMockServerStatusPayload(activeMockServer, {
@@ -2090,6 +2196,7 @@ function getMockServerStatus() {
     configVersion: activeMockServer.runtime.configVersion,
     updatedAt: activeMockServer.runtime.updatedAt,
     requestLog: activeMockServer.requestLog || [],
+    ...getMockLivePushStatus(activeMockServer.runtime),
   });
 }
 
@@ -2107,4 +2214,5 @@ module.exports = {
   startMockServer,
   stopMockServer,
   updateActiveMockServer,
+  sendMockServerStreamMessage,
 };
