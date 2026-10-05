@@ -21,7 +21,8 @@ import {
 } from "@/components/shadcn/compat";
 import { MarkdownPreview as FeatureMarkdownPreview } from "../docs-publisher/docs-publisher-panel";
 import { CodeTextField as FeatureCodeTextField } from "../request-editor/request-editor-panels";
-import { formatTimestampShort } from "../../shared/formatters";
+import { MockExecutionControls } from "../mock-server/workspace/MockExecutionControls";
+import { MockScenarioSplitPane } from "../mock-server/workspace/MockScenarioSplitPane";
 import { uiCopy } from "../../shared/ui-copy";
 import type {
   ApiCollectionRequest,
@@ -181,7 +182,7 @@ export function RestDocsPanel({
 }
 
 export function RestMockPanel({
-  request,
+  request: _request,
   scenarios,
   activeScenario,
   mockResponseText,
@@ -198,6 +199,7 @@ export function RestMockPanel({
   onAddScenario,
   onStart,
   onStop,
+  onSendPending,
 }: {
   request: (ApiCollectionRequest & { collectionName?: string }) | null;
   scenarios: RestMockScenario[];
@@ -221,249 +223,108 @@ export function RestMockPanel({
   onAddScenario: (preset: "success" | "not-found" | "validation-error" | "delayed") => void;
   onStart: () => void;
   onStop: () => void;
+  onSendPending?: () => void;
 }) {
-  return (
-    <Stack spacing={1.2}>
-      <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap" useFlexGap>
-        <Box sx={{ minWidth: 0 }}>
-          <Typography variant="subtitle1">REST mock</Typography>
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            noWrap
-            title={
-              request
-                ? `${request.name} · ${status.url ?? `http://${project.bindHost}:${project.port}`}`
-                : "Select a REST request."
-            }
-          >
-            {request
-              ? `${request.name} · ${status.url ?? `http://${project.bindHost}:${project.port}`}`
-              : "Select a REST request."}
-          </Typography>
-        </Box>
-        <Stack direction="row" spacing={0.7} alignItems="center" flexWrap="wrap" useFlexGap>
-          <Button
-            size="small"
-            variant="contained"
-            startIcon={<PlayArrow />}
-            disabled={status.running}
-            onClick={onStart}
-          >
-            Start
-          </Button>
-          <Button
-            size="small"
-            variant="outlined"
-            color="error"
-            startIcon={<StopCircle />}
-            disabled={!status.running}
-            onClick={onStop}
-          >
-            Stop
-          </Button>
-        </Stack>
-      </Stack>
-      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-        <TextField
-          size="small"
-          label={uiCopy.fields.host}
-          value={project.bindHost}
-          onChange={(event: TextInputChangeEvent) => onBindHostChange(event.target.value)}
-          sx={{ width: 180 }}
-        />
-        <TextField
-          size="small"
-          label={uiCopy.fields.port}
-          type="number"
-          value={project.port}
-          onChange={(event: TextInputChangeEvent) => onPortChange(Number(event.target.value))}
-          sx={{ width: 120 }}
-        />
-        <Typography variant="caption" color="text.secondary" sx={{ fontFamily: "monospace" }}>
-          {status.url ?? `http://${project.bindHost}:${project.port}`}
+  const settings = (
+    <Stack spacing={0.8} sx={{ p: 1 }}>
+      <Stack direction="row" spacing={0.8} alignItems="center" sx={{ minWidth: 0, overflowX: "auto", "& > *": { flexShrink: 0 } }}>
+        <Typography variant="caption" color="text.secondary" noWrap sx={{ mr: 0.5 }}>
+          {status.url ?? `http://${project.bindHost}:${project.port}`} · {scenarios.length} scenario{scenarios.length === 1 ? "" : "s"}
+          {status.pendingCount ? ` · ${status.pendingCount} pending` : ""}
         </Typography>
+        <Box sx={{ flex: 1, minWidth: 8 }} />
+        <Button size="small" variant="contained" startIcon={<PlayArrow />} disabled={status.running} onClick={onStart}>Start</Button>
+        <Button size="small" variant="outlined" color="error" startIcon={<StopCircle />} disabled={!status.running} onClick={onStop}>Stop</Button>
       </Stack>
-      {request && activeScenario ? (
-        <Stack spacing={1.1}>
-          <Stack direction="row" spacing={0.8} alignItems="center" flexWrap="wrap" useFlexGap>
-            <FormControl size="small" sx={{ minWidth: 240 }}>
-              <Select
-                value={activeScenario.id}
-                inputProps={{ "aria-label": uiCopy.sections.scenario }}
-                onChange={(event: SelectInputChangeEvent) => onScenarioSelect(String(event.target.value))}
-              >
-                {scenarios.map((scenario) => (
-                  <MenuItem key={`rest-scenario-${scenario.id}`} value={scenario.id}>
-                    {scenario.name || scenario.id}
-                  </MenuItem>
-                ))}
+
+      {activeScenario ? (
+        <>
+          <Stack direction="row" spacing={0.65} alignItems="center" sx={{ minWidth: 0, overflowX: "auto", "& > *": { flexShrink: 0 } }}>
+            <Typography variant="caption" color="text.secondary">Scenario</Typography>
+            <FormControl size="small" sx={{ width: 240 }}>
+              <Select value={activeScenario.id} inputProps={{ "aria-label": uiCopy.sections.scenario }} onChange={(event: SelectInputChangeEvent) => onScenarioSelect(String(event.target.value))}>
+                {scenarios.map((scenario) => <MenuItem key={`rest-scenario-${scenario.id}`} value={scenario.id}>{scenario.name || scenario.id}</MenuItem>)}
               </Select>
             </FormControl>
-            <Button size="small" variant="outlined" onClick={() => onAddScenario("success")}>
-              Success
-            </Button>
-            <Button size="small" variant="outlined" onClick={() => onAddScenario("not-found")}>
-              404
-            </Button>
-            <Button size="small" variant="outlined" onClick={() => onAddScenario("validation-error")}>
-              422
-            </Button>
-            <Button size="small" variant="outlined" onClick={() => onAddScenario("delayed")}>
-              Delayed
-            </Button>
-          </Stack>
-          <Stack direction="row" spacing={0.8} alignItems="center" flexWrap="wrap" useFlexGap>
-            <TextField
-              size="small"
-              label="Scenario name"
-              value={activeScenario.name}
-              onChange={(event: TextInputChangeEvent) => onScenarioChange({ name: event.target.value })}
-              sx={{ minWidth: 220, flex: 1 }}
-            />
-            <TextField
-              size="small"
-              label={uiCopy.fields.path}
-              value={activeScenario.path}
-              onChange={(event: TextInputChangeEvent) => onScenarioChange({ path: event.target.value })}
-              sx={{ minWidth: 220 }}
-            />
-            <TextField
-              size="small"
-              type="number"
-              label={uiCopy.fields.statusCode}
-              value={activeScenario.status}
-              onChange={(event: TextInputChangeEvent) => onScenarioChange({ status: Number(event.target.value) })}
-              sx={{ width: 105 }}
-            />
-            <TextField
-              size="small"
-              type="number"
-              label={uiCopy.fields.priority}
-              value={activeScenario.priority ?? 0}
-              onChange={(event: TextInputChangeEvent) => onScenarioChange({ priority: Number(event.target.value) })}
-              sx={{ width: 105 }}
-            />
-            <TextField
-              size="small"
-              type="number"
-              label={uiCopy.fields.delayMs}
-              value={activeScenario.delayMs ?? 0}
-              onChange={(event: TextInputChangeEvent) => onScenarioChange({ delayMs: Number(event.target.value) })}
-              sx={{ width: 115 }}
-            />
-            <FormControl size="small" sx={{ width: 120 }}>
-              <Select
-                value={activeScenario.enabled ? "enabled" : "disabled"}
-                onChange={(event: SelectInputChangeEvent) =>
-                  onScenarioChange({ enabled: event.target.value === "enabled" })
-                }
-              >
+            <Button size="small" variant="outlined" onClick={() => onAddScenario("success")}>Add</Button>
+            <Button size="small" variant="text" onClick={() => onAddScenario("not-found")}>404</Button>
+            <Button size="small" variant="text" onClick={() => onAddScenario("validation-error")}>422</Button>
+            <Button size="small" variant="text" onClick={() => onAddScenario("delayed")}>Delay</Button>
+            <MockExecutionControls execution={activeScenario.execution} showTimeout compact inline hideLabel onChange={(execution) => onScenarioChange({ execution })} />
+            {activeScenario.execution?.manual ? (
+              <Button size="small" variant="contained" onClick={onSendPending} disabled={!status.running || !status.pendingCount}>
+                Release ({status.pendingCount ?? 0})
+              </Button>
+            ) : null}
+            <Box sx={{ flex: 1, minWidth: 8 }} />
+            <FormControl size="small" sx={{ width: 112 }}>
+              <Select value={activeScenario.enabled ? "enabled" : "disabled"} onChange={(event: SelectInputChangeEvent) => onScenarioChange({ enabled: event.target.value === "enabled" })}>
                 <MenuItem value="enabled">Enabled</MenuItem>
                 <MenuItem value="disabled">Disabled</MenuItem>
               </Select>
             </FormControl>
           </Stack>
-          <Paper variant="outlined" sx={{ p: 1, borderRadius: 2 }}>
-            <Stack spacing={1}>
-              <Typography variant="subtitle1">{uiCopy.sections.matchers}</Typography>
-              <RestPairEditor
-                title="Query"
-                rows={activeScenario.matchQuery ?? []}
-                onAdd={() => onScenarioPairAdd("matchQuery")}
-                onUpdate={(index, field, value) => onScenarioPairUpdate("matchQuery", index, field, value)}
-                onRemove={(index) => onScenarioPairRemove("matchQuery", index)}
-              />
-              <RestPairEditor
-                title="Headers"
-                rows={activeScenario.matchHeaders ?? []}
-                onAdd={() => onScenarioPairAdd("matchHeaders")}
-                onUpdate={(index, field, value) => onScenarioPairUpdate("matchHeaders", index, field, value)}
-                onRemove={(index) => onScenarioPairRemove("matchHeaders", index)}
-              />
-              <Stack direction="row" spacing={0.8} alignItems="center" flexWrap="wrap" useFlexGap>
-                <TextField
-                  size="small"
-                  label="Body contains"
-                  value={activeScenario.matchBodyContains ?? ""}
-                  onChange={(event: TextInputChangeEvent) =>
-                    onScenarioChange({ matchBodyContains: event.target.value })
-                  }
-                  sx={{ minWidth: 220, flex: 1 }}
-                />
-                <TextField
-                  size="small"
-                  label="JSON path"
-                  value={activeScenario.matchJsonPath ?? ""}
-                  onChange={(event: TextInputChangeEvent) => onScenarioChange({ matchJsonPath: event.target.value })}
-                  placeholder="$.data.id"
-                  sx={{ width: 180 }}
-                />
-                <TextField
-                  size="small"
-                  label="JSON equals"
-                  value={activeScenario.matchJsonEquals ?? ""}
-                  onChange={(event: TextInputChangeEvent) => onScenarioChange({ matchJsonEquals: event.target.value })}
-                  placeholder="123 or true"
-                  sx={{ width: 180 }}
-                />
+
+          <Stack direction="row" spacing={0.65} alignItems="center" sx={{ minWidth: 0, overflowX: "auto", "& > *": { flexShrink: 0 } }}>
+            <TextField size="small" label="Name" value={activeScenario.name} onChange={(event: TextInputChangeEvent) => onScenarioChange({ name: event.target.value })} sx={{ width: 220 }} />
+            <TextField size="small" label={uiCopy.fields.host} value={project.bindHost} onChange={(event: TextInputChangeEvent) => onBindHostChange(event.target.value)} sx={{ width: 150 }} />
+            <TextField size="small" label={uiCopy.fields.port} type="number" value={project.port} onChange={(event: TextInputChangeEvent) => onPortChange(Number(event.target.value))} sx={{ width: 100 }} />
+            <TextField size="small" label={uiCopy.fields.path} value={activeScenario.path} onChange={(event: TextInputChangeEvent) => onScenarioChange({ path: event.target.value })} sx={{ width: 220 }} />
+            <TextField size="small" type="number" label="Status" value={activeScenario.status} onChange={(event: TextInputChangeEvent) => onScenarioChange({ status: Number(event.target.value) })} sx={{ width: 92 }} />
+            <TextField size="small" type="number" label="Priority" value={activeScenario.priority ?? 0} onChange={(event: TextInputChangeEvent) => onScenarioChange({ priority: Number(event.target.value) })} sx={{ width: 96 }} />
+            <TextField size="small" type="number" label={uiCopy.fields.delayMs} value={activeScenario.delayMs ?? 0} onChange={(event: TextInputChangeEvent) => onScenarioChange({ delayMs: Number(event.target.value) })} sx={{ width: 96 }} />
+          </Stack>
+
+          <Paper variant="outlined" sx={{ p: 0.8, borderRadius: 1.5 }}>
+            <Stack spacing={0.7}>
+              <Typography variant="caption" fontWeight={700}>{uiCopy.sections.matchers}</Typography>
+              <RestPairEditor title="Query" rows={activeScenario.matchQuery ?? []} onAdd={() => onScenarioPairAdd("matchQuery")} onUpdate={(index, field, value) => onScenarioPairUpdate("matchQuery", index, field, value)} onRemove={(index) => onScenarioPairRemove("matchQuery", index)} />
+              <RestPairEditor title="Headers" rows={activeScenario.matchHeaders ?? []} onAdd={() => onScenarioPairAdd("matchHeaders")} onUpdate={(index, field, value) => onScenarioPairUpdate("matchHeaders", index, field, value)} onRemove={(index) => onScenarioPairRemove("matchHeaders", index)} />
+              <Stack direction="row" spacing={0.65} alignItems="center" sx={{ minWidth: 0, overflowX: "auto", "& > *": { flexShrink: 0 } }}>
+                <TextField size="small" label="Body contains" value={activeScenario.matchBodyContains ?? ""} onChange={(event: TextInputChangeEvent) => onScenarioChange({ matchBodyContains: event.target.value })} sx={{ width: 220 }} />
+                <TextField size="small" label="JSON path" value={activeScenario.matchJsonPath ?? ""} onChange={(event: TextInputChangeEvent) => onScenarioChange({ matchJsonPath: event.target.value })} placeholder="$.data.id" sx={{ width: 180 }} />
+                <TextField size="small" label="JSON equals" value={activeScenario.matchJsonEquals ?? ""} onChange={(event: TextInputChangeEvent) => onScenarioChange({ matchJsonEquals: event.target.value })} placeholder="123 or true" sx={{ width: 180 }} />
               </Stack>
             </Stack>
           </Paper>
-          <Stack spacing={0.8}>
-            <Typography variant="subtitle1">{uiCopy.sections.response}</Typography>
-            <FeatureCodeTextField
-              value={mockResponseText}
-              onChange={onMockResponseTextChange}
-              minRows={7}
-              maxRows={12}
-              language="json"
-              formatAriaLabel="Prettier JSON"
-              fullscreenTitle="REST mock response editor"
-            />
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              title="Available variables: {{now}}, {{timestamp}}, {{uuid}}, {{request.path.*}}, {{request.query.*}}, {{request.header.*}}, and {{request.bodyJson.*}}."
-            >
-              Variables: now, uuid, and request.*
-            </Typography>
-          </Stack>
-        </Stack>
+        </>
       ) : (
-        <Alert severity="info" variant="outlined">
-          Select a REST request.
-        </Alert>
+        <Alert severity="info" variant="outlined">Add a global REST scenario to start mocking.</Alert>
       )}
-      {status.requestLog?.length ? (
-        <Paper variant="outlined" sx={{ p: 1, borderRadius: 2 }}>
-          <Typography variant="subtitle1">{uiCopy.sections.requests}</Typography>
-          <TableContainer>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>Time</TableCell>
-                  <TableCell>Method</TableCell>
-                  <TableCell>Path</TableCell>
-                  <TableCell>Status</TableCell>
-                  <TableCell>Scenario</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {status.requestLog.slice(0, 8).map((entry) => (
-                  <TableRow key={entry.id}>
-                    <TableCell>{formatTimestampShort(entry.timestamp)}</TableCell>
-                    <TableCell>{entry.method}</TableCell>
-                    <TableCell>{entry.path}</TableCell>
-                    <TableCell>{entry.status}</TableCell>
-                    <TableCell>{entry.scenarioId ?? uiCopy.status.unmatched}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </Paper>
-      ) : null}
     </Stack>
+  );
+
+  const editor = activeScenario ? (
+    <Stack spacing={0.45} sx={{ minHeight: 0, height: "100%", px: 1, pb: 0.8 }}>
+      <Stack direction="row" alignItems="center" sx={{ minHeight: 32, flexShrink: 0 }}>
+        <Typography variant="caption" fontWeight={700}>{uiCopy.sections.response}</Typography>
+      </Stack>
+      <Box sx={{ minHeight: 0, flex: 1 }}>
+        <FeatureCodeTextField
+          value={mockResponseText}
+          onChange={onMockResponseTextChange}
+          minRows={8}
+          fullHeight
+          language="json"
+          formatAriaLabel="Prettier JSON"
+          fullscreenTitle="REST mock response editor"
+        />
+      </Box>
+    </Stack>
+  ) : (
+    <Box sx={{ height: "100%", display: "grid", placeItems: "center", color: "text.secondary" }}>
+      <Typography variant="body2">No scenario selected.</Typography>
+    </Box>
+  );
+
+  return (
+    <MockScenarioSplitPane
+      storageKey={`layang:rest-mock-settings-height:${activeScenario?.id ?? "default"}`}
+      defaultSettingsHeight={250}
+      minSettingsHeight={96}
+      maxSettingsHeight={380}
+      settings={settings}
+      editor={editor}
+    />
   );
 }

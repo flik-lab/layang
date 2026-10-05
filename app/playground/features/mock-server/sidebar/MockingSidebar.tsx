@@ -6,7 +6,7 @@ import { KeyboardArrowDown, KeyboardArrowRight, Search, Settings } from "@/compo
 import { useMockCatalog, useMockCatalogQuery } from "../catalog/useMockCatalog";
 import type { MockCatalogMethodRow } from "../catalog/mockCatalog.types";
 import { mockingUiStore, useMockingUiSnapshot } from "../workspace/mockingUi.store";
-import type { ServiceProtocol } from "../../../shared/workbench-types";
+import type { RestMockScenario, ServiceProtocol, WebSocketMockScenario } from "../../../shared/workbench-types";
 import { useFixedVirtualWindow } from "../../../shared/use-fixed-virtual-window";
 
 const rowHeight = 30;
@@ -18,6 +18,14 @@ export function MockingSidebar(props: {
   onSelectGrpcMethod(row: MockCatalogMethodRow): void;
   onSelectProtocol(protocol: "grpc-mock" | "rest" | "websocket"): void;
   onOpenGrpcHome(): void;
+  restScenarios: RestMockScenario[];
+  selectedRestScenarioId?: string;
+  onSelectRestScenario(id: string): void;
+  onAddRestScenario(): void;
+  websocketScenarios: WebSocketMockScenario[];
+  selectedWebSocketScenarioId?: string;
+  onSelectWebSocketScenario(id: string): void;
+  onAddWebSocketScenario(): void;
 }) {
   const catalog = useMockCatalog();
   const ui = useMockingUiSnapshot();
@@ -132,7 +140,105 @@ export function MockingSidebar(props: {
             })}
           </Box>
         </Box>
-      ) : null}
+      ) : props.serviceProtocol === "rest" ? (
+        <GlobalScenarioList
+          kind="rest"
+          scenarios={props.restScenarios}
+          selectedId={props.selectedRestScenarioId}
+          query={ui.query}
+          onSelect={props.onSelectRestScenario}
+          onAdd={props.onAddRestScenario}
+        />
+      ) : (
+        <GlobalScenarioList
+          kind="websocket"
+          scenarios={props.websocketScenarios}
+          selectedId={props.selectedWebSocketScenarioId}
+          query={ui.query}
+          onSelect={props.onSelectWebSocketScenario}
+          onAdd={props.onAddWebSocketScenario}
+        />
+      )}
     </Stack>
   );
 }
+
+function GlobalScenarioList({
+  kind,
+  scenarios,
+  selectedId,
+  query,
+  onSelect,
+  onAdd,
+}: {
+  kind: "rest" | "websocket";
+  scenarios: Array<RestMockScenario | WebSocketMockScenario>;
+  selectedId?: string;
+  query: string;
+  onSelect(id: string): void;
+  onAdd(): void;
+}) {
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredScenarios = scenarios.filter((scenario) => {
+    if (!normalizedQuery) return true;
+    const rest = kind === "rest" ? (scenario as RestMockScenario) : null;
+    const ws = kind === "websocket" ? (scenario as WebSocketMockScenario) : null;
+    const target = rest ? `${rest.method} ${rest.path}` : ws?.path ?? "/";
+    return `${scenario.name} ${target} ${scenario.execution?.mode ?? "incoming"}`.toLowerCase().includes(normalizedQuery);
+  });
+
+  return (
+    <Stack spacing={0.45} sx={{ minHeight: 0, flex: 1, px: 0.6, pb: 0.6 }}>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={0.5}>
+        <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, letterSpacing: "0.04em" }}>
+          GLOBAL SCENARIOS
+        </Typography>
+        <Button size="small" variant="text" onClick={onAdd}>+ Scenario</Button>
+      </Stack>
+      <Box sx={{ minHeight: 0, flex: 1, overflowY: "auto" }}>
+        {filteredScenarios.length ? (
+          <Stack spacing={0.2}>
+            {filteredScenarios.map((scenario) => {
+              const rest = kind === "rest" ? (scenario as RestMockScenario) : null;
+              const ws = kind === "websocket" ? (scenario as WebSocketMockScenario) : null;
+              const target = rest ? `${rest.method} ${rest.path}` : ws?.path ?? "/";
+              return (
+                <Button
+                  key={scenario.id}
+                  size="small"
+                  variant="text"
+                  onClick={() => onSelect(scenario.id)}
+                  sx={{
+                    minHeight: 42,
+                    px: 0.75,
+                    justifyContent: "flex-start",
+                    textTransform: "none",
+                    bgcolor: selectedId === scenario.id ? "action.selected" : "transparent",
+                  }}
+                >
+                  <Box sx={{ minWidth: 0, flex: 1, textAlign: "left" }}>
+                    <Typography variant="body2" noWrap sx={{ fontWeight: 600 }}>{scenario.name || target}</Typography>
+                    <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block", fontFamily: "monospace" }}>
+                      {target}
+                    </Typography>
+                  </Box>
+                  <Chip
+                    size="small"
+                    label={scenario.execution?.mode ?? "incoming"}
+                    variant="outlined"
+                    sx={{ ml: 0.5, height: 18, "& .MuiChip-label": { px: 0.45, fontSize: 9 } }}
+                  />
+                </Button>
+              );
+            })}
+          </Stack>
+        ) : (
+          <Typography variant="caption" color="text.secondary">
+            {scenarios.length ? "No scenarios match this search." : "No global scenarios yet."}
+          </Typography>
+        )}
+      </Box>
+    </Stack>
+  );
+}
+

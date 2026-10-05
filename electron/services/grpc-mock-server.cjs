@@ -8,6 +8,7 @@ const { performance } = require("node:perf_hooks");
 const { readGitWorkspace } = require("../../lib/git-workspace.cjs");
 const { parseScenarioBundle } = require("../../lib/workspace-v6-codec.cjs");
 const { createGrpcMockLivePushRegistry, selectGrpcMockManualResponses } = require("../../lib/grpc-mock-live-push.cjs");
+const { executionAllows, getNextScheduleAt, normalizeMockExecution } = require("../../lib/mock-execution-engine.cjs");
 const grpc = require("@grpc/grpc-js");
 const protoLoader = require("@grpc/proto-loader");
 const { readJsonIfExists, walkDirectory, writeProtoWorkspace } = require("../utils/file-utils.cjs");
@@ -1153,7 +1154,14 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
   const initialResponses = getRuntimeStreamResponses(initialScenario);
   const initialFingerprints = createRuntimeStreamResponseFingerprints(initialResponses);
   const initialTiming = getRuntimeStreamTiming(initialScenario, runtime);
-  const livePushMode = initialScenario.stream?.mode === "live-push";
+  const initialExecution = normalizeMockExecution(initialScenario.stream?.execution, {
+    streamMode: initialScenario.stream?.mode,
+    intervalMs: initialScenario.stream?.intervalMs,
+    loop: initialScenario.stream?.loop,
+    maxLoops: initialScenario.stream?.maxLoops,
+  });
+  const scheduleEnabled = executionAllows(initialExecution, "scheduled");
+  const automaticEnabled = executionAllows(initialExecution, "incoming") || executionAllows(initialExecution, "periodic");
   let currentScenarioId = initialScenario.id;
   let currentResponseSignature = initialFingerprints.join("\n");
   let cachedSnapshotVersion = runtime.configVersion;
@@ -1171,6 +1179,8 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
   let pendingCompletedCycle = false;
   let nextRuntimeCadenceAt = 0;
   let unregisterLivePush = null;
+  let scheduledTimer = null;
+  let scheduledResponseIndex = 0;
 
   const clearPendingTimer = () => {
     if (!pendingTimer) return;
@@ -1179,17 +1189,25 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
     pendingTimer = null;
   };
 
+  const clearScheduledTimer = () => {
+    if (!scheduledTimer) return;
+    clearTimeout(scheduledTimer);
+    timers.delete(scheduledTimer);
+    scheduledTimer = null;
+  };
+
   const cleanup = () => {
     if (closed) return;
     closed = true;
     clearPendingTimer();
+    clearScheduledTimer();
     activeCalls.delete(call);
     if (unregisterLivePush) {
       unregisterLivePush();
       unregisterLivePush = null;
     }
     if (runtime.streamReschedulers && typeof runtime.streamReschedulers.delete === "function") {
-      runtime.streamReschedulers.delete(reschedulePendingStreamTimer);
+      runtime.streamReschedulers.delete(rescheduleStreamTimers);
     }
   };
 
@@ -1345,6 +1363,63 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
     );
   }
 
+  const scheduleScenarioTrigger = () => {
+    clearScheduledTimer();
+    if (closed) return;
+    const snapshot = getLiveSnapshot();
+    if (!snapshot?.scenario) return;
+    const execution = normalizeMockExecution(snapshot.scenario.stream?.execution, {
+      streamMode: snapshot.scenario.stream?.mode,
+      intervalMs: snapshot.scenario.stream?.intervalMs,
+      loop: snapshot.scenario.stream?.loop,
+      maxLoops: snapshot.scenario.stream?.maxLoops,
+    });
+    const nextAt = getNextScheduleAt(execution.schedule);
+    if (!nextAt) return;
+    const timer = setTimeout(() => {
+      timers.delete(timer);
+      if (scheduledTimer === timer) scheduledTimer = null;
+      if (closed) return;
+      const live = getLiveSnapshot();
+      const responses = live?.responses || [];
+      if (responses.length) {
+        const item = responses[scheduledResponseIndex % responses.length] || {};
+        const code = normalizeGrpcStatus(item.code);
+        if (code !== grpc.status.OK) {
+          failStream(code, item.message || `Mock stream scenario ${live.scenario.id} returned status ${code}.`);
+          return;
+        }
+        call.write(item.data === undefined ? {} : item.data);
+        scheduledResponseIndex += 1;
+      }
+      scheduleScenarioTrigger();
+    }, Math.max(0, nextAt - Date.now()));
+    scheduledTimer = timer;
+    timers.add(timer);
+  };
+
+  function rescheduleStreamTimers() {
+    const snapshot = getLiveSnapshot();
+    const execution = snapshot?.scenario
+      ? normalizeMockExecution(snapshot.scenario.stream?.execution, {
+          streamMode: snapshot.scenario.stream?.mode,
+          intervalMs: snapshot.scenario.stream?.intervalMs,
+          loop: snapshot.scenario.stream?.loop,
+          maxLoops: snapshot.scenario.stream?.maxLoops,
+        })
+      : initialExecution;
+    const automatic = execution.incoming || execution.periodic.enabled;
+    if (!automatic) {
+      clearPendingTimer();
+      nextRuntimeCadenceAt = 0;
+    } else if (pendingTimer) {
+      reschedulePendingStreamTimer();
+    } else {
+      scheduleNext(0, false);
+    }
+    scheduleScenarioTrigger();
+  }
+
   const scheduleNext = (delay, usesRuntimeInterval = false) => {
     const now = performance.now();
     if (!usesRuntimeInterval) {
@@ -1362,6 +1437,20 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
 
   const finishStream = () => {
     if (closed) return;
+    const snapshot = getLiveSnapshot();
+    const execution = snapshot?.scenario
+      ? normalizeMockExecution(snapshot.scenario.stream?.execution, {
+          streamMode: snapshot.scenario.stream?.mode,
+          intervalMs: snapshot.scenario.stream?.intervalMs,
+          loop: snapshot.scenario.stream?.loop,
+          maxLoops: snapshot.scenario.stream?.maxLoops,
+        })
+      : initialExecution;
+    if (execution.manual || execution.schedule.enabled) {
+      clearPendingTimer();
+      nextRuntimeCadenceAt = 0;
+      return;
+    }
     cleanup();
     call.end();
   };
@@ -1372,7 +1461,7 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
     request,
     initialScenario,
     true,
-    livePushMode ? "LIVE_PUSH" : "STREAM",
+    String(initialExecution.mode || "stream").toUpperCase(),
     Date.now() - startedAt,
     initialScenario.stream?.responses?.length ?? 0,
   );
@@ -1382,21 +1471,20 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
     call.on("error", cleanup);
   }
 
-  if (livePushMode) {
-    unregisterLivePush = runtime.livePushRegistry.register({
-      call,
-      method,
-      serviceName: method.serviceName,
-      methodName: method.methodName,
-      scenarioId: initialScenario.id,
-      requestContext,
-    });
-    return;
-  }
+  unregisterLivePush = runtime.livePushRegistry.register({
+    call,
+    method,
+    serviceName: method.serviceName,
+    methodName: method.methodName,
+    scenarioId: initialScenario.id,
+    requestContext,
+  });
 
   if (runtime.streamReschedulers && typeof runtime.streamReschedulers.add === "function") {
-    runtime.streamReschedulers.add(reschedulePendingStreamTimer);
+    runtime.streamReschedulers.add(rescheduleStreamTimers);
   }
+  if (scheduleEnabled) scheduleScenarioTrigger();
+  if (!automaticEnabled) return;
 
   function writeNext() {
     if (closed) return;
@@ -1520,17 +1608,22 @@ function findFirstUnsentRuntimeStreamResponseIndex(fingerprints, sentCounts) {
   return -1;
 }
 
-function getRuntimeStreamTiming(scenario, runtime) {
+function getRuntimeStreamTiming(scenario, _runtime) {
   const stream = scenario?.stream || {};
-  const intervalMs = normalizeDelayMs(
-    stream.intervalMs !== undefined ? stream.intervalMs : runtime.streamDefaults.intervalMs,
-  );
-  const shouldLoop = stream.loop !== undefined ? Boolean(stream.loop) : Boolean(runtime.streamDefaults.loop);
-  const maxLoops = Math.max(
-    0,
-    Math.floor(Number(stream.maxLoops !== undefined ? stream.maxLoops : runtime.streamDefaults.maxLoops || 0)),
-  );
-  return { intervalMs, shouldLoop, maxLoops };
+  const execution = normalizeMockExecution(stream.execution, {
+    streamMode: stream.mode,
+    intervalMs: stream.intervalMs,
+    loop: stream.loop,
+    maxLoops: stream.maxLoops,
+  });
+  if (!execution.periodic.enabled) {
+    return { intervalMs: 0, shouldLoop: false, maxLoops: 0 };
+  }
+  return {
+    intervalMs: normalizeDelayMs(execution.periodic.intervalMs),
+    shouldLoop: Boolean(execution.periodic.loop),
+    maxLoops: Math.max(0, Math.floor(Number(execution.periodic.maxExecutions || 0))),
+  };
 }
 
 /**
@@ -1728,10 +1821,18 @@ function normalizeRuntimeOutput(value) {
  */
 function normalizeRuntimeStream(value) {
   if (!value || typeof value !== "object") return undefined;
+  const mode = normalizeRuntimeStreamMode(value.mode ?? value.streamMode ?? value.stream_mode);
+  const legacySettings = normalizeRuntimeStreamSettings(value, {});
   return {
     responses: Array.isArray(value.responses) ? value.responses.map(normalizeRuntimeOutput) : [],
-    mode: normalizeRuntimeStreamMode(value.mode ?? value.streamMode ?? value.stream_mode),
-    ...normalizeRuntimeStreamSettings(value, {}),
+    mode,
+    ...legacySettings,
+    execution: normalizeMockExecution(value.execution, {
+      streamMode: mode,
+      intervalMs: legacySettings.intervalMs,
+      loop: legacySettings.loop,
+      maxLoops: legacySettings.maxLoops,
+    }),
   };
 }
 
@@ -2138,6 +2239,9 @@ function sendMockServerStreamMessage(payload = {}) {
   const runtime = activeMockServer.runtime;
   const scenario = findManualPushScenario(runtime, serviceName, methodName, scenarioId);
   if (!scenario) throw new Error(`Saved scenario ${scenarioId} was not found for ${serviceName}/${methodName}.`);
+  if (!executionAllows(scenario.stream?.execution, "manual")) {
+    throw new Error(`Scenario ${scenario.id} does not have Standby / Manual enabled.`);
+  }
 
   const responses = selectGrpcMockManualResponses(scenario, { responseIndex, sendAll });
   if (!responses.length) {

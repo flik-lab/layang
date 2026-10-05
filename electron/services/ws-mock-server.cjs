@@ -2,11 +2,12 @@
 
 const crypto = require("node:crypto");
 const http = require("node:http");
+const { executionAllows, getNextScheduleAt, normalizeMockExecution } = require("../../lib/mock-execution-engine.cjs");
 
 let activeWsMockServer = null;
 
 /**
- * Starts a lightweight WebSocket mock server with per-request scenarios.
+ * Starts a lightweight WebSocket mock server with global scenarios.
  * One path can host many scenarios; incoming messages can select a scenario by matcher.
  */
 async function startWebSocketMockServer(payload) {
@@ -26,6 +27,8 @@ async function startWebSocketMockServer(payload) {
     updatedAt: new Date().toISOString(),
     messageCount: 0,
     logs: [],
+    scheduledTimers: new Map(),
+    nextScheduleAt: new Map(),
   };
   appendWebSocketMockLog(state, "server", `Server starting with ${config.scenarios.length} scenario(s).`);
 
@@ -81,13 +84,13 @@ async function startWebSocketMockServer(payload) {
     appendWebSocketMockLog(state, "connect", `Client connected to ${requestPath}.`, {
       path: requestPath,
       scenarioId: scenario.id,
-      requestId: scenario.requestId,
+      requestId: scenario.sourceRequestId,
     });
     socket.on("data", (chunk) => handleWebSocketMockData(state, client, chunk));
     socket.on("close", () => cleanupWebSocketMockClient(state, client));
     socket.on("error", () => cleanupWebSocketMockClient(state, client));
 
-    if (scenario.streamOnConnect) startWebSocketMockPeriodicStream(state, client, scenario);
+    if (executionAllows(scenario.execution, "periodic")) startWebSocketMockPeriodicStream(state, client, scenario);
   });
 
   const boundPort = await new Promise((resolve, reject) => {
@@ -101,6 +104,7 @@ async function startWebSocketMockServer(payload) {
   state.config.port = boundPort;
   appendWebSocketMockLog(state, "server", `Server running at ws://127.0.0.1:${boundPort}.`);
   activeWsMockServer = state;
+  reconcileWebSocketScheduledTriggers(state);
   return getWebSocketMockStatus();
 }
 
@@ -109,6 +113,7 @@ async function stopWebSocketMockServer() {
   if (!active) return;
   appendWebSocketMockLog(active, "server", "Server stopping.");
   activeWsMockServer = null;
+  clearWebSocketScheduledTriggers(active);
   for (const client of active.clients || []) {
     cleanupWebSocketMockClient(active, client);
     try {
@@ -135,6 +140,7 @@ function updateWebSocketMockServer(payload) {
   if (!activeWsMockServer) return { running: false };
   activeWsMockServer.config = normalizeWebSocketMockConfig(payload || {}, activeWsMockServer.config);
   activeWsMockServer.updatedAt = new Date().toISOString();
+  reconcileWebSocketScheduledTriggers(activeWsMockServer);
   appendWebSocketMockLog(
     activeWsMockServer,
     "server",
@@ -152,7 +158,7 @@ function updateWebSocketMockServer(payload) {
       }
       continue;
     }
-    if (scenario.streamOnConnect) {
+    if (executionAllows(scenario.execution, "periodic")) {
       if (client.timer) {
         clearTimeout(client.timer);
         client.timer = null;
@@ -164,7 +170,7 @@ function updateWebSocketMockServer(payload) {
       appendWebSocketMockLog(activeWsMockServer, "skip", `Periodic stopped for ${scenario.name}.`, {
         path: scenario.path,
         scenarioId: scenario.id,
-        requestId: scenario.requestId,
+        requestId: scenario.sourceRequestId,
       });
     }
   }
@@ -184,6 +190,7 @@ function sendWebSocketMockMessage(payload) {
       ? findScenarioById(activeWsMockServer.config, scenarioId)
       : getClientWebSocketMockScenario(activeWsMockServer, client);
     if (!scenario) continue;
+    if (!executionAllows(scenario.execution, "manual")) continue;
     if (scenarioId && scenario.id !== scenarioId) continue;
     if (path && scenario.path !== path) continue;
     if (scenario.path !== client.path) continue;
@@ -210,6 +217,11 @@ function getWebSocketMockStatus() {
     url: `ws://127.0.0.1:${activeWsMockServer.port}${primaryScenario?.path || config.path}`,
     clientCount: activeWsMockServer.clients.size,
     messageCount: activeWsMockServer.messageCount,
+    scheduledTimerCount: activeWsMockServer.scheduledTimers?.size ?? 0,
+    nextScheduleAt: (() => {
+      const next = Array.from(activeWsMockServer.nextScheduleAt?.values?.() ?? []).sort((a, b) => a - b)[0];
+      return next ? new Date(next).toISOString() : undefined;
+    })(),
     intervalMs: primaryScenario?.intervalMs ?? config.intervalMs,
     loop: primaryScenario?.loop ?? config.loop,
     maxLoops: primaryScenario?.maxLoops ?? config.maxLoops,
@@ -218,7 +230,7 @@ function getWebSocketMockStatus() {
     scenarioCount: config.scenarios.length,
     requestPaths: config.scenarios.map((scenario) => ({
       id: scenario.id,
-      requestId: scenario.requestId,
+      requestId: scenario.sourceRequestId,
       name: scenario.name,
       path: scenario.path,
       enabled: scenario.enabled,
@@ -228,6 +240,39 @@ function getWebSocketMockStatus() {
     startedAt: activeWsMockServer.startedAt,
     updatedAt: activeWsMockServer.updatedAt,
   };
+}
+
+function clearWebSocketScheduledTriggers(state) {
+  for (const timer of state?.scheduledTimers?.values?.() ?? []) clearTimeout(timer);
+  state?.scheduledTimers?.clear?.();
+  state?.nextScheduleAt?.clear?.();
+}
+
+function reconcileWebSocketScheduledTriggers(state) {
+  clearWebSocketScheduledTriggers(state);
+  for (const scenario of state?.config?.scenarios ?? []) {
+    if (!scenario.enabled || !executionAllows(scenario.execution, "scheduled")) continue;
+    scheduleWebSocketScenario(state, scenario);
+  }
+}
+
+function scheduleWebSocketScenario(state, scenario, now = Date.now()) {
+  const nextAt = getNextScheduleAt(scenario.execution.schedule, now);
+  if (!nextAt) return;
+  state.nextScheduleAt.set(scenario.id, nextAt);
+  const timer = setTimeout(() => {
+    if (activeWsMockServer !== state) return;
+    let sent = 0;
+    for (const client of state.clients) {
+      if (client.path !== scenario.path) continue;
+      if (sendWebSocketMockResponse(state, client, "scheduled", scenario)) sent += 1;
+    }
+    appendWebSocketMockLog(state, sent ? "send" : "skip", sent ? `Scheduled send delivered to ${sent} client(s).` : `Scheduled send skipped for ${scenario.name}: no client matched.`, { scenarioId: scenario.id, path: scenario.path });
+    state.nextScheduleAt.delete(scenario.id);
+    if ((scenario.execution.schedule.repeatMs || 0) > 0) scheduleWebSocketScenario(state, scenario, Date.now() + 1);
+  }, Math.max(0, nextAt - Date.now()));
+  timer.unref?.();
+  state.scheduledTimers.set(scenario.id, timer);
 }
 
 function normalizeWebSocketMockConfig(payload, fallback) {
@@ -272,14 +317,26 @@ function normalizeWebSocketMockScenario(scenario, fallback, index) {
       : typeof fallback.responseText === "string"
         ? fallback.responseText
         : defaultWebSocketMockResponseText();
-  return {
+  const normalized = {
     id: typeof scenario.id === "string" && scenario.id ? scenario.id : fallback.id || `ws-scenario-${index + 1}`,
-    requestId: typeof scenario.requestId === "string" && scenario.requestId ? scenario.requestId : fallback.requestId,
+    sourceRequestId:
+      typeof scenario.sourceRequestId === "string" && scenario.sourceRequestId
+        ? scenario.sourceRequestId
+        : typeof scenario.requestId === "string" && scenario.requestId
+          ? scenario.requestId
+          : fallback.sourceRequestId,
     name:
       typeof scenario.name === "string" && scenario.name.trim()
         ? scenario.name.trim()
         : fallback.name || `WebSocket scenario ${index + 1}`,
     enabled: scenario.enabled !== false,
+    execution: normalizeMockExecution(scenario.execution, {
+      streamOnConnect: Object.hasOwn(scenario, "streamOnConnect") ? scenario.streamOnConnect : fallback.streamOnConnect,
+      sendOnMessage: Object.hasOwn(scenario, "sendOnMessage") ? scenario.sendOnMessage : fallback.sendOnMessage,
+      intervalMs: rawInterval,
+      loop: Object.hasOwn(scenario, "loop") ? scenario.loop : fallback.loop,
+      maxLoops: rawMaxLoops,
+    }),
     path: normalizeWebSocketMockPath(scenario.path !== undefined ? scenario.path : fallback.path || "/mock/ws"),
     responseText,
     intervalMs: normalizeDelayMs(rawInterval !== undefined ? rawInterval : 1000),
@@ -305,6 +362,12 @@ function normalizeWebSocketMockScenario(scenario, fallback, index) {
           ? fallback.matchJsonPath
           : "",
   };
+  normalized.intervalMs = normalized.execution.periodic.intervalMs;
+  normalized.loop = normalized.execution.periodic.loop;
+  normalized.maxLoops = normalized.execution.periodic.maxExecutions;
+  normalized.streamOnConnect = normalized.execution.periodic.enabled;
+  normalized.sendOnMessage = normalized.execution.incoming;
+  return normalized;
 }
 
 function buildFallbackWebSocketMockScenario(payload, base) {
@@ -313,9 +376,19 @@ function buildFallbackWebSocketMockScenario(payload, base) {
   const rawMaxLoops = payload.maxLoops !== undefined ? payload.maxLoops : base.maxLoops;
   return {
     id: typeof payload.id === "string" && payload.id ? payload.id : typeof base.id === "string" ? base.id : "default",
-    requestId: typeof payload.requestId === "string" && payload.requestId ? payload.requestId : base.requestId,
+    sourceRequestId:
+      typeof payload.sourceRequestId === "string" && payload.sourceRequestId
+        ? payload.sourceRequestId
+        : typeof payload.requestId === "string" && payload.requestId
+          ? payload.requestId
+          : base.sourceRequestId,
     name: typeof payload.name === "string" && payload.name ? payload.name : base.name || "Default WebSocket mock",
     enabled: payload.enabled !== false,
+    execution: normalizeMockExecution(payload.execution, {
+      streamOnConnect: Object.hasOwn(payload, "streamOnConnect") ? payload.streamOnConnect : base.streamOnConnect,
+      sendOnMessage: Object.hasOwn(payload, "sendOnMessage") ? payload.sendOnMessage : base.sendOnMessage,
+      intervalMs: rawInterval, loop: payload.loop, maxLoops: rawMaxLoops,
+    }),
     path: normalizeWebSocketMockPath(rawPath || "/mock/ws"),
     responseText:
       payload.responseText !== undefined
@@ -387,7 +460,7 @@ function findScenarioById(config, scenarioId) {
 function findMatchingWebSocketMockScenario(config, requestPath, incoming) {
   const path = normalizeWebSocketMockPath(requestPath || "/");
   const candidates = (config.scenarios || []).filter(
-    (scenario) => scenario.enabled !== false && scenario.path === path && scenario.sendOnMessage,
+    (scenario) => scenario.enabled !== false && scenario.path === path && executionAllows(scenario.execution, "incoming"),
   );
   return candidates.find((scenario) => matchesWebSocketIncomingMessage(scenario, incoming)) || null;
 }
@@ -453,7 +526,7 @@ function handleWebSocketMockData(state, client, chunk) {
       appendWebSocketMockLog(state, "match", `Matched scenario ${scenario.name}.`, {
         path: client.path,
         scenarioId: scenario.id,
-        requestId: scenario.requestId,
+        requestId: scenario.sourceRequestId,
       });
       sendWebSocketMockResponse(state, client, "message", scenario);
     } else {
@@ -502,7 +575,7 @@ function startWebSocketMockPeriodicStream(state, client, scenarioOverride) {
   const tick = () => {
     if (client.closed) return;
     const scenario = getLiveWebSocketMockStreamScenario(state, client);
-    if (!scenario?.streamOnConnect) {
+    if (!scenario || !executionAllows(scenario.execution, "periodic")) {
       client.timer = null;
       return;
     }
@@ -513,7 +586,7 @@ function startWebSocketMockPeriodicStream(state, client, scenarioOverride) {
       appendWebSocketMockLog(state, "skip", `Periodic completed sequence for ${scenario.name}.`, {
         path: scenario.path,
         scenarioId: scenario.id,
-        requestId: scenario.requestId,
+        requestId: scenario.sourceRequestId,
       });
       return;
     }
@@ -538,7 +611,7 @@ function canSendWebSocketStreamMessage(scenario, sentCount, sequenceLength) {
 }
 
 function canScheduleNextWebSocketStreamTick(scenario, sentCount, sequenceLength) {
-  if (!scenario.streamOnConnect) return false;
+  if (!executionAllows(scenario.execution, "periodic")) return false;
   return canSendWebSocketStreamMessage(scenario, sentCount, sequenceLength);
 }
 
@@ -557,14 +630,14 @@ function sendWebSocketMockResponse(state, client, source, scenarioOverride) {
     appendWebSocketMockLog(state, "send", `Sent ${source} message from ${scenario.name}.`, {
       path: client.path || scenario.path,
       scenarioId: scenario.id,
-      requestId: scenario.requestId,
+      requestId: scenario.sourceRequestId,
     });
     return true;
   } catch {
     appendWebSocketMockLog(state, "error", `Failed sending message from ${scenario.name}.`, {
       path: client.path || scenario.path,
       scenarioId: scenario.id,
-      requestId: scenario.requestId,
+      requestId: scenario.sourceRequestId,
     });
     cleanupWebSocketMockClient(state, client);
     return false;
@@ -597,7 +670,7 @@ function resolveWebSocketMockPayload(state, client, source, scenarioOverride) {
     path: client.path || scenario.path,
     scenarioId: scenario.id,
     scenarioName: scenario.name,
-    requestId: scenario.requestId || "",
+    requestId: scenario.sourceRequestId || "",
   });
 }
 

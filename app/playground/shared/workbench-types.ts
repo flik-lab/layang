@@ -15,6 +15,33 @@ export type SettingsSection = "general" | "workspace" | "environments" | "networ
 
 export type RestBodyType = "none" | "json" | "text" | "form-url-encoded";
 
+export type MockExecutionMode = "incoming" | "standby" | "periodic" | "scheduled" | "hybrid";
+
+export type MockPeriodicTrigger = {
+  enabled: boolean;
+  intervalMs: number;
+  loop: boolean;
+  maxExecutions: number;
+};
+
+export type MockScheduleTrigger = {
+  enabled: boolean;
+  /** ISO date-time for the next scheduled execution. */
+  at?: string;
+  /** Optional repeat cadence after the first execution. 0 means one-shot. */
+  repeatMs?: number;
+};
+
+export type MockExecutionConfig = {
+  mode: MockExecutionMode;
+  incoming: boolean;
+  manual: boolean;
+  periodic: MockPeriodicTrigger;
+  schedule: MockScheduleTrigger;
+  /** Maximum time a pending REST/unary call may wait before timing out. */
+  timeoutMs: number;
+};
+
 export type RestAuthConfig =
   | { type: "none" }
   | { type: "bearer"; token: string }
@@ -23,9 +50,13 @@ export type RestAuthConfig =
 
 export type RestMockScenario = {
   id: string;
+  /** Legacy ownership link. Read during migration only. */
   requestId?: string;
+  /** Optional provenance only; runtime ownership is global. */
+  sourceRequestId?: string;
   name: string;
   enabled: boolean;
+  execution: MockExecutionConfig;
   method: string;
   path: string;
   priority?: number;
@@ -66,6 +97,9 @@ export type RestMockStatus = {
   url?: string;
   scenarioCount?: number;
   requestCount?: number;
+  pendingCount?: number;
+  maxPendingRequests?: number;
+  nextScheduleAt?: string;
   requestLog?: RestMockRequestLog[];
   message?: string;
   startedAt?: string;
@@ -189,6 +223,35 @@ export type ApiCollection = {
   updatedAt: string;
 };
 
+export type SavedRequestSnapshot = {
+  kind: ApiRequestKind;
+  requestJson: string;
+  metadata: MetadataPair[];
+  transportMode: TransportMode;
+  baseUrl: string;
+  nativeTarget: string;
+  environmentKey: EnvironmentKey;
+  assertionJson: string;
+  grpc?: GrpcRequestBinding;
+  grpcMethodKey?: string;
+  timeoutMs?: number;
+  streamIdleTimeoutMs?: number;
+  httpMethod?: string;
+  restParams?: MetadataPair[];
+  restPathParams?: MetadataPair[];
+  restAuth?: RestAuthConfig;
+  restBodyType?: RestBodyType;
+};
+
+export type SavedRequest = {
+  id: string;
+  name: string;
+  kind: ApiRequestKind;
+  snapshot: SavedRequestSnapshot;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AssertionResult = {
   name: string;
   status: "passed" | "failed" | "skipped";
@@ -242,10 +305,13 @@ export type MockMethodScenarioFile = {
 export type MockStreamMode = "scheduled" | "live-push";
 
 export type MockStreamSettings = {
+  /** Legacy stream mode retained for workspace compatibility. */
   mode?: MockStreamMode;
   intervalMs?: number;
   loop?: boolean;
   maxLoops?: number;
+  /** Mocking 2.0 trigger model. Takes precedence over legacy mode/interval fields. */
+  execution?: MockExecutionConfig;
 };
 
 export type MockScenarioSelection = Record<string, string>;
@@ -488,9 +554,13 @@ export type WebSocketMockMatchMode = "always" | "contains" | "regex" | "jsonPath
 
 export type WebSocketMockScenario = {
   id: string;
+  /** Legacy ownership link. Read during migration only. */
   requestId?: string;
+  /** Optional provenance only; runtime ownership is global. */
+  sourceRequestId?: string;
   name: string;
   enabled: boolean;
+  execution: MockExecutionConfig;
   path: string;
   responseText: string;
   intervalMs: number;
@@ -528,6 +598,8 @@ export type WebSocketMockStatus = {
   url?: string;
   clientCount?: number;
   messageCount?: number;
+  scheduledTimerCount?: number;
+  nextScheduleAt?: string;
   intervalMs?: number;
   loop?: boolean;
   maxLoops?: number;
@@ -610,6 +682,7 @@ export type RequestSessionControlPlane = {
   id: string;
   methodKey: string;
   sourceRequestId?: string;
+  savedRequestId?: string;
   grpc?: GrpcRequestBinding;
   timeoutMs?: number;
   streamIdleTimeoutMs?: number;
@@ -658,6 +731,7 @@ export type ProjectData = {
   activeProtoLibraryId: string;
   activeProtoVersionId: string;
   collections: ApiCollection[];
+  savedRequests: SavedRequest[];
   selectedMethodKey: string;
   requestJson: string;
   metadata: MetadataPair[];
@@ -676,12 +750,25 @@ export type ProjectData = {
 
 export type RequestResponseLayoutMode = "vertical" | "horizontal";
 
+export type RequestViewStateSnapshot = {
+  verticalResponseRatio: number;
+  horizontalResponseRatio: number;
+  /** Per-request request/response placement. Falls back to the workspace default when omitted. */
+  requestResponseLayout?: RequestResponseLayoutMode;
+  responseCollapsed?: boolean;
+  requestTab?: RequestTab;
+  responseTab?: ResponseTab;
+  requestScrollTop?: number;
+  responseScrollTop?: number;
+};
+
 export type WorkspaceLayoutSnapshot = {
   sidebarOpen: boolean;
   sidebarWidthPx: number;
   responseHeight: number;
   responseWidth?: number;
   requestResponseLayout?: RequestResponseLayoutMode;
+  requestViews?: Record<string, RequestViewStateSnapshot>;
 };
 
 export type WorkspaceExportBundle = {

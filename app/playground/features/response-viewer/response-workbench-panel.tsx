@@ -31,9 +31,13 @@ type WorkbenchResponsePanelProps = {
   responseSessionId: string;
   responseTab: ResponseTab;
   responseWidth: number;
+  responseCollapsed: boolean;
+  setResponseCollapsed: (value: boolean | ((current: boolean) => boolean)) => void;
   resizeResponseByKeyboard: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
   saveCurrentResultForDocs: () => unknown;
   selectedMethod: RpcMethodInfo | null;
+  detached?: boolean;
+  onDetach?: () => void;
 };
 
 export function WorkbenchResponsePanel(props: WorkbenchResponsePanelProps) {
@@ -47,8 +51,9 @@ function ActiveWorkbenchResponsePanel(props: WorkbenchResponsePanelProps) {
   const {
     activeIsRest, activeIsWebSocket, activeRunning, beginResponseResize, clearActiveResponse,
     effectiveRequestResponseLayout, exportResponse, handleResponseTabChange, onOpenDocs, responseBodyRef,
-    responseHeight, responseSessionId, responseTab, responseWidth, resizeResponseByKeyboard, saveCurrentResultForDocs,
-    selectedMethod,
+    responseHeight, responseSessionId, responseTab, responseWidth, responseCollapsed, setResponseCollapsed,
+    resizeResponseByKeyboard, saveCurrentResultForDocs,
+    selectedMethod, detached = false, onDetach,
   } = props;
   const responseRuntime = responseSessionRegistry.getOrCreate(responseSessionId);
   const responseStreamStore = responseRuntime.store;
@@ -59,7 +64,6 @@ function ActiveWorkbenchResponsePanel(props: WorkbenchResponsePanelProps) {
   const responseFilter = useResponseSelector(responseStreamStore, (snapshot) => snapshot.responseFilter);
   const controlEvents = useResponseSelector(responseStreamStore, (snapshot) => snapshot.controlEvents);
   const [responseFullscreen, setResponseFullscreen] = useState(false);
-  const [responseCollapsed, setResponseCollapsed] = useState(false);
   useEffect(() => {
     if (!responseFullscreen) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -115,7 +119,7 @@ function ActiveWorkbenchResponsePanel(props: WorkbenchResponsePanelProps) {
           height: effectiveRequestResponseLayout === "horizontal" ? "100%" : 8,
           flexShrink: 0,
           cursor: effectiveRequestResponseLayout === "horizontal" ? "col-resize" : "row-resize",
-          display: responseFullscreen || responseCollapsed ? "none" : "flex",
+          display: detached || responseFullscreen || responseCollapsed ? "none" : "flex",
           alignItems: "center", justifyContent: "center", outline: "none",
           "&::after": { content: '""', width: effectiveRequestResponseLayout === "horizontal" ? 1 : "100%", height: effectiveRequestResponseLayout === "horizontal" ? "100%" : 1, bgcolor: "transparent" },
           "&:hover::after, &:focus-visible::after": { bgcolor: "var(--border-strong)" },
@@ -130,10 +134,10 @@ function ActiveWorkbenchResponsePanel(props: WorkbenchResponsePanelProps) {
             aria-modal={responseFullscreen ? true : undefined}
             sx={{
               ...panelSx,
-              flex: effectiveRequestResponseLayout === "horizontal" ? responseCollapsed ? "0 0 30px" : `0 0 ${responseWidth}px` : responseCollapsed ? "0 0 30px" : `0 0 ${responseHeight}px`,
-              minHeight: effectiveRequestResponseLayout === "horizontal" ? 0 : responseCollapsed ? 30 : minResponseHeight,
-              minWidth: effectiveRequestResponseLayout === "horizontal" ? responseCollapsed ? 30 : minResponseWidth : 0,
-              maxWidth: effectiveRequestResponseLayout === "horizontal" && !responseFullscreen ? "calc(100% - 360px)" : undefined,
+              flex: detached ? "1 1 auto" : effectiveRequestResponseLayout === "horizontal" ? responseCollapsed ? "0 0 30px" : `0 0 ${responseWidth}px` : responseCollapsed ? "0 0 30px" : `0 0 ${responseHeight}px`,
+              minHeight: detached ? 0 : effectiveRequestResponseLayout === "horizontal" ? 0 : responseCollapsed ? 30 : minResponseHeight,
+              minWidth: detached ? 0 : effectiveRequestResponseLayout === "horizontal" ? responseCollapsed ? 30 : minResponseWidth : 0,
+              maxWidth: !detached && effectiveRequestResponseLayout === "horizontal" && !responseFullscreen ? "calc(100% - 360px)" : undefined,
               display: "flex", flexDirection: "column", borderRadius: 0, border: 0, boxShadow: "none", bgcolor: "background.paper",
               ...(responseFullscreen ? { position: "absolute", top: 24, right: 24, bottom: 24, left: 24, zIndex: 1, width: "auto", height: "auto", minWidth: 0, minHeight: 0, flex: "none", border: "1px solid", borderRadius: 1, borderColor: "primary.main", boxShadow: "0 28px 90px rgba(0,0,0,0.5)" } : {}),
             }}
@@ -154,12 +158,13 @@ function ActiveWorkbenchResponsePanel(props: WorkbenchResponsePanelProps) {
               onClearResponse={() => void clearActiveResponse()}
               fullscreen={responseFullscreen}
               onToggleFullscreen={() => setResponseFullscreen((current: boolean) => !current)}
-              collapsed={responseCollapsed}
-              onToggleCollapsed={() => setResponseCollapsed((current: boolean) => !current)}
+              collapsed={detached ? false : responseCollapsed}
+              onToggleCollapsed={detached ? undefined : () => setResponseCollapsed((current: boolean) => !current)}
               layout={effectiveRequestResponseLayout}
+              onDetach={detached ? undefined : onDetach}
             />
-            {!responseCollapsed ? <ResponseWorkbenchTabs value={responseTab} onChange={handleResponseTabChange} kind={activeIsRest ? "rest" : activeIsWebSocket ? "websocket" : "grpc"} streaming={Boolean(selectedMethod?.responseStream || activeIsWebSocket)} /> : null}
-            {!responseCollapsed ? (
+            {detached || !responseCollapsed ? <ResponseWorkbenchTabs value={responseTab} onChange={handleResponseTabChange} kind={activeIsRest ? "rest" : activeIsWebSocket ? "websocket" : "grpc"} streaming={Boolean(selectedMethod?.responseStream || activeIsWebSocket)} /> : null}
+            {detached || !responseCollapsed ? (
               <Box ref={responseBodyRef} role="tabpanel" id={`response-viewer-panel-${responseTab}`} tabIndex={0} className="response-selectable" sx={{ p: designSystem.space.panelPadding, flex: 1, minHeight: 0, minWidth: 0, overflow: responseTab === "messages" || responseTab === "latest" ? "hidden" : "auto", position: "relative" }}>
                 {responseTab === "messages" ? (
                   <MessageReadingWorkspace store={responseStreamStore} query={responseFilter} />

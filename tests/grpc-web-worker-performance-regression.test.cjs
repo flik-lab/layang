@@ -1,4 +1,9 @@
 "use strict";
+
+const __bundleCreateRequire = require("node:module").createRequire;
+const __bundlePath = require("node:path");
+const __bundleBaseDir = __dirname;
+
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const test = require("node:test");
@@ -155,3 +160,221 @@ test("activity rail icons never render navigation loading spinners or sx keyfram
   const sidebar = read("app/playground/features/shell/workbench-sidebar.tsx");
   assert.doesNotMatch(sidebar, /@keyframes sidebar-navigation-spin|navigationPending|Loading \{pendingSection/);
 });
+
+
+{
+  const __bundleOrigin = __bundlePath.join(__bundleBaseDir, "grpc-web-decode-worker-allocation-regression.test.cjs");
+  const require = __bundleCreateRequire(__bundleOrigin);
+  const __dirname = __bundlePath.dirname(__bundleOrigin);
+  const __filename = __bundleOrigin;
+  const { describe: __bundleDescribe } = require("node:test");
+  __bundleDescribe("grpc-web-decode-worker-allocation-regression.test.cjs", () => {
+    const assert = require("node:assert/strict");
+    const fs = require("node:fs");
+    const test = require("node:test");
+    const read = (path) => fs.readFileSync(path, "utf8");
+    
+    test("decode worker releases decoded object and serialized JSON before awaiting document registration", () => {
+      const source = read("lib/grpc-web-decode-worker-source.ts");
+      assert.match(source, /prepareDocumentRegistration/);
+      assert.match(source, /registerPreparedDocument/);
+      assert.doesNotMatch(source, /const value = decodeProtobufMessage\(frame\.payload, schema\.rootType\);[\s\S]{0,240}await registerDocument\(serialized, preview\)/);
+    });
+    
+    
+    test("decode worker serializes protobuf directly to JSON text without building a full decoded object graph", () => {
+      const source = read("lib/grpc-web-decode-worker-source.ts");
+      assert.match(source, /decodeProtobufMessageToJson/);
+      assert.match(source, /const serialized = decodeProtobufMessageToJson\(payload, schema\.rootType\)/);
+      assert.doesNotMatch(source, /serializePayload\(decodeProtobufMessage\(payload, schema\.rootType\)\)/);
+    });
+    
+  });
+}
+
+{
+  const __bundleOrigin = __bundlePath.join(__bundleBaseDir, "grpc-web-frame-buffer-allocation-regression.test.cjs");
+  const require = __bundleCreateRequire(__bundleOrigin);
+  const __dirname = __bundlePath.dirname(__bundleOrigin);
+  const __filename = __bundleOrigin;
+  const { describe: __bundleDescribe } = require("node:test");
+  __bundleDescribe("grpc-web-frame-buffer-allocation-regression.test.cjs", () => {
+    const assert = require("node:assert/strict");
+    const fs = require("node:fs");
+    const test = require("node:test");
+    
+    const source = () => fs.readFileSync("lib/grpc-web-decode-worker-source.ts", "utf8");
+    
+    test("gRPC-Web frame parser queues chunks instead of repeatedly concatenating an incomplete large frame", () => {
+      const text = source();
+      assert.match(text, /frameChunks/);
+      assert.match(text, /frameBufferedBytes/);
+      assert.match(text, /consumeFrameBytes/);
+      assert.doesNotMatch(text, /frameBuffer\s*=\s*concatBytes\(frameBuffer, chunk\)/);
+    });
+    
+  });
+}
+
+{
+  const __bundleOrigin = __bundlePath.join(__bundleBaseDir, "grpc-web-no-main-thread-fallback-regression.test.cjs");
+  const require = __bundleCreateRequire(__bundleOrigin);
+  const __dirname = __bundlePath.dirname(__bundleOrigin);
+  const __filename = __bundleOrigin;
+  const { describe: __bundleDescribe } = require("node:test");
+  __bundleDescribe("grpc-web-no-main-thread-fallback-regression.test.cjs", () => {
+    const assert = require("node:assert/strict");
+    const fs = require("node:fs");
+    const test = require("node:test");
+    const read = (file) => fs.readFileSync(file, "utf8");
+    
+    test("browser gRPC-Web requires worker decode and has no renderer frame parser fallback", () => {
+      const grpcWeb = read("lib/grpc-web-client.ts");
+      assert.doesNotMatch(grpcWeb, /new GrpcWebFrameParser\(/);
+      assert.doesNotMatch(grpcWeb, /processBytesFallback/);
+      assert.doesNotMatch(grpcWeb, /main-thread fallback/);
+      assert.match(grpcWeb, /This response schema cannot be decoded by the gRPC-Web worker\./);
+    });
+    
+    test("gRPC-Web decode worker registers payload documents through a MessagePort", () => {
+      const source = read("lib/grpc-web-decode-worker-source.ts");
+      const client = read("lib/grpc-web-decode-worker-client.ts");
+      assert.match(source, /payloadDocumentPort/);
+      assert.match(source, /prepareDocumentRegistration/);
+      assert.match(source, /registerPreparedDocument/);
+      assert.match(source, /register-utf8/);
+      assert.doesNotMatch(source, /payloadStore/);
+      assert.match(client, /producerPort/);
+      assert.doesNotMatch(client, /getPayload/);
+    });
+    
+  });
+}
+
+{
+  const __bundleOrigin = __bundlePath.join(__bundleBaseDir, "grpc-web-stop-reset-regression.test.cjs");
+  const require = __bundleCreateRequire(__bundleOrigin);
+  const __dirname = __bundlePath.dirname(__bundleOrigin);
+  const __filename = __bundleOrigin;
+  const { describe: __bundleDescribe } = require("node:test");
+  __bundleDescribe("grpc-web-stop-reset-regression.test.cjs", () => {
+    const test = require("node:test");
+    const assert = require("node:assert/strict");
+    const fs = require("node:fs");
+    const read = (file) => fs.readFileSync(file, "utf8");
+    
+    test("request runner binds Electron gRPC-Web transport lifecycle to request session id", () => {
+      const runner = read("app/playground/hooks/use-request-runner.ts");
+      assert.match(runner, /runId: targetSessionId/);
+      assert.match(runner, /electronGrpcWebTransport\?\.cancel\(sessionId\)/);
+      assert.match(runner, /responseSessionRegistry\.get\(sessionId\)\?\.store\.reset\(\)/);
+    });
+    
+  });
+}
+
+{
+  const __bundleOrigin = __bundlePath.join(__bundleBaseDir, "grpc-web-transport-isolation-regression.test.cjs");
+  const require = __bundleCreateRequire(__bundleOrigin);
+  const __dirname = __bundlePath.dirname(__bundleOrigin);
+  const __filename = __bundleOrigin;
+  const { describe: __bundleDescribe } = require("node:test");
+  __bundleDescribe("grpc-web-transport-isolation-regression.test.cjs", () => {
+    const test = require("node:test");
+    const assert = require("node:assert/strict");
+    const fs = require("node:fs");
+    const read = (file) => fs.readFileSync(file, "utf8");
+    
+    test("Electron gRPC-Web uses disposable transport runtime while browser keeps worker fallback", () => {
+      const client = read("lib/grpc-web-client.ts");
+      assert.match(client, /window\.electronGrpcWebTransport\?\.isAvailable/);
+      assert.match(client, /invokeElectronGrpcWebTransport/);
+      assert.match(client, /createPayloadDocumentProducerChannel/);
+      assert.match(client, /Browser fallback/);
+    });
+    
+    test("transport-backed documents route outside the renderer payload worker", () => {
+      const service = read("app/playground/features/response-viewer/payload-document/payloadDocument.service.ts");
+      assert.match(service, /id\.startsWith\("transport:"\)/);
+      assert.match(service, /createTransportPayloadDocumentClient/);
+    });
+    
+    test("preload exposes transport invoke cancel and payload APIs", () => {
+      const preload = read("electron/preload.cjs");
+      assert.match(preload, /electronGrpcWebTransport/);
+      assert.match(preload, /grpc-web-transport:invoke/);
+      assert.match(preload, /grpc-web-transport:cancel/);
+      assert.match(preload, /grpc-web-transport:payload/);
+    });
+    
+    test("main process owns disposable transport manager and disposes it on shutdown", () => {
+      const main = read("electron/main.cjs");
+      assert.match(main, /createDisposableTransportRuntimeManager/);
+      assert.match(main, /registerGrpcWebTransportIpc/);
+      assert.match(main, /transportRuntimeManager\.disposeAll/);
+    });
+    
+  });
+}
+
+{
+  const __bundleOrigin = __bundlePath.join(__bundleBaseDir, "grpc-web-unary-proxy-regression.test.cjs");
+  const require = __bundleCreateRequire(__bundleOrigin);
+  const __dirname = __bundlePath.dirname(__bundleOrigin);
+  const __filename = __bundleOrigin;
+  const { describe: __bundleDescribe } = require("node:test");
+  __bundleDescribe("grpc-web-unary-proxy-regression.test.cjs", () => {
+    const assert = require("node:assert/strict");
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const test = require("node:test");
+    
+    const source = fs.readFileSync(path.join(__dirname, "..", "lib", "grpc-web-client.ts"), "utf8");
+    
+    test("browser unary and server-streaming gRPC-Web both use text framing", () => {
+      assert.match(source, /const requestBody: string = base64Encode\(requestFrame\)/);
+      assert.match(source, /const contentType = "application\/grpc-web-text\+proto"/);
+      assert.doesNotMatch(source, /responseStream\s*\? base64Encode\(requestFrame\)/);
+    });
+    
+    test("browser client defaults to text decoding while still accepting explicit binary responses", () => {
+      assert.match(source, /resolveGrpcWebResponseEncoding\(contentType\)/);
+      assert.match(source, /normalized === "application\/grpc-web-text\+proto"/);
+      assert.match(source, /normalized === "application\/grpc-web\+proto"/);
+      assert.match(source, /return "text";/);
+      assert.doesNotMatch(source, /processBytesFallback/);
+      assert.match(source, /await processWorkerChunk\(chunk\.value, false\)/);
+    });
+    
+    const proxySource = fs.readFileSync(path.join(__dirname, "..", "electron", "services", "grpc-web-proxy-server.cjs"), "utf8");
+    
+    test("unary grpc-web response metadata cannot overwrite the negotiated grpc-web content type", () => {
+      const startResponse = proxySource.match(/function startGrpcWebResponse[\s\S]*?\n}\n\nfunction requestHeadersToMetadata/)?.[0] || "";
+      assert.match(startResponse, /protocolHeaders\.has\(lower\)/);
+    });
+    
+  });
+}
+
+{
+  const __bundleOrigin = __bundlePath.join(__bundleBaseDir, "grpc-web-varint-allocation-regression.test.cjs");
+  const require = __bundleCreateRequire(__bundleOrigin);
+  const __dirname = __bundlePath.dirname(__bundleOrigin);
+  const __filename = __bundleOrigin;
+  const { describe: __bundleDescribe } = require("node:test");
+  __bundleDescribe("grpc-web-varint-allocation-regression.test.cjs", () => {
+    const assert = require("node:assert/strict");
+    const fs = require("node:fs");
+    const test = require("node:test");
+    
+    test("gRPC-Web decoder uses numeric varints for tags, lengths, and common 32-bit scalars", () => {
+      const source = fs.readFileSync("lib/grpc-web-decode-worker-source.ts", "utf8");
+      assert.match(source, /function readVarintNumber/);
+      assert.match(source, /const tag = readVarintNumber\(bytes, state\)/);
+      assert.match(source, /const length = readVarintNumber\(bytes, state\)/);
+      assert.match(source, /case 'uint32':[\s\S]{0,180}readVarintNumber\(bytes, state\)/);
+      assert.match(source, /case 'bool':[\s\S]{0,180}readVarintNumber\(bytes, state\) !== 0/);
+    });
+    
+  });
+}

@@ -21,11 +21,17 @@ test("performance telemetry uses an external store and bounded samples", () => {
   assert.match(source, /recommendations/);
 });
 
-test("status bar exposes a lightweight Perf diagnostics panel with copy snapshot", () => {
+test("performance diagnostics open in a dedicated managed window from the status bar", () => {
   const statusBar = read("app/playground/features/shell/workbench-status-bar.tsx");
+  const appBar = read("app/playground/features/shell/workbench-app-bar.tsx");
+  const detachedTitlebar = read("app/playground/features/windows/detached-window-titlebar.tsx");
+  const host = read("app/playground/shared/performance/PerformanceStatsHost.tsx");
   const panel = read("app/playground/shared/performance/PerformanceStatsPanel.tsx");
-  assert.match(statusBar, /PerformanceStatsPanel/);
   assert.match(statusBar, />Perf</);
+  assert.match(statusBar, /openDetached\?\.\(\{ kind: "performance", title: "Performance" \}\)/);
+  assert.doesNotMatch(appBar, /Performance diagnostics/);
+  assert.doesNotMatch(detachedTitlebar, /Performance diagnostics/);
+  assert.match(host, /performance:snapshot/);
   assert.match(panel, /Copy Snapshot JSON/);
   assert.match(panel, /Main thread/);
   assert.match(panel, /Stream/);

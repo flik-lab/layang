@@ -13,6 +13,7 @@ import {
   defaultMockStreamLoop,
 } from "../../shared/workbench-constants";
 import type {
+  MockExecutionConfig,
   MockFormat,
   MockMethodScenarioFile,
   MockParseResult,
@@ -28,6 +29,7 @@ import type {
   ProjectData,
 } from "../../shared/workbench-types";
 import { parseSimpleYaml, stringifySimpleYaml } from "./mock-scenario-yaml";
+import { normalizeMockExecutionConfig } from "./mock-execution-model";
 import {
   buildDefaultMockInputMatcher,
   decorateGeneratedResponse,
@@ -1169,6 +1171,20 @@ function validateMockStreamShape(value: unknown, path: string): string | null {
   if (Object.hasOwn(value, "mode") && value.mode !== "scheduled" && value.mode !== "live-push") {
     return `${path}.mode must be "scheduled" or "live-push".`;
   }
+  if (Object.hasOwn(value, "execution")) {
+    if (!isPlainRecord(value.execution)) return `${path}.execution must be an object.`;
+    const mode = value.execution.mode;
+    if (
+      mode !== undefined &&
+      mode !== "incoming" &&
+      mode !== "standby" &&
+      mode !== "periodic" &&
+      mode !== "scheduled" &&
+      mode !== "hybrid"
+    ) {
+      return `${path}.execution.mode must be incoming, standby, periodic, scheduled, or hybrid.`;
+    }
+  }
   return null;
 }
 
@@ -1421,20 +1437,33 @@ export function normalizeMockStreamSettings(
   const intervalRaw = record.intervalMs ?? record.interval_ms;
   const maxLoopsRaw = record.maxLoops ?? record.max_loops;
   const hasLoop = Object.hasOwn(record, "loop");
-  const fallbackMode = fallback.mode;
+  const fallbackMode = fallback.mode ?? (isPlainRecord(value) ? "scheduled" : undefined);
   const fallbackInterval = fallback.intervalMs;
   const fallbackLoop = fallback.loop;
   const fallbackMaxLoops = fallback.maxLoops;
+  const mode =
+    modeRaw !== undefined
+      ? String(modeRaw).trim().toLowerCase() === "live-push"
+        ? "live-push"
+        : "scheduled"
+      : fallbackMode;
+  const intervalMs = intervalRaw !== undefined ? Math.max(0, Math.floor(Number(intervalRaw) || 0)) : fallbackInterval;
+  const loop = hasLoop ? Boolean(record.loop) : fallbackLoop;
+  const maxLoops = maxLoopsRaw !== undefined ? Math.max(0, Math.floor(Number(maxLoopsRaw) || 0)) : fallbackMaxLoops;
   return {
-    mode:
-      modeRaw !== undefined
-        ? String(modeRaw).trim().toLowerCase() === "live-push"
-          ? "live-push"
-          : "scheduled"
-        : fallbackMode,
-    intervalMs: intervalRaw !== undefined ? Math.max(0, Math.floor(Number(intervalRaw) || 0)) : fallbackInterval,
-    loop: hasLoop ? Boolean(record.loop) : fallbackLoop,
-    maxLoops: maxLoopsRaw !== undefined ? Math.max(0, Math.floor(Number(maxLoopsRaw) || 0)) : fallbackMaxLoops,
+    mode,
+    intervalMs,
+    loop,
+    maxLoops,
+    execution: normalizeMockExecutionConfig(
+      (isPlainRecord(record.execution) ? record.execution : undefined) as Partial<MockExecutionConfig> | undefined,
+      {
+        streamMode: mode,
+        intervalMs,
+        loop,
+        maxLoops,
+      },
+    ),
   };
 }
 

@@ -7,6 +7,7 @@ import {
   mergeEnvironments as featureMergeEnvironments,
 } from "../environments/environment-model";
 import { createDefaultMockServerProject, normalizeMockServerProject } from "../mock-server/mock-scenario-model";
+import { normalizeMockExecutionConfig } from "../mock-server/mock-execution-model";
 import {
   createLegacyGrpcBinding,
   grpcBindingIdentity,
@@ -59,6 +60,7 @@ import type {
   RequestSession,
   ResponseTab,
   SavedExample,
+  SavedRequest,
   UiEvent,
   WorkspaceLayoutSnapshot,
   RestAuthConfig,
@@ -129,9 +131,22 @@ function normalizeWebSocketMockScenarios(input: unknown): WebSocketMockScenario[
     .filter((scenario): scenario is Partial<WebSocketMockScenario> => Boolean(scenario && typeof scenario === "object"))
     .map((scenario) => ({
       id: typeof scenario.id === "string" && scenario.id ? scenario.id : createId(),
-      requestId: typeof scenario.requestId === "string" && scenario.requestId ? scenario.requestId : undefined,
+      requestId: undefined,
+      sourceRequestId:
+        typeof scenario.sourceRequestId === "string" && scenario.sourceRequestId
+          ? scenario.sourceRequestId
+          : typeof scenario.requestId === "string" && scenario.requestId
+            ? scenario.requestId
+            : undefined,
       name: typeof scenario.name === "string" && scenario.name ? scenario.name : "WebSocket scenario",
       enabled: scenario.enabled !== false,
+      execution: normalizeMockExecutionConfig(scenario.execution, {
+        streamOnConnect: Boolean(scenario.streamOnConnect),
+        sendOnMessage: Boolean(scenario.sendOnMessage),
+        intervalMs: scenario.intervalMs,
+        loop: scenario.loop,
+        maxLoops: scenario.maxLoops,
+      }),
       path: normalizeWebSocketMockPath(scenario.path),
       responseText: typeof scenario.responseText === "string" ? scenario.responseText : "[]",
       intervalMs: Math.min(120_000, Math.max(1, Math.trunc(Number(scenario.intervalMs) || 1000))),
@@ -203,9 +218,16 @@ function normalizeRestMockScenarios(input: unknown): RestMockScenario[] {
     .filter((scenario): scenario is Partial<RestMockScenario> => Boolean(scenario && typeof scenario === "object"))
     .map((scenario) => ({
       id: typeof scenario.id === "string" && scenario.id ? scenario.id : createId(),
-      requestId: typeof scenario.requestId === "string" && scenario.requestId ? scenario.requestId : undefined,
+      requestId: undefined,
+      sourceRequestId:
+        typeof scenario.sourceRequestId === "string" && scenario.sourceRequestId
+          ? scenario.sourceRequestId
+          : typeof scenario.requestId === "string" && scenario.requestId
+            ? scenario.requestId
+            : undefined,
       name: typeof scenario.name === "string" && scenario.name ? scenario.name : "REST scenario",
       enabled: scenario.enabled !== false,
+      execution: normalizeMockExecutionConfig(scenario.execution),
       method: typeof scenario.method === "string" && scenario.method ? scenario.method.toUpperCase() : "GET",
       path: typeof scenario.path === "string" && scenario.path ? scenario.path : "/",
       priority: typeof scenario.priority === "number" ? Math.trunc(scenario.priority) : 0,
@@ -223,6 +245,80 @@ function normalizeRestMockScenarios(input: unknown): RestMockScenario[] {
     }));
 }
 
+function normalizeSavedRequests(
+  input: unknown,
+  protoNormalization: ProtoLibraryNormalizationResult,
+): SavedRequest[] {
+  if (!Array.isArray(input)) return [];
+  const now = new Date().toISOString();
+  return input.flatMap((value) => {
+    if (!value || typeof value !== "object") return [];
+    const record = value as Partial<SavedRequest>;
+    const snapshot = record.snapshot && typeof record.snapshot === "object" ? record.snapshot : null;
+    const kind = record.kind === "grpc" || record.kind === "rest" || record.kind === "websocket"
+      ? record.kind
+      : snapshot?.kind === "grpc" || snapshot?.kind === "rest" || snapshot?.kind === "websocket"
+        ? snapshot.kind
+        : null;
+    if (!kind || !snapshot) return [];
+
+    const grpc = remapGrpcBindingToGlobalLibrary(
+      normalizeGrpcRequestBinding(snapshot.grpc),
+      protoNormalization,
+    );
+    const transportMode = kind === "websocket"
+      ? "websocket"
+      : kind === "rest"
+        ? "rest"
+        : snapshot.transportMode === "native-grpc"
+          ? "native-grpc"
+          : "grpc-web";
+    const fallbackBaseUrl = kind === "websocket"
+      ? "ws://localhost:8080"
+      : kind === "rest"
+        ? "http://127.0.0.1:3000"
+        : "http://127.0.0.1:8080";
+
+    return [{
+      id: typeof record.id === "string" && record.id ? record.id : createId(),
+      name: typeof record.name === "string" && record.name.trim() ? record.name.trim() : "Saved request",
+      kind,
+      snapshot: {
+        kind,
+        requestJson: normalizeEditableText(snapshot.requestJson, kind === "grpc" ? "{}" : ""),
+        metadata: Array.isArray(snapshot.metadata) ? snapshot.metadata : [],
+        transportMode,
+        baseUrl: typeof snapshot.baseUrl === "string" && snapshot.baseUrl ? snapshot.baseUrl : fallbackBaseUrl,
+        nativeTarget:
+          typeof snapshot.nativeTarget === "string" && snapshot.nativeTarget ? snapshot.nativeTarget : "localhost:50051",
+        environmentKey: isEnvironmentKey(snapshot.environmentKey) ? snapshot.environmentKey : "default",
+        assertionJson: typeof snapshot.assertionJson === "string" ? snapshot.assertionJson : defaultAssertion,
+        grpc,
+        grpcMethodKey:
+          typeof snapshot.grpcMethodKey === "string" && snapshot.grpcMethodKey
+            ? snapshot.grpcMethodKey
+            : grpc?.methodFullName,
+        timeoutMs:
+          Number.isFinite(Number(snapshot.timeoutMs)) && Number(snapshot.timeoutMs) >= 0
+            ? Math.trunc(Number(snapshot.timeoutMs))
+            : undefined,
+        streamIdleTimeoutMs:
+          Number.isFinite(Number(snapshot.streamIdleTimeoutMs)) && Number(snapshot.streamIdleTimeoutMs) >= 0
+            ? Math.trunc(Number(snapshot.streamIdleTimeoutMs))
+            : undefined,
+        httpMethod:
+          typeof snapshot.httpMethod === "string" && snapshot.httpMethod ? snapshot.httpMethod.toUpperCase() : undefined,
+        restParams: Array.isArray(snapshot.restParams) ? snapshot.restParams : [],
+        restPathParams: Array.isArray(snapshot.restPathParams) ? snapshot.restPathParams : [],
+        restAuth: normalizeRestAuth(snapshot.restAuth),
+        restBodyType: normalizeRestBodyType(snapshot.restBodyType),
+      },
+      createdAt: typeof record.createdAt === "string" ? record.createdAt : now,
+      updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : now,
+    }];
+  });
+}
+
 export function defaultProjectData(): ProjectData {
   return {
     version: 3,
@@ -237,6 +333,7 @@ export function defaultProjectData(): ProjectData {
     activeProtoLibraryId: "",
     activeProtoVersionId: "",
     collections: [],
+    savedRequests: [],
     selectedMethodKey: "",
     requestJson: "{}",
     metadata: defaultMetadata,
@@ -349,6 +446,7 @@ export function normalizeProjectData(input: Partial<ProjectData> | LegacyWorkspa
     activeProtoLibraryId: activeProto?.library.id ?? "",
     activeProtoVersionId: activeProto?.version.id ?? "",
     collections: normalizedCollections,
+    savedRequests: normalizeSavedRequests((data as ProjectData).savedRequests, protoNormalization),
     metadata: Array.isArray(data.metadata) ? data.metadata : defaultMetadata,
     examples: normalizeSavedExamples(data.examples),
     methodDocs: Array.isArray((data as ProjectData).methodDocs)
@@ -392,6 +490,7 @@ export function looksLikeProjectData(value: unknown): value is Partial<ProjectDa
     Array.isArray(record.protoFiles) ||
     Array.isArray((record as ProjectData).protoLibraries) ||
     Array.isArray((record as ProjectData).collections) ||
+    Array.isArray((record as ProjectData).savedRequests) ||
     Array.isArray(record.environments) ||
     Array.isArray(record.requestTabs) ||
     Array.isArray(record.examples) ||
@@ -650,6 +749,8 @@ export function normalizeRequestSession(session: RequestSession): RequestSession
     ),
     sourceRequestId:
       typeof session.sourceRequestId === "string" && session.sourceRequestId ? session.sourceRequestId : undefined,
+    savedRequestId:
+      typeof session.savedRequestId === "string" && session.savedRequestId ? session.savedRequestId : undefined,
     grpc: normalizeGrpcRequestBinding(session.grpc),
     timeoutMs:
       Number.isFinite(Number(session.timeoutMs)) && Number(session.timeoutMs) >= 0

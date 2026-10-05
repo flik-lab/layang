@@ -6,6 +6,7 @@ import {
   type ReactNode,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -55,6 +56,7 @@ import {
   documentationMarkerDefinitions,
   renderDocumentationMarkdown,
 } from "@/lib/docs-core.mjs";
+import { LayangCodeEditor, type LayangCodeEditorHandle } from "@/components/editor/layang-code-editor";
 import { copyTextWithAnnouncement } from "@/lib/accessibility";
 import { SearchHighlightedText } from "../../shared/components/search-highlight";
 import { uiCopy } from "../../shared/ui-copy";
@@ -96,6 +98,7 @@ export function UnifiedDocumentationPanel({
   const [deprecated, setDeprecated] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<TechnicalMenuAnchor>(null);
   const [technicalDetailsOpen, setTechnicalDetailsOpen] = useState(false);
+  const markdownEditorRef = useRef<LayangCodeEditorHandle | null>(null);
 
   useEffect(() => {
     setTab(defaultTab);
@@ -160,29 +163,31 @@ export function UnifiedDocumentationPanel({
   const insertAutomaticMarker = () => {
     const definition = markerDefinitions.find((item) => item.marker === markerToInsert) ?? markerDefinitions[0];
     if (!definition) return;
-    const editor = document.getElementById("documentation-markdown-editor") as HTMLTextAreaElement | null;
-    const existingIndex = markdown.indexOf(definition.marker);
+    const editor = markdownEditorRef.current;
+    const currentMarkdown = editor?.getValue() ?? markdown;
+    const existingIndex = currentMarkdown.indexOf(definition.marker);
     if (existingIndex >= 0) {
-      editor?.focus();
-      editor?.setSelectionRange(existingIndex, existingIndex + definition.marker.length);
+      editor?.setSelection(existingIndex, existingIndex + definition.marker.length);
       return;
     }
-    const start = editor?.selectionStart ?? markdown.length;
-    const end = editor?.selectionEnd ?? start;
-    const before = markdown.slice(0, start);
-    const after = markdown.slice(end);
+    const selection = editor?.getSelection();
+    const start = selection?.from ?? currentMarkdown.length;
+    const end = selection?.to ?? start;
+    const before = currentMarkdown.slice(0, start);
+    const after = currentMarkdown.slice(end);
     const leadingBreak = before && !before.endsWith("\n\n") ? (before.endsWith("\n") ? "\n" : "\n\n") : "";
     const trailingBreak = after && !after.startsWith("\n\n") ? (after.startsWith("\n") ? "\n" : "\n\n") : "";
     const block = `## ${titleCase(definition.label)}\n\n${definition.marker}`;
     const insertion = `${leadingBreak}${block}${trailingBreak}`;
-    const next = `${before}${insertion}${after}`;
-    const markerStart = before.length + leadingBreak.length + block.indexOf(definition.marker);
-    setMarkdown(next);
-    requestAnimationFrame(() => {
-      const updatedEditor = document.getElementById("documentation-markdown-editor") as HTMLTextAreaElement | null;
-      updatedEditor?.focus();
-      updatedEditor?.setSelectionRange(markerStart, markerStart + definition.marker.length);
-    });
+    const markerStart = start + leadingBreak.length + block.indexOf(definition.marker);
+    if (editor) {
+      editor.replaceRange(start, end, insertion, {
+        anchor: markerStart,
+        head: markerStart + definition.marker.length,
+      });
+    } else {
+      setMarkdown(`${before}${insertion}${after}`);
+    }
   };
   const saveDraft = () => {
     onSaveSource({
@@ -357,24 +362,17 @@ export function UnifiedDocumentationPanel({
                 </Button>
               </Stack>
             </Stack>
-            <TextField
-              id="documentation-markdown-editor"
-              multiline
-              minRows={22}
+            <LayangCodeEditor
+              ref={markdownEditorRef}
               value={markdown}
-              onChange={(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setMarkdown(event.target.value)}
+              onChange={setMarkdown}
+              language="markdown"
+              ariaLabel="Documentation Markdown"
               placeholder="Write the guide in Markdown."
-              inputProps={{
-                "aria-label": "Documentation Markdown",
-                spellCheck: false,
-                style: {
-                  minHeight: 430,
-                  border: 0,
-                  borderRadius: 0,
-                  resize: "vertical",
-                  fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
-                },
-              }}
+              minRows={22}
+              resetKey={`documentation:${page.id}`}
+              lineWrapping
+              style={{ minHeight: 430 }}
             />
           </Paper>
 

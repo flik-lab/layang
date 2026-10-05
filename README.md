@@ -5,7 +5,7 @@
 # Layang
 
 [![Website](https://img.shields.io/badge/website-layang.mff.web.id-blue)](https://layang.mff.web.id/)
-[![Version](https://img.shields.io/badge/version-1.1.5-blue)](https://github.com/flik-lab/layang/releases)
+[![Version](https://img.shields.io/badge/version-1.1.6-blue)](https://github.com/flik-lab/layang/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Layang is a desktop API workbench for REST, WebSocket, gRPC, and gRPC-Web. It uses workspace folders as the source of truth, so the same requests, schemas, mocks, environments, and documentation can be used from both the desktop app and CLI.
@@ -46,15 +46,15 @@ The gRPC service workspace groups:
 
 Request-specific examples and documentation stay with the request instead of being managed from a separate global screen.
 
-## Release 1.1.5
+## Release 1.1.6
 
-Version `1.1.5` focuses on mock workflows, Web Access, and live response handling.
+Version `1.1.6` focuses on responsive daily workflows, global Mocking 2.0, and detachable multi-window workspaces.
 
-* Added persistent gRPC Mock Live Push and manual sending from saved scenarios.
-* Improved Web Access HTTPS, HTTP/2, certificate trust, and runtime settings.
-* Improved live response scrolling and latest-message rendering without blanking the viewer.
-* Fixed Proto drag-and-drop state and direct collection imports.
-* Changed the local desktop renderer port to `12999`.
+* Added per-request Request/Response split state with responsive small-window behavior.
+* Added keyboard-first navigation and actions, including Quick Open, Send, Save, close, focus, and request-tab navigation shortcuts.
+* Added global REST, WebSocket, and gRPC mock scenarios with Incoming, Standby, Periodic, Scheduled, and Hybrid execution triggers.
+* Added detachable Mocking, Request, and Response windows with Back to Main / Back to Request reattachment and persisted multi-monitor layout.
+* Hardened dirty-state guards, cross-window persistence, response mirroring, pending REST mock limits, and release/runtime regression coverage.
 
 See [CHANGELOG.md](./CHANGELOG.md) for the full release history.
 

@@ -7,13 +7,9 @@ const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
 
-test("request workspace reuses the Workspace Mock settings menu, manager, and source editor", () => {
+test("request workspace delegates mock editing to the global Mocking workspace", () => {
   const source = fs.readFileSync(
     path.join(root, "app/playground/features/shell/workbench-main-panel.tsx"),
-    "utf8",
-  );
-  const controls = fs.readFileSync(
-    path.join(root, "app/playground/features/mock-server/grpc-mock-scenario-controls.tsx"),
     "utf8",
   );
   const services = fs.readFileSync(
@@ -21,36 +17,14 @@ test("request workspace reuses the Workspace Mock settings menu, manager, and so
     "utf8",
   );
 
-  assert.match(source, /<GrpcMockScenarioControls/);
-  assert.match(source, /onOpenSettings=\{setRequestMockSettingsAnchor\}/);
-  assert.match(source, /<GrpcMockScenarioActionsMenu/);
-  assert.match(source, /<GrpcMockScenarioManagerDialog/);
-  assert.match(source, /<GrpcScenarioSourceDialog/);
+  assert.match(source, /Global Mocking/);
+  assert.match(source, /Mock scenarios now live in one workspace/);
+  assert.match(source, /Open Global Mocking/);
+  assert.match(source, /Open this gRPC method/);
+  assert.doesNotMatch(source, /requestMockEditorDraft/);
   assert.match(services, /onManageScenario=\{openMockScenarioManager\}/);
   assert.match(services, /onAddScenario=\{addMockScenarioForMethod\}/);
-  assert.match(controls, /Scenario settings/);
-  assert.match(controls, /Edit source/);
-  assert.match(controls, /Manage scenarios/);
-  assert.match(controls, /Add scenario/);
-  assert.match(controls, /Duplicate active/);
-  assert.match(controls, /Delete active/);
-  assert.match(source, /saveMockScenarioForMethod/);
-  assert.match(source, /selectedScenarioIds/);
-  assert.match(source, /methodBindings/);
-  assert.match(source, /attach this request's pinned Proto revision automatically/);
-  assert.match(source, /activeRequestMockScenarioIdSignature/);
-  assert.match(source, /validIds = new Set/);
-  assert.match(source, /else delete selectedScenarioIds\[key\]/);
-  assert.match(source, /setRequestMockSettingsAnchor\(null\);[\s\S]*window\.confirm/);
-  assert.match(source, /setRequestMockManagerOpen\(false\);[\s\S]{0,220}window\.setTimeout\(\(\) => \{[\s\S]{0,120}deleteActiveRequestMockScenario\(scenarioId\)/);
-  assert.match(controls, /const \[scenarioMenuAnchor, setScenarioMenuAnchor\] = useState/);
-  assert.match(controls, /aria-label="Active gRPC mock scenario"/);
-  assert.match(controls, /<Menu[\s\S]{0,220}anchorEl=\{scenarioMenuAnchor\}/);
-  assert.match(controls, /setScenarioMenuAnchor\(null\);[\s\S]{0,120}window\.setTimeout\(\(\) => onScenarioSelect\(scenario\.id\), 0\)/);
-  assert.doesNotMatch(controls, /<Select[\s>]/);
-  assert.match(controls, /onClose\(\);[\s\S]*window\.setTimeout\(action, 0\)/);
-  assert.doesNotMatch(source, /requestMockEditorDraft/);
-  assert.doesNotMatch(source, /openMockScenarioManager\(activeRequestMockContext/);
+  assert.match(services, /<MockExecutionControls/);
 });
 
 test("Web Access gateway uses the same request matcher as native gRPC mock", () => {
@@ -62,7 +36,7 @@ test("Web Access gateway uses the same request matcher as native gRPC mock", () 
   assert.doesNotMatch(gateway, /\{ \.\.\.request, headers:/);
 });
 
-test("gRPC server-stream mock exposes persistent Live Push through IPC and focused workspace", () => {
+test("gRPC server-stream mock exposes persistent standby/manual send through IPC and focused workspace", () => {
   const runtime = fs.readFileSync(path.join(root, "electron/services/grpc-mock-server.cjs"), "utf8");
   const ipc = fs.readFileSync(path.join(root, "electron/ipc/grpc-mock-ipc.cjs"), "utf8");
   const preload = fs.readFileSync(path.join(root, "electron/preload.cjs"), "utf8");
@@ -75,10 +49,11 @@ test("gRPC server-stream mock exposes persistent Live Push through IPC and focus
   assert.match(runtime, /live-push/);
   assert.match(ipc, /mock-server:stream-send/);
   assert.match(preload, /sendStream:.*mock-server:stream-send/s);
-  assert.match(services, /Live Push/);
-  assert.match(services, /Manual Send/);
-  assert.match(services, /Manual scenario for/);
+  assert.match(services, /<MockExecutionControls/);
+  assert.match(services, /aria-label="Manual Send"/);
+  assert.doesNotMatch(services, /Manual scenario for/);
   assert.match(services, /Manual response for/);
+  assert.match(services, /selectedScenarioId/);
   assert.match(services, /Send Now/);
   assert.match(runtime, /scenariosByMethod/);
   assert.match(runtime, /responseIndex/);

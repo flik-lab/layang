@@ -508,14 +508,19 @@ export function Badge({ color = "default", variant, children }: AnyProps) {
   );
 }
 
-/** Horizontal divider. */
-export function Divider({ sx, className, ...props }: AnyProps) {
+/** Horizontal/vertical divider. Consume MUI-only props instead of forwarding them to the DOM. */
+export function Divider({ sx, className, orientation = "horizontal", flexItem = false, ...props }: AnyProps) {
   const theme = useContext(ThemeContext);
+  const vertical = orientation === "vertical";
   return (
     <div
       {...props}
-      className={cn("h-px w-full bg-border", className)}
-      style={mergeStyles(sxToStyle(sx, theme), props.style)}
+      className={cn(vertical ? "h-full w-px bg-border" : "h-px w-full bg-border", className)}
+      style={mergeStyles(
+        vertical && flexItem ? { alignSelf: "stretch", height: "auto" } : undefined,
+        sxToStyle(sx, theme),
+        props.style,
+      )}
     />
   );
 }

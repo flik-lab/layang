@@ -27,17 +27,15 @@ test("request tabs keep visible copy compact and move operation context to the t
 test("REST and WebSocket mock panels share concise section and field copy", () => {
   const rest = read("app/playground/features/rest/rest-panels.tsx");
   const websocket = read("app/playground/features/websocket/websocket-panels.tsx");
+  const services = read("app/playground/features/services/services-workspace.tsx");
   assert.match(rest, /uiCopy\.sections\.matchers/);
   assert.match(rest, /uiCopy\.sections\.response/);
-  assert.match(rest, /uiCopy\.sections\.requests/);
   assert.match(rest, /uiCopy\.fields\.delayMs/);
   assert.doesNotMatch(rest, /REST mock server|Delay ms|Response body|Recent mock requests/);
 
-  assert.match(websocket, /uiCopy\.sections\.server/);
-  assert.match(websocket, /uiCopy\.sections\.requests/);
   assert.match(websocket, /uiCopy\.sections\.response/);
-  assert.match(websocket, /uiCopy\.fields\.intervalMs/);
-  assert.match(websocket, /uiCopy\.fields\.loopCount/);
+  assert.match(websocket, /<MockExecutionControls/);
+  assert.match(services, /const requestLogs = status\.requestLog \?\? \[\]/);
   assert.doesNotMatch(
     websocket,
     /Configure this request mock here|Scenario code \/ mock message body|label="Max"|label="Interval"/,

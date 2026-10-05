@@ -25,6 +25,8 @@ import { calculateBenchmarkStats } from "../benchmark/benchmark-panel";
 import { MarkdownPreview as FeatureMarkdownPreview } from "../docs-publisher/docs-publisher-panel";
 import { renderExampleDocBlock } from "../docs-publisher/docs-renderer";
 import { CodeTextField as FeatureCodeTextField } from "../request-editor/request-editor-panels";
+import { MockExecutionControls } from "../mock-server/workspace/MockExecutionControls";
+import { MockScenarioSplitPane } from "../mock-server/workspace/MockScenarioSplitPane";
 import { JsonBlock as FeatureJsonBlock } from "../response-viewer/response-viewer";
 import { ResizableTable, type ResizableTableColumn } from "../../shared/components/resizable-table";
 import { formatTimestampReadable, formatTimestampShort } from "../../shared/formatters";
@@ -380,24 +382,24 @@ export function WebSocketDocsPanel({
 }
 
 export function WebSocketMockPanel({
-  request,
+  request: _request,
   mockResponseText,
   onMockResponseTextChange,
   status,
   port: _port,
-  pathValue,
-  intervalMs,
-  loop,
-  maxLoops,
-  streamOnConnect,
+  pathValue: _pathValue,
+  intervalMs: _intervalMs,
+  loop: _loop,
+  maxLoops: _maxLoops,
+  streamOnConnect: _streamOnConnect,
   scenarios,
   activeScenario,
   requestPaths: _requestPaths,
   onPortChange: _onPortChange,
-  onPathChange,
-  onIntervalMsChange,
-  onLoopChange,
-  onMaxLoopsChange,
+  onPathChange: _onPathChange,
+  onIntervalMsChange: _onIntervalMsChange,
+  onLoopChange: _onLoopChange,
+  onMaxLoopsChange: _onMaxLoopsChange,
   onStreamOnConnectChange: _onStreamOnConnectChange,
   onScenarioSelect,
   onScenarioChange,
@@ -434,248 +436,170 @@ export function WebSocketMockPanel({
   onSendOnce: () => void;
   onCopy: () => void;
 }) {
-  return (
-    <Stack spacing={1.2}>
-      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1} flexWrap="wrap" useFlexGap>
-        <Box sx={{ minWidth: 0 }}>
-          <Typography variant="subtitle1">WebSocket mock</Typography>
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            noWrap
-            title={
-              request
-                ? `${request.name} · ${status.url ?? request.url}${status.running ? ` · ${status.clientCount ?? 0} clients` : ""}`
-                : "Select a WebSocket request."
-            }
-          >
-            {request
-              ? `${request.name} · ${status.url ?? request.url}${status.running ? ` · ${status.clientCount ?? 0} clients` : ""}`
-              : "Select a WebSocket request."}
-          </Typography>
-        </Box>
-        <Stack direction="row" spacing={0.6} alignItems="center" flexWrap="wrap" justifyContent="flex-end" useFlexGap>
-          <Button
-            size="small"
-            variant="contained"
-            startIcon={<PlayArrow />}
-            onClick={onStart}
-            disabled={status.running || !request}
-          >
-            Start
-          </Button>
-          <Button
-            size="small"
-            variant="outlined"
-            color="error"
-            startIcon={<StopCircle />}
-            disabled={!status.running}
-            onClick={onStop}
-          >
-            Stop
-          </Button>
-        </Stack>
+  const settings = (
+    <Stack spacing={0.8} sx={{ p: 1 }}>
+      <Stack direction="row" alignItems="center" spacing={0.8} sx={{ minWidth: 0, overflowX: "auto", "& > *": { flexShrink: 0 } }}>
+        <Typography variant="caption" color="text.secondary" noWrap>
+          {status.url ?? "ws://127.0.0.1"} · {scenarios.length} scenario{scenarios.length === 1 ? "" : "s"}
+          {status.running ? ` · ${status.clientCount ?? 0} clients` : ""}
+        </Typography>
+        <Box sx={{ flex: 1, minWidth: 8 }} />
+        <Button size="small" variant="contained" startIcon={<PlayArrow />} onClick={onStart} disabled={status.running || scenarios.length === 0}>Start</Button>
+        <Button size="small" variant="outlined" color="error" startIcon={<StopCircle />} disabled={!status.running} onClick={onStop}>Stop</Button>
       </Stack>
 
-      <Paper variant="outlined" sx={{ p: 1.1, borderRadius: 2 }}>
-        <Stack spacing={1.1}>
-          <Stack direction="row" spacing={0.8} alignItems="center" flexWrap="wrap" useFlexGap>
-            <FormControl size="small" sx={{ minWidth: 240 }}>
-              <Select
-                value={activeScenario?.id ?? ""}
-                inputProps={{ "aria-label": uiCopy.sections.scenario }}
-                onChange={(event: SelectInputChangeEvent) => onScenarioSelect(String(event.target.value))}
-              >
-                {scenarios.map((scenario) => (
-                  <MenuItem key={`ws-panel-scenario-${scenario.id}`} value={scenario.id}>
-                    {scenario.name || scenario.path}
-                  </MenuItem>
-                ))}
+      {activeScenario ? (
+        <Stack spacing={0.65}>
+          <Stack
+            direction="row"
+            spacing={0.55}
+            alignItems="center"
+            sx={{
+              minWidth: 0,
+              overflowX: "auto",
+              overflowY: "hidden",
+              scrollbarWidth: "thin",
+              "& > *": { flexShrink: 0 },
+            }}
+          >
+            <Typography variant="caption" color="text.secondary" noWrap>Scenario</Typography>
+            <FormControl size="small" sx={{ width: 220 }}>
+              <Select value={activeScenario.id} inputProps={{ "aria-label": uiCopy.sections.scenario }} onChange={(event: SelectInputChangeEvent) => onScenarioSelect(String(event.target.value))}>
+                {scenarios.map((scenario) => <MenuItem key={`ws-panel-scenario-${scenario.id}`} value={scenario.id}>{scenario.name || scenario.path}</MenuItem>)}
               </Select>
             </FormControl>
-            <Button size="small" variant="outlined" onClick={onAddScenario} disabled={!request}>
-              {uiCopy.actions.addScenario}
-            </Button>
-            <Button
+            <Button size="small" variant="outlined" onClick={onAddScenario}>Add</Button>
+
+            <Typography variant="caption" color="text.secondary" noWrap>Name</Typography>
+            <TextField
               size="small"
-              variant="outlined"
-              startIcon={<PlayArrow />}
-              onClick={onSendOnce}
-              disabled={!status.running || !activeScenario}
-            >
-              {uiCopy.actions.sendOnce}
-            </Button>
-            <Button size="small" variant="outlined" startIcon={<ContentCopy />} onClick={onCopy} disabled={!request}>
-              {uiCopy.actions.copyResponse}
-            </Button>
+              value={activeScenario.name ?? ""}
+              inputProps={{ "aria-label": "WebSocket scenario name" }}
+              onChange={(event: TextInputChangeEvent) => onScenarioChange({ name: event.target.value })}
+              sx={{ width: 180 }}
+            />
+            <Typography variant="caption" color="text.secondary" noWrap>Path</Typography>
+            <TextField
+              size="small"
+              value={activeScenario.path ?? ""}
+              inputProps={{ "aria-label": "WebSocket scenario path" }}
+              onChange={(event: TextInputChangeEvent) => onScenarioChange({ path: event.target.value })}
+              sx={{ width: 180 }}
+            />
           </Stack>
 
-          {request && activeScenario ? (
-            <>
-              <Stack direction="row" spacing={0.8} alignItems="center" flexWrap="wrap" useFlexGap>
-                <TextField
-                  size="small"
-                  label="Scenario name"
-                  value={activeScenario.name ?? ""}
-                  onChange={(event: TextInputChangeEvent) => onScenarioChange({ name: event.target.value })}
-                  sx={{ minWidth: 220, flex: 1 }}
-                />
-                <FormControl size="small" sx={{ width: 132 }}>
+          <Stack
+            direction="row"
+            spacing={0.55}
+            alignItems="center"
+            sx={{
+              minWidth: 0,
+              overflowX: "auto",
+              overflowY: "hidden",
+              scrollbarWidth: "thin",
+              "& > *": { flexShrink: 0 },
+            }}
+          >
+            <MockExecutionControls execution={activeScenario.execution} compact inline hideLabel onChange={(execution) => onScenarioChange({ execution })} />
+
+            {activeScenario.execution?.incoming ? (
+              <>
+                <FormControl size="small" sx={{ width: 128 }}>
                   <Select
-                    value={activeScenario.enabled === false ? "disabled" : "enabled"}
-                    onChange={(event: SelectInputChangeEvent) =>
-                      onScenarioChange({ enabled: event.target.value === "enabled" })
-                    }
+                    value={activeScenario.matchMode ?? "always"}
+                    inputProps={{ "aria-label": "WebSocket match mode" }}
+                    onChange={(event: SelectInputChangeEvent) => onScenarioChange({ matchMode: event.target.value as WebSocketMockScenario["matchMode"] })}
                   >
-                    <MenuItem value="enabled">Enabled</MenuItem>
-                    <MenuItem value="disabled">Disabled</MenuItem>
+                    <MenuItem value="always">Always</MenuItem>
+                    <MenuItem value="contains">Contains</MenuItem>
+                    <MenuItem value="regex">Regex</MenuItem>
+                    <MenuItem value="jsonPath">JSON path</MenuItem>
                   </Select>
                 </FormControl>
-              </Stack>
+                {activeScenario.matchMode === "jsonPath" ? (
+                  <>
+                    <Typography variant="caption" color="text.secondary" noWrap>JSON path</Typography>
+                    <TextField
+                      size="small"
+                      value={activeScenario.matchJsonPath || "$.method"}
+                      inputProps={{ "aria-label": "WebSocket JSON path" }}
+                      onChange={(event: TextInputChangeEvent) => onScenarioChange({ matchJsonPath: event.target.value })}
+                      sx={{ width: 150 }}
+                    />
+                  </>
+                ) : null}
+                {activeScenario.matchMode === "always" ? null : (
+                  <>
+                    <Typography variant="caption" color="text.secondary" noWrap>
+                      {activeScenario.matchMode === "regex" ? "Regex" : "Expected"}
+                    </Typography>
+                    <TextField
+                      size="small"
+                      value={activeScenario.matchValue || ""}
+                      inputProps={{ "aria-label": activeScenario.matchMode === "regex" ? "WebSocket regex" : "WebSocket expected value" }}
+                      onChange={(event: TextInputChangeEvent) => onScenarioChange({ matchValue: event.target.value })}
+                      sx={{ width: 180 }}
+                    />
+                  </>
+                )}
+              </>
+            ) : null}
 
-              <Paper variant="outlined" sx={{ p: 1, borderRadius: 1.5 }}>
-                <Stack spacing={0.9}>
-                  <Typography variant="body2" fontWeight={500}>
-                    Delivery
-                  </Typography>
-                  <Stack direction="row" spacing={0.8} alignItems="end" flexWrap="wrap" useFlexGap>
-                    <TextField
-                      size="small"
-                      label={uiCopy.fields.path}
-                      value={pathValue}
-                      onChange={(event: TextInputChangeEvent) => onPathChange(event.target.value)}
-                      disabled={status.running}
-                      sx={{ minWidth: 180, maxWidth: 240 }}
-                    />
-                    <FormControl size="small" sx={{ width: 160 }}>
-                      <Select
-                        value={streamOnConnect ? "periodic" : activeScenario.sendOnMessage ? "incoming" : "manual"}
-                        inputProps={{ "aria-label": "Delivery mode" }}
-                        onChange={(event: SelectInputChangeEvent) => {
-                          const value = event.target.value;
-                          onScenarioChange({
-                            streamOnConnect: value === "periodic",
-                            sendOnMessage: value === "incoming",
-                          });
-                        }}
-                      >
-                        <MenuItem value="manual">Manual</MenuItem>
-                        <MenuItem value="periodic">Periodic</MenuItem>
-                        <MenuItem value="incoming">On incoming match</MenuItem>
-                      </Select>
-                    </FormControl>
-                    <TextField
-                      size="small"
-                      type="number"
-                      label={uiCopy.fields.intervalMs}
-                      value={String(intervalMs)}
-                      onChange={(event: TextInputChangeEvent) =>
-                        onIntervalMsChange(Math.max(1, Math.floor(Number(event.target.value) || 1000)))
-                      }
-                      sx={{ width: 104 }}
-                    />
-                    <FormControl size="small" sx={{ width: 104 }}>
-                      <Select
-                        value={loop ? "yes" : "no"}
-                        inputProps={{ "aria-label": "Loop" }}
-                        onChange={(event: SelectInputChangeEvent) => onLoopChange(event.target.value === "yes")}
-                      >
-                        <MenuItem value="no">No loop</MenuItem>
-                        <MenuItem value="yes">Loop</MenuItem>
-                      </Select>
-                    </FormControl>
-                    <TextField
-                      size="small"
-                      type="number"
-                      label={uiCopy.fields.loopCount}
-                      value={String(maxLoops)}
-                      onChange={(event: TextInputChangeEvent) =>
-                        onMaxLoopsChange(Math.max(0, Math.floor(Number(event.target.value) || 0)))
-                      }
-                      sx={{ width: 90 }}
-                    />
-                  </Stack>
-                  {activeScenario.sendOnMessage ? (
-                    <Stack direction="row" spacing={0.8} alignItems="end" flexWrap="wrap" useFlexGap>
-                      <FormControl size="small" sx={{ width: 150 }}>
-                        <Select
-                          value={activeScenario.matchMode ?? "always"}
-                          onChange={(event: SelectInputChangeEvent) =>
-                            onScenarioChange({ matchMode: event.target.value as WebSocketMockScenario["matchMode"] })
-                          }
-                        >
-                          <MenuItem value="always">Always</MenuItem>
-                          <MenuItem value="contains">Contains</MenuItem>
-                          <MenuItem value="regex">Regex</MenuItem>
-                          <MenuItem value="jsonPath">JSON path</MenuItem>
-                        </Select>
-                      </FormControl>
-                      {activeScenario.matchMode === "jsonPath" ? (
-                        <TextField
-                          size="small"
-                          label="JSON path"
-                          value={activeScenario.matchJsonPath || "$.method"}
-                          onChange={(event: TextInputChangeEvent) =>
-                            onScenarioChange({ matchJsonPath: event.target.value })
-                          }
-                          sx={{ width: 150 }}
-                        />
-                      ) : null}
-                      {activeScenario.matchMode === "always" ? null : (
-                        <TextField
-                          size="small"
-                          label={activeScenario.matchMode === "regex" ? "Regex" : "Expected value"}
-                          value={activeScenario.matchValue || ""}
-                          onChange={(event: TextInputChangeEvent) =>
-                            onScenarioChange({ matchValue: event.target.value })
-                          }
-                          sx={{ minWidth: 180, flex: 1 }}
-                        />
-                      )}
-                    </Stack>
-                  ) : null}
-                  <Typography variant="caption" color="text.secondary">
-                    {activeScenario.sendOnMessage
-                      ? "Sends when an incoming message matches."
-                      : streamOnConnect
-                        ? loop
-                          ? `Sends periodically. ${uiCopy.helper.zeroMeansUnlimited}.`
-                          : "Sends periodically after connection."
-                        : "Sends only when triggered."}
-                  </Typography>
-                </Stack>
-              </Paper>
-
-              <Stack spacing={0.6}>
-                <Typography variant="body2" fontWeight={500}>
-                  {uiCopy.sections.response}
-                </Typography>
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  title="Available variables: {{count}}, {{loopIndex}}, {{incoming}}, {{incoming.*}}, {{path}}, {{uuid}}, and {{now}}."
-                >
-                  Variables: count, incoming.*, path, uuid, and now
-                </Typography>
-                <FeatureCodeTextField
-                  value={mockResponseText}
-                  onChange={onMockResponseTextChange}
-                  minRows={9}
-                  maxRows={16}
-                  language="json"
-                  formatAriaLabel="Prettier JSON"
-                  fullscreenTitle="WebSocket mock scenario editor"
-                />
-              </Stack>
-            </>
-          ) : (
-            <Alert severity="info" variant="outlined">
-              Select a WebSocket request.
-            </Alert>
-          )}
+            {activeScenario.execution?.manual ? (
+              <Button size="small" variant="contained" startIcon={<PlayArrow />} onClick={onSendOnce} disabled={!status.running}>Send</Button>
+            ) : null}
+            <Button size="small" variant="outlined" startIcon={<ContentCopy />} onClick={onCopy}>Copy</Button>
+            <Box sx={{ flex: 1, minWidth: 8 }} />
+            <FormControl size="small" sx={{ width: 108 }}>
+              <Select
+                value={activeScenario.enabled === false ? "disabled" : "enabled"}
+                inputProps={{ "aria-label": "WebSocket scenario state" }}
+                onChange={(event: SelectInputChangeEvent) => onScenarioChange({ enabled: event.target.value === "enabled" })}
+              >
+                <MenuItem value="enabled">Enabled</MenuItem>
+                <MenuItem value="disabled">Disabled</MenuItem>
+              </Select>
+            </FormControl>
+          </Stack>
         </Stack>
-      </Paper>
+      ) : (
+        <Alert severity="info" variant="outlined">Add a global WebSocket scenario to start mocking.</Alert>
+      )}
     </Stack>
+  );
+
+  const editor = activeScenario ? (
+    <Stack spacing={0.45} sx={{ minHeight: 0, height: "100%", px: 1, pb: 0.8 }}>
+      <Stack direction="row" alignItems="center" sx={{ minHeight: 32, flexShrink: 0 }}>
+        <Typography variant="caption" fontWeight={700}>{uiCopy.sections.response}</Typography>
+      </Stack>
+      <Box sx={{ minHeight: 0, flex: 1 }}>
+        <FeatureCodeTextField
+          value={mockResponseText}
+          onChange={onMockResponseTextChange}
+          minRows={8}
+          fullHeight
+          language="json"
+          formatAriaLabel="Prettier JSON"
+          fullscreenTitle="WebSocket mock scenario editor"
+        />
+      </Box>
+    </Stack>
+  ) : (
+    <Box sx={{ height: "100%", display: "grid", placeItems: "center", color: "text.secondary" }}>
+      <Typography variant="body2">No scenario selected.</Typography>
+    </Box>
+  );
+
+  return (
+    <MockScenarioSplitPane
+      storageKey={`layang:websocket-mock-settings-height:${activeScenario?.id ?? "default"}`}
+      defaultSettingsHeight={150}
+      minSettingsHeight={96}
+      maxSettingsHeight={300}
+      settings={settings}
+      editor={editor}
+    />
   );
 }
 

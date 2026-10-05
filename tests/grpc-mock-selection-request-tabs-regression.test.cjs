@@ -80,15 +80,26 @@ test("gRPC mock method selection does not add an artificial animation-frame dela
   assert.doesNotMatch(hook, /requestAnimationFrame\(\(\) => \{[\s\S]*selectProtoLibraryVersion/);
 });
 
-test("focused gRPC mock method exposes per-scenario stream cadence controls", () => {
+test("focused gRPC mock method exposes the shared Mocking 2.0 execution controls", () => {
   const services = read("app/playground/features/services/services-workspace.tsx");
+  const controls = read("app/playground/features/mock-server/workspace/MockExecutionControls.tsx");
   const focusedStart = services.indexOf("function GrpcFocusedMockWorkspace");
   const focusedEnd = services.indexOf("export function GrpcMockWorkspace", focusedStart);
   const focused = services.slice(focusedStart, focusedEnd);
 
-  assert.match(focused, /intervalMs/);
-  assert.match(focused, /Interval \(ms\)/);
-  assert.match(focused, /Loop/);
-  assert.match(focused, /Count/);
-  assert.match(focused, /patchFocusedStream/);
+  assert.match(focused, /focusedExecution/);
+  assert.match(focused, /<MockExecutionControls/);
+  assert.match(focused, /patchFocusedExecution/);
+  assert.match(focused, /aria-label="Manual Send"/);
+  assert.match(focused, /aria-label="Resize gRPC mock settings and scenario editor"/);
+  assert.match(focused, /layang:grpc-mock-settings-height/);
+  assert.match(focused, /inline/);
+  assert.match(focused, /hideLabel/);
+  assert.match(controls, /Interval/);
+  assert.match(controls, /Loop/);
+  assert.match(controls, /Max/);
+  assert.match(focused, /variant="grpc-stream"/);
+  assert.match(controls, /grpcStream \? null : <MenuItem value="incoming">Incoming<\/MenuItem>/);
+  assert.match(controls, /grpcStream \? null : <MenuItem value="scheduled">Scheduled<\/MenuItem>/);
+  assert.match(controls, /Hybrid/);
 });

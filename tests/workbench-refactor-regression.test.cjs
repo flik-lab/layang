@@ -76,28 +76,21 @@ test("search results use a visible yellow mark instead of bold-only matches", ()
   assert.doesNotMatch(responseViewer, /renderBoldMatches|HighlightedCodeText|HighlightedInlineText/);
 });
 
-test("request mock reuses Mock Settings controls without changing the request target", () => {
+test("request mock delegates to Global Mocking without changing the request target", () => {
   const mainPanel = read("app/playground/features/shell/workbench-main-panel.tsx");
-  const controls = read("app/playground/features/mock-server/grpc-mock-scenario-controls.tsx");
   const settings = read("app/playground/features/mock-server/mock-server-panels.tsx");
+  const services = read("app/playground/features/services/services-workspace.tsx");
 
-  assert.match(mainPanel, /selectActiveRequestScenario/);
-  assert.match(mainPanel, /setActiveRequestMockEnabled/);
-  assert.match(mainPanel, /openActiveRequestScenarioEditor/);
-  assert.match(mainPanel, /<GrpcMockScenarioActionsMenu/);
-  assert.match(mainPanel, /<GrpcMockScenarioManagerDialog/);
-  assert.match(mainPanel, /<GrpcScenarioSourceDialog/);
-  assert.match(mainPanel, /<GrpcMockScenarioControls/);
-  assert.match(settings, /<GrpcMockScenarioControls/);
-  assert.match(controls, /MethodMockSwitch/);
-  assert.match(controls, /Scenario settings/);
-  assert.match(controls, /Manage scenarios/);
-  assert.match(controls, /Add scenario/);
+  assert.match(mainPanel, /Global Mocking/);
+  assert.match(mainPanel, /Open Global Mocking/);
+  assert.match(mainPanel, /Create Mock From This Request/);
+  assert.match(mainPanel, /Open this gRPC method/);
   assert.doesNotMatch(mainPanel, /requestMockEditorDraft/);
   assert.doesNotMatch(mainPanel, /startActiveRequestMock/);
   assert.doesNotMatch(mainPanel, /setTargetDraft\(localTarget\)/);
   assert.doesNotMatch(mainPanel, /setNativeTarget\(localTarget\)/);
-  assert.match(mainPanel, /Configure in workspace/);
+  assert.match(settings, /GrpcMockScenarioControls/);
+  assert.match(services, /<MockExecutionControls/);
 });
 
 test("response-to-docs action explains the outcome and opens request docs", () => {
@@ -114,6 +107,6 @@ test("response-to-docs action explains the outcome and opens request docs", () =
   assert.match(mainPanel, /defaultTab="content"/);
   assert.match(docsPanel, />\s*Markdown\s*<\/Typography>/);
   assert.match(docsPanel, /Automatic content to insert/);
-  assert.match(docsPanel, /documentation-markdown-editor/);
+  assert.match(docsPanel, /language="markdown"/);
   assert.match(docsPanel, /uiCopy\.actions\.saveDraft/);
 });

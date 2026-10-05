@@ -1,8 +1,10 @@
 "use client";
 
+import { normalizeMockExecutionConfig } from "../mock-server/mock-execution-model";
 import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { colorTokens, designSystem, paletteMode, type ColorMode } from "../../design-system";
 import { getWorkbenchSideSection, setWorkbenchSideSection } from "./workbench-navigation-store";
+import { useManagedWindowContext } from "../windows/use-managed-window-context";
 import {
   Add,
   Api,
@@ -239,6 +241,7 @@ import {
 import { useStableEventCallback } from "../../hooks/use-stable-event-callback";
 import { useBenchmarkRunner } from "../../hooks/use-benchmark-runner";
 import { useWorkbenchLayout, minResponseWidth } from "../layout/use-workbench-layout";
+import { useWorkbenchCommandShortcuts } from "../commands/use-workbench-command-shortcuts";
 import { useWorkspaceController } from "../workspace/use-workspace-controller";
 import { useWorkspaceIoActions } from "../workspace/use-workspace-io-actions";
 import { useWorkspaceBundleActions } from "../workspace/use-workspace-bundle-actions";
@@ -252,6 +255,7 @@ import { useWorkspaceFolderAutosave } from "../mock-server/use-mock-workspace-sy
 import { syncRunningMockServerFromEditor, useMockRuntimeSync } from "../mock-server/use-mock-runtime-sync";
 import { useRequestSessionController } from "../request-editor/use-request-session-controller";
 import { useRequestSessionActions } from "../request-editor/use-request-session-actions";
+import { useSavedRequestActions } from "../saved-requests/use-saved-request-actions";
 import {
   buildRequestSessionSourceIndex,
   cleanupRequestSessionsForDeletedSources,
@@ -280,13 +284,14 @@ import {
 } from "../shell/workbench-url-utils";
 import type {
   ApiCollection,
-  ApiCollectionRequest,
   DocResultSnapshot,
   MethodDoc,
   ProjectData,
   RequestSession,
+  RequestTab,
   ResponseTab,
   SavedExample,
+  SavedRequest,
   ServiceProtocol,
   ServicesSection,
   SettingsSection,
@@ -339,6 +344,7 @@ const defaultLoggerSettings: LayangLoggerSettings = {
   retentionDays: 14,
 };
 export function useWorkbenchContainerModel() {
+  const managedWindow = useManagedWindowContext();
   const prefersDark = useMediaQuery("(prefers-color-scheme: dark)");
   const [themeMode, setThemeMode] = useState<ColorMode>("dark");
   const [densityMode, setDensityMode] = useState<"compact" | "comfortable">("compact");
@@ -348,7 +354,22 @@ export function useWorkbenchContainerModel() {
   const [serviceProtocol, setServiceProtocol] = useState<ServiceProtocol>("grpc-mock");
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const compactViewport = useMediaQuery("(max-width: 1180px)");
-  const layout = useWorkbenchLayout();
+  const narrowViewport = useMediaQuery("(max-width: 700px)");
+  const requestSessionController = useRequestSessionController();
+  const {
+    requestTab,
+    setRequestTab: setRequestTabState,
+    responseTab,
+    setResponseTab,
+    requestSessions,
+    setRequestSessions,
+    activeRequestId,
+    setActiveRequestId,
+    activeRequestIdRef,
+    targetDraft,
+    setTargetDraft,
+  } = requestSessionController;
+  const layout = useWorkbenchLayout(activeRequestId);
   const {
     sidebarOpen,
     setSidebarOpen,
@@ -358,7 +379,13 @@ export function useWorkbenchContainerModel() {
     setResponseHeight,
     responseWidth,
     setResponseWidth,
+    responseCollapsed,
+    setResponseCollapsed,
+    requestViews,
+    setRequestViews,
+    updateActiveRequestView,
     requestResponseLayout,
+    activeRequestResponseLayout,
     effectiveRequestResponseLayout,
     horizontalLayoutAvailable,
     setRequestResponseLayout,
@@ -367,16 +394,39 @@ export function useWorkbenchContainerModel() {
     resizeResponseByKeyboard,
     toggleRequestResponseLayout,
   } = layout;
+  const sidebarOpenBeforeNarrowRef = useRef<boolean | null>(null);
+  const persistedSidebarOpen =
+    narrowViewport && sidebarOpenBeforeNarrowRef.current !== null
+      ? sidebarOpenBeforeNarrowRef.current
+      : sidebarOpen;
+  const setRequestTab = useCallback(
+    (value: RequestTab | ((current: RequestTab) => RequestTab)) => {
+      setRequestTabState((current) => {
+        const next = typeof value === "function" ? value(current) : value;
+        if (activeRequestId) updateActiveRequestView({ requestTab: next });
+        return next;
+      });
+    },
+    [activeRequestId, setRequestTabState, updateActiveRequestView],
+  );
+
+  useEffect(() => {
+    if (!activeRequestId) return;
+    const savedTab = requestViews[activeRequestId]?.requestTab;
+    setRequestTabState(savedTab ?? "body");
+  }, [activeRequestId, requestViews, setRequestTabState]);
   const workspaceLayoutPersistence = useWorkspaceLayoutPersistence({
     requestResponseLayout,
     responseHeight,
     responseWidth,
+    requestViews,
+    setRequestViews,
     setRequestResponseLayout,
     setResponseHeight,
     setResponseWidth,
     setSidebarOpen,
     setSidebarWidthPx,
-    sidebarOpen,
+    sidebarOpen: persistedSidebarOpen,
     sidebarWidthPx,
   });
   const { applyWorkspaceLayout, getLayoutSnapshot } = workspaceLayoutPersistence;
@@ -416,6 +466,7 @@ export function useWorkbenchContainerModel() {
   const [activeProtoVersionId, setActiveProtoVersionId] = useState("");
   const protoRuntimeRegistry = useMemo(() => new ProtoRuntimeRegistry(protoLibraries), [protoLibraries]);
   const [collections, setCollections] = useState<ApiCollection[]>([]);
+  const [savedRequests, setSavedRequests] = useState<SavedRequest[]>([]);
   const boundProtoMethodKeys = useMemo(
     () =>
       collections.flatMap((collection) =>
@@ -431,9 +482,16 @@ export function useWorkbenchContainerModel() {
   const [activeCollectionRequestId, setActiveCollectionRequestId] = useState("");
   const [requestJsonState, setRequestJsonState] = useState<unknown>("{}");
   const requestJson = normalizeEditableText(requestJsonState, "{}");
+  const requestJsonDraftRef = useRef(requestJson);
   const setRequestJson = useCallback((value: unknown) => {
-    setRequestJsonState(normalizeEditableText(value, "{}"));
+    const normalized = normalizeEditableText(value, "{}");
+    requestJsonDraftRef.current = normalized;
+    setRequestJsonState(normalized);
   }, []);
+  const updateRequestJsonDraft = useCallback((value: string) => {
+    requestJsonDraftRef.current = normalizeEditableText(value, "{}");
+  }, []);
+  const getRequestJsonDraft = useCallback(() => requestJsonDraftRef.current, []);
   const [metadata, setMetadata] = useState<MetadataPair[]>(defaultMetadata);
   const [examples, setExamples] = useState<SavedExample[]>([]);
   const [methodDocs, setMethodDocs] = useState<MethodDoc[]>([]);
@@ -523,20 +581,6 @@ export function useWorkbenchContainerModel() {
   } = collectionController;
   const docsController = useDocsController();
   const { docsPreview, setDocsPreview, protoPreview, setProtoPreview } = docsController;
-  const requestSessionController = useRequestSessionController();
-  const {
-    requestTab,
-    setRequestTab,
-    responseTab,
-    setResponseTab,
-    requestSessions,
-    setRequestSessions,
-    activeRequestId,
-    setActiveRequestId,
-    activeRequestIdRef,
-    targetDraft,
-    setTargetDraft,
-  } = requestSessionController;
   const responseController = useResponseController(activeRequestId || "__unbound__");
   const {
     getResponseEvents,
@@ -575,6 +619,7 @@ export function useWorkbenchContainerModel() {
   const { applyWorkspaceBundle, getWorkspaceExportBundle } = workspaceBundleActions;
 
   const workspace = useWorkspaceController({
+    windowKind: managedWindow.context.kind,
     prefersDark,
     applyCachedLayout: layout.applyCachedLayout,
     applyProject,
@@ -798,13 +843,18 @@ export function useWorkbenchContainerModel() {
     clearMockServerLocalDirty,
     refreshGrpcMockServerFromWorkspace,
   } = grpcMock;
+  const [pendingMockScenarioNavigation, setPendingMockScenarioNavigation] = useState<{
+    methodKey: string;
+    scenarioId: string;
+  } | null>(null);
   useMockRuntimeEvents();
-  useMockRuntimePolling({ mockServer });
+  useMockRuntimePolling({ mockServer, enabled: managedWindow.context.kind !== "performance" });
 
   // Keep CLI daemon runtime state in sync only after all protocol controllers are
   // initialized. Referencing setMockServerStatus before useGrpcMockController runs
   // triggers a temporal-dead-zone crash during SSR/client render.
   useEffect(() => {
+    if (managedWindow.context.kind === "performance") return;
     if (!workspaceFolderPath || !window.electronCli?.mockRuntimeStatus) return;
     let cancelled = false;
 
@@ -856,10 +906,10 @@ export function useWorkbenchContainerModel() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [workspaceFolderPath, setMockServerStatus, setRestMockStatus, setWsMockStatus]);
+  }, [managedWindow.context.kind, workspaceFolderPath, setMockServerStatus, setRestMockStatus, setWsMockStatus]);
 
   useWorkspaceFolderAutosave({
-    enabled: hydrated,
+    enabled: hydrated && managedWindow.context.kind !== "response" && managedWindow.context.kind !== "performance",
     delayMs: WORKSPACE_AUTOSAVE_DELAY_MS,
     workspaceFolderPath,
     workspaceAutosaveRef,
@@ -876,6 +926,7 @@ export function useWorkbenchContainerModel() {
       activeProtoLibraryId,
       activeProtoVersionId,
       collections,
+      savedRequests,
       selectedMethodKey,
       requestJson,
       metadata,
@@ -906,6 +957,7 @@ export function useWorkbenchContainerModel() {
     setMockServerStatus,
     loaded,
     protoFiles,
+    protoLibraries,
     protoRuntimeRegistry,
     workspaceFolderPath,
     activeProtoLibraryId,
@@ -929,6 +981,7 @@ export function useWorkbenchContainerModel() {
           setMockServerStatus,
           loaded,
           protoFiles,
+          protoLibraries,
           protoRuntimeRegistry,
           workspaceFolderPath,
           activeProtoLibraryId,
@@ -967,6 +1020,7 @@ export function useWorkbenchContainerModel() {
     setMockServerStatus,
     loaded,
     protoFiles,
+    protoLibraries,
     protoRuntimeRegistry,
     workspaceFolderPath,
     activeProtoLibraryId,
@@ -992,39 +1046,6 @@ export function useWorkbenchContainerModel() {
   useEffect(() => {
     activeRequestIdRef.current = activeRequestId;
   }, [activeRequestId]);
-
-  useEffect(() => {
-    if (!hydrated) return;
-
-    function handleRequestTabShortcut(event: KeyboardEvent) {
-      if (event.defaultPrevented || event.isComposing) return;
-      const key = event.key.toLowerCase();
-      const hasTabModifier = event.ctrlKey || event.metaKey;
-
-      if (hasTabModifier && key === "w") {
-        if (requestSessions.length === 0) return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (event.shiftKey) closeAllRequestSessions();
-        else if (activeRequestId) closeRequestSession(activeRequestId);
-        return;
-      }
-
-      if (hasTabModifier && (event.key === "PageUp" || event.key === "PageDown") && requestSessions.length > 1) {
-        event.preventDefault();
-        const activeIndex = Math.max(
-          0,
-          requestSessions.findIndex((session) => session.id === activeRequestId),
-        );
-        const direction = event.key === "PageUp" ? -1 : 1;
-        const nextIndex = (activeIndex + direction + requestSessions.length) % requestSessions.length;
-        activateRequestSession(requestSessions[nextIndex]);
-      }
-    }
-
-    window.addEventListener("keydown", handleRequestTabShortcut, { capture: true });
-    return () => window.removeEventListener("keydown", handleRequestTabShortcut, { capture: true });
-  }, [hydrated, activeRequestId, requestSessions]);
 
   useEffect(() => {
     if (!hydrated || !activeRequestId || getWorkbenchSideSection() === "proto-schemas") return;
@@ -1120,6 +1141,7 @@ export function useWorkbenchContainerModel() {
     environments,
     protoFiles,
     collections,
+    savedRequests,
     selectedMethodKey,
     requestJson,
     metadata,
@@ -1141,12 +1163,19 @@ export function useWorkbenchContainerModel() {
       runWhenIdle(() =>
         window.localStorage.setItem(
           layoutStorageKey,
-          JSON.stringify({ sidebarOpen, sidebarWidthPx, responseHeight, responseWidth, requestResponseLayout }),
+          JSON.stringify({
+            sidebarOpen: persistedSidebarOpen,
+            sidebarWidthPx,
+            responseHeight,
+            responseWidth,
+            requestResponseLayout,
+            requestViews,
+          }),
         ),
       );
     }, 300);
     return () => window.clearTimeout(timeout);
-  }, [hydrated, sidebarOpen, sidebarWidthPx, responseHeight, responseWidth, requestResponseLayout]);
+  }, [hydrated, persistedSidebarOpen, sidebarWidthPx, responseHeight, responseWidth, requestResponseLayout, requestViews]);
 
   useEffect(() => {
     const storedDensity = window.localStorage.getItem("layang-density");
@@ -1260,134 +1289,89 @@ export function useWorkbenchContainerModel() {
     () => (activeExampleKey ? history.filter((item) => item.method === activeExampleKey) : []),
     [history, activeExampleKey],
   );
-  const activeWebSocketMockScenarios = useMemo(() => {
-    if (activeCollectionRequest?.kind !== "websocket") return [];
-    const related = wsMockServer.scenarios.filter(
-      (scenario) => scenario.requestId === activeCollectionRequest.id || scenario.id === activeCollectionRequest.id,
-    );
-    if (related.length) return related;
-    return [createWebSocketMockScenarioForRequest(activeCollectionRequest, { id: activeCollectionRequest.id })];
-  }, [activeCollectionRequest, wsMockServer.scenarios]);
+  const activeWebSocketMockScenarios = useMemo(() => wsMockServer.scenarios, [wsMockServer.scenarios]);
   const selectedWebSocketScenarioId =
-    activeCollectionRequest?.kind === "websocket"
-      ? wsMockServer.selectedScenarioIds[activeCollectionRequest.id] || wsMockScenarioId || ""
-      : "";
+    wsMockScenarioId || activeWebSocketMockScenarios[0]?.id || "";
   const activeWebSocketMockScenario =
     activeWebSocketMockScenarios.find((scenario) => scenario.id === selectedWebSocketScenarioId) ??
     activeWebSocketMockScenarios[0] ??
     null;
   const activeWebSocketMockResponseText =
-    activeWebSocketMockScenario?.responseText ??
-    activeCollectionRequest?.mockResponse ??
-    defaultWebSocketMockResponse(activeCollectionRequest?.name);
+    activeWebSocketMockScenario?.responseText ?? defaultWebSocketMockResponse("WebSocket scenario");
   const wsMockPort = wsMockServer.port;
-  const wsMockPath = activeWebSocketMockScenario?.path ?? webSocketRequestPath(activeCollectionRequest);
-  const wsMockIntervalMs = activeWebSocketMockScenario?.intervalMs ?? 1000;
-  const wsMockLoop = activeWebSocketMockScenario?.loop ?? false;
-  const wsMockMaxLoops = activeWebSocketMockScenario?.maxLoops ?? 0;
-  const wsMockStreamOnConnect = activeWebSocketMockScenario?.streamOnConnect ?? false;
+  const wsMockPath = activeWebSocketMockScenario?.path ?? "/mock/ws";
+  const wsMockIntervalMs = activeWebSocketMockScenario?.execution?.periodic.intervalMs ?? activeWebSocketMockScenario?.intervalMs ?? 1000;
+  const wsMockLoop = activeWebSocketMockScenario?.execution?.periodic.loop ?? activeWebSocketMockScenario?.loop ?? false;
+  const wsMockMaxLoops = activeWebSocketMockScenario?.execution?.periodic.maxExecutions ?? activeWebSocketMockScenario?.maxLoops ?? 0;
+  const wsMockStreamOnConnect = activeWebSocketMockScenario?.execution?.periodic.enabled ?? activeWebSocketMockScenario?.streamOnConnect ?? false;
   const wsMockSidebarRows = useMemo(() => {
-    const requestsById = new Map<string, ApiCollectionRequest & { collectionName?: string }>();
-    for (const collection of collections) {
-      for (const request of collection.requests) {
-        if (request.kind === "websocket") requestsById.set(request.id, { ...request, collectionName: collection.name });
-      }
-    }
-    return buildWebSocketMockPayloadSnapshot(wsMockServer).scenarios.map((scenario) => {
-      const request = scenario.requestId ? requestsById.get(scenario.requestId) : undefined;
-      return {
-        id: scenario.id,
-        scenarioId: scenario.id,
-        requestId: scenario.requestId,
-        name: scenario.name,
-        requestName: request?.name ?? scenario.name,
-        path: scenario.path,
-        enabled: scenario.enabled !== false,
-        intervalMs: scenario.intervalMs,
-        loop: scenario.loop,
-        maxLoops: scenario.maxLoops,
-        url: `ws://127.0.0.1:${wsMockStatus.port ?? wsMockServer.port}${scenario.path}`,
-      };
-    });
-  }, [collections, wsMockServer, wsMockStatus.port]);
-  const activeRestMockScenarios = useMemo(() => {
-    if (activeCollectionRequest?.kind !== "rest") return [];
-    const related = restMockServer.scenarios.filter(
-      (scenario) => scenario.requestId === activeCollectionRequest.id || scenario.id === activeCollectionRequest.id,
-    );
-    if (related.length) return related;
-    return [createRestMockPresetScenario(activeCollectionRequest, "success")];
-  }, [activeCollectionRequest, restMockServer.scenarios]);
+    return buildWebSocketMockPayloadSnapshot(wsMockServer).scenarios.map((scenario) => ({
+      id: scenario.id,
+      scenarioId: scenario.id,
+      requestId: scenario.sourceRequestId,
+      name: scenario.name,
+      requestName: scenario.name,
+      path: scenario.path,
+      enabled: scenario.enabled !== false,
+      intervalMs: scenario.execution.periodic.intervalMs,
+      loop: scenario.execution.periodic.loop,
+      maxLoops: scenario.execution.periodic.maxExecutions,
+      url: `ws://127.0.0.1:${wsMockStatus.port ?? wsMockServer.port}${scenario.path}`,
+    }));
+  }, [wsMockServer, wsMockStatus.port]);
+  const activeRestMockScenarios = useMemo(() => restMockServer.scenarios, [restMockServer.scenarios]);
   const activeRestMockScenario =
     activeRestMockScenarios.find((scenario) => scenario.id === restMockScenarioId) ??
     activeRestMockScenarios[0] ??
     null;
   const activeRestMockResponseText =
-    activeRestMockScenario?.body ??
-    activeCollectionRequest?.mockResponse ??
-    defaultRestMockResponse(activeCollectionRequest?.name);
+    activeRestMockScenario?.body ?? defaultRestMockResponse("REST scenario");
 
   function buildWebSocketMockPayloadSnapshot(project = wsMockServer): Pick<WebSocketMockProject, "port" | "scenarios"> {
-    const wsRequests = collections.flatMap((collection) =>
-      collection.requests
-        .filter((request) => request.kind === "websocket")
-        .map((request) => ({ ...request, collectionName: collection.name })),
-    );
-    const scenarios: WebSocketMockScenario[] = project.scenarios
-      .filter((scenario) => !scenario.requestId || wsRequests.some((request) => request.id === scenario.requestId))
-      .map((scenario) => ({
+    const scenarios: WebSocketMockScenario[] = project.scenarios.map((scenario) => {
+      const execution = normalizeMockExecutionConfig(scenario.execution, {
+        streamOnConnect: scenario.streamOnConnect,
+        sendOnMessage: scenario.sendOnMessage,
+        intervalMs: scenario.intervalMs,
+        loop: scenario.loop,
+        maxLoops: scenario.maxLoops,
+      });
+      return {
         ...scenario,
+        requestId: undefined,
         path: normalizeWebSocketMockPath(scenario.path),
-        intervalMs: Math.max(1, Math.floor(Number(scenario.intervalMs) || 1000)),
-        maxLoops: Math.max(0, Math.floor(Number(scenario.maxLoops) || 0)),
-        loop: Boolean(scenario.loop),
-        streamOnConnect: Boolean(scenario.streamOnConnect),
-        sendOnMessage: Boolean(scenario.sendOnMessage),
+        execution,
+        intervalMs: execution.periodic.intervalMs,
+        maxLoops: execution.periodic.maxExecutions,
+        loop: execution.periodic.loop,
+        streamOnConnect: execution.periodic.enabled,
+        sendOnMessage: execution.incoming,
         matchMode:
           scenario.matchMode === "contains" || scenario.matchMode === "regex" || scenario.matchMode === "jsonPath"
             ? scenario.matchMode
             : "always",
         matchValue: scenario.matchValue ?? "",
         matchJsonPath: scenario.matchJsonPath ?? "",
-      }));
-    for (const request of wsRequests) {
-      const hasScenario = scenarios.some((scenario) => scenario.requestId === request.id || scenario.id === request.id);
-      if (!hasScenario) scenarios.push(createWebSocketMockScenarioForRequest(request, { id: request.id }));
-    }
-    const selectedScenarioIds = project.selectedScenarioIds ?? {};
-    scenarios.sort((left, right) => {
-      const leftSelected = left.requestId ? selectedScenarioIds[left.requestId] === left.id : false;
-      const rightSelected = right.requestId ? selectedScenarioIds[right.requestId] === right.id : false;
-      if (leftSelected !== rightSelected) return leftSelected ? -1 : 1;
-      return 0;
+      };
     });
     return { port: normalizeWebSocketMockPort(project.port), scenarios };
   }
 
   function buildRestMockPayloadSnapshot(project = restMockServer) {
-    const restRequests = collections.flatMap((collection) =>
-      collection.requests
-        .filter((request) => request.kind === "rest")
-        .map((request) => ({ ...request, collectionName: collection.name })),
-    );
-    const scenarios: RestMockScenario[] = project.scenarios
-      .filter((scenario) => !scenario.requestId || restRequests.some((request) => request.id === scenario.requestId))
-      .map((scenario) => ({
-        ...scenario,
-        method: (scenario.method || "GET").toUpperCase(),
-        priority: Math.trunc(Number(scenario.priority) || 0),
-        status: Math.min(599, Math.max(100, Math.trunc(Number(scenario.status) || 200))),
-        delayMs: Math.max(0, Math.trunc(Number(scenario.delayMs) || 0)),
-        matchQuery: scenario.matchQuery ?? [],
-        matchHeaders: scenario.matchHeaders ?? [],
-        matchBodyContains: scenario.matchBodyContains ?? "",
-        matchJsonPath: scenario.matchJsonPath ?? "",
-        matchJsonEquals: scenario.matchJsonEquals ?? "",
-      }));
-    for (const request of restRequests) {
-      const hasScenario = scenarios.some((scenario) => scenario.requestId === request.id || scenario.id === request.id);
-      if (!hasScenario) scenarios.push(createRestMockPresetScenario(request, "success"));
-    }
+    const scenarios: RestMockScenario[] = project.scenarios.map((scenario) => ({
+      ...scenario,
+      requestId: undefined,
+      execution: normalizeMockExecutionConfig(scenario.execution),
+      method: (scenario.method || "GET").toUpperCase(),
+      priority: Math.trunc(Number(scenario.priority) || 0),
+      status: Math.min(599, Math.max(100, Math.trunc(Number(scenario.status) || 200))),
+      delayMs: Math.max(0, Math.trunc(Number(scenario.delayMs) || 0)),
+      matchQuery: scenario.matchQuery ?? [],
+      matchHeaders: scenario.matchHeaders ?? [],
+      matchBodyContains: scenario.matchBodyContains ?? "",
+      matchJsonPath: scenario.matchJsonPath ?? "",
+      matchJsonEquals: scenario.matchJsonEquals ?? "",
+    }));
     return {
       port: normalizeRestMockPort(project.port),
       bindHost: normalizeRestMockBindHost(project.bindHost),
@@ -1446,29 +1430,25 @@ export function useWorkbenchContainerModel() {
   }, [methodDocs, activeCollectionRequest]);
 
   useEffect(() => {
-    if (activeCollectionRequest?.kind !== "rest") {
+    if (!activeRestMockScenarios.length) {
       if (restMockScenarioId) setRestMockScenarioId("");
       return;
     }
-    if (!activeRestMockScenarios.length) return;
     if (!activeRestMockScenarios.some((scenario) => scenario.id === restMockScenarioId)) {
       setRestMockScenarioId(activeRestMockScenarios[0].id);
     }
-  }, [activeCollectionRequest, activeRestMockScenarios, restMockScenarioId]);
+  }, [activeRestMockScenarios, restMockScenarioId]);
 
   useEffect(() => {
-    if (activeCollectionRequest?.kind !== "websocket") {
+    if (!activeWebSocketMockScenarios.length) {
       if (wsMockScenarioId) setWsMockScenarioId("");
       return;
     }
-    if (!activeWebSocketMockScenarios.length) return;
-    const selectedScenarioId = wsMockServer.selectedScenarioIds[activeCollectionRequest.id] || wsMockScenarioId;
-    if (!activeWebSocketMockScenarios.some((scenario) => scenario.id === selectedScenarioId)) {
-      selectWebSocketMockScenario(activeWebSocketMockScenarios[0].id);
-    } else if (selectedScenarioId !== wsMockScenarioId) {
-      setWsMockScenarioId(selectedScenarioId);
+    if (!activeWebSocketMockScenarios.some((scenario) => scenario.id === wsMockScenarioId)) {
+      setWsMockScenarioId(activeWebSocketMockScenarios[0].id);
     }
-  }, [activeCollectionRequest, activeWebSocketMockScenarios, wsMockScenarioId, wsMockServer.selectedScenarioIds]);
+  }, [activeWebSocketMockScenarios, wsMockScenarioId]);
+
 
   const activeDocsResult = activeMethodKey
     ? ([...docResults]
@@ -2086,6 +2066,44 @@ export function useWorkbenchContainerModel() {
     upsertRequestSessionPreservingOrder,
   } = requestSessionActions;
 
+  const {
+    saveCurrentRequestAsSaved,
+    loadSavedRequest,
+    renameSavedRequest,
+    deleteSavedRequest,
+  } = useSavedRequestActions({
+    activeBaseUrl,
+    activeCollectionRequest,
+    activeEnvironmentKey,
+    activeNativeTarget,
+    activeSession,
+    activeTransportMode,
+    assertionJson,
+    metadata,
+    getRequestJsonDraft,
+    patchActiveCollectionRequest,
+    protoRuntimeRegistry,
+    requestJson,
+    savedRequests,
+    selectedMethod,
+    setActiveProtoLibraryId,
+    setActiveProtoVersionId,
+    setAssertionJson,
+    setBaseUrl,
+    setEnvironmentKey,
+    setLoaded,
+    setMetadata,
+    setNativeTarget,
+    setRequestJson,
+    setSavedRequests,
+    setSelectedMethodKey,
+    setTargetDraft,
+    setTransportMode,
+    showToast,
+    targetDraft,
+    updateActiveSession,
+  });
+
   useEffect(() => {
     if (!hydrated || requestSessions.length === 0) return;
 
@@ -2144,6 +2162,7 @@ export function useWorkbenchContainerModel() {
     setAssertionResults,
     setHistory,
     showToast,
+    getRequestJson: getRequestJsonDraft,
     appendLiveEventToSession,
     compactUiEventsForResponse,
     upsertRequestSessionPreservingOrder,
@@ -2189,9 +2208,16 @@ export function useWorkbenchContainerModel() {
   }
 
   useEffect(() => {
-    if (!compactViewport) return;
-    setRequestResponseLayout("vertical");
-  }, [compactViewport, setRequestResponseLayout]);
+    if (narrowViewport) {
+      if (sidebarOpenBeforeNarrowRef.current === null) sidebarOpenBeforeNarrowRef.current = sidebarOpen;
+      if (sidebarOpen) setSidebarOpen(false);
+      return;
+    }
+
+    const shouldRestore = sidebarOpenBeforeNarrowRef.current;
+    sidebarOpenBeforeNarrowRef.current = null;
+    if (shouldRestore && !sidebarOpen) setSidebarOpen(true);
+  }, [narrowViewport, sidebarOpen, setSidebarOpen]);
 
 
   // Navigation section changes live in a tiny external store so switching the
@@ -2699,6 +2725,7 @@ export function useWorkbenchContainerModel() {
       activeProtoLibraryId,
       activeProtoVersionId,
       collections,
+      savedRequests,
       selectedMethodKey,
       requestJson,
       metadata,
@@ -2800,6 +2827,7 @@ export function useWorkbenchContainerModel() {
     setActiveProtoVersionId(activeProto?.version.id ?? "");
     setProtoFiles(nextProtoFiles.length ? nextProtoFiles : project.protoFiles);
     setCollections(nextCollections);
+    setSavedRequests(project.savedRequests ?? []);
     setMetadata(project.metadata.length ? project.metadata : defaultMetadata);
     setExamples(project.examples ?? []);
     setMethodDocs(project.methodDocs ?? []);
@@ -2975,6 +3003,7 @@ export function useWorkbenchContainerModel() {
     setMockScenarioEditorDraft,
     setMockScenarioEditorDirty,
     setMockScenarioEditorError,
+    setPendingMockScenarioNavigation,
     setMockServer,
     setMockServerStatus,
     setWebAccessStatus,
@@ -3023,6 +3052,7 @@ export function useWorkbenchContainerModel() {
     addMockScenarioFromCurrent,
     addMockScenarioForMethod,
     handleMockScenarioSelectChange,
+    forceMockScenarioSelectChange,
     openMockScenarioManager,
     confirmRenameMockScenario,
     deleteEditingMockScenario,
@@ -3040,12 +3070,40 @@ export function useWorkbenchContainerModel() {
     stopWebAccess,
   } = grpcMockEditorActions;
 
+  const resolvePendingMockScenarioNavigation = useCallback(
+    (decision: "save" | "discard" | "cancel") => {
+      const pending = pendingMockScenarioNavigation;
+      if (!pending) return;
+      if (decision === "cancel") {
+        setPendingMockScenarioNavigation(null);
+        return;
+      }
+      if (decision === "save") {
+        const saved = saveMockScenarioEditorDraft();
+        if (!saved) return;
+      } else {
+        discardMockScenarioEditorDraft();
+      }
+      setPendingMockScenarioNavigation(null);
+      forceMockScenarioSelectChange(pending.methodKey, pending.scenarioId);
+    },
+    [
+      discardMockScenarioEditorDraft,
+      forceMockScenarioSelectChange,
+      pendingMockScenarioNavigation,
+      saveMockScenarioEditorDraft,
+    ],
+  );
+
   const handleResponseTabChange = useCallback(
     (value: ResponseTab) => {
       setResponseTab(value);
-      if (activeRequestId) updateRequestSession(activeRequestId, { responseTab: value });
+      if (activeRequestId) {
+        updateRequestSession(activeRequestId, { responseTab: value });
+        updateActiveRequestView({ responseTab: value });
+      }
     },
-    [activeRequestId],
+    [activeRequestId, updateActiveRequestView, updateRequestSession],
   );
 
   const handleResponseFilterChange = useCallback((event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -3397,6 +3455,97 @@ export function useWorkbenchContainerModel() {
     commitTargetDraft,
   } = environmentActions;
 
+  const runActiveRequestFromCommand = useCallback(() => {
+    if (!activeRequestId) return;
+    commitTargetDraft();
+    void requestRunner.runRequest();
+  }, [activeRequestId, commitTargetDraft, requestRunner]);
+
+  useWorkbenchCommandShortcuts({
+    hydrated,
+    activeRequestId,
+    requestSessions,
+    activateRequestSession,
+    closeRequestSession,
+    closeAllRequestSessions,
+    activeRunning,
+    runActiveRequest: runActiveRequestFromCommand,
+    saveActiveMockDraft: saveMockScenarioEditorDraft,
+    mockDraftDirty: mockScenarioEditorDirty,
+    getActiveSection: getWorkbenchSideSection,
+    windowKind: managedWindow.context.kind,
+  });
+
+  useEffect(() => {
+    if (!hydrated || !managedWindow.ready) return;
+    const context = managedWindow.context;
+    if (context.kind === "mocking") {
+      setWorkbenchSideSection("services");
+      return;
+    }
+    if ((context.kind === "request" || context.kind === "response") && context.resourceId) {
+      const target = requestSessions.find((session) => session.id === context.resourceId);
+      if (target && activeRequestId !== target.id) activateRequestSession(target);
+      setWorkbenchSideSection("collections");
+      if (context.kind === "response" && responseCollapsed) setResponseCollapsed(false);
+    }
+  }, [
+    hydrated,
+    managedWindow.ready,
+    managedWindow.context.kind,
+    managedWindow.context.resourceId,
+    requestSessions,
+    activeRequestId,
+    activateRequestSession,
+    responseCollapsed,
+    setResponseCollapsed,
+  ]);
+
+  useEffect(() => {
+    if (managedWindow.context.kind !== "main" || !window.electronWindow?.onReattach) return;
+    return window.electronWindow.onReattach((context) => {
+      if (context.kind === "mocking") {
+        setWorkbenchSideSection("services");
+        setSidebarOpen(true);
+        return;
+      }
+      if ((context.kind === "request" || context.kind === "response") && context.resourceId) {
+        const target = requestSessions.find((session) => session.id === context.resourceId);
+        if (target) activateRequestSession(target);
+        setWorkbenchSideSection("collections");
+        setSidebarOpen(true);
+        if (context.kind === "response") setResponseCollapsed(false);
+      }
+    });
+  }, [
+    managedWindow.context.kind,
+    requestSessions,
+    activateRequestSession,
+    setSidebarOpen,
+    setResponseCollapsed,
+  ]);
+
+  useEffect(() => {
+    if (!hydrated || managedWindow.context.kind !== "main" || !activeRequestId) return;
+    if (!managedWindow.detachedByKey.has(`request:${activeRequestId}`)) return;
+
+    void managedWindow.focusResource("request", activeRequestId);
+    const replacement = requestSessions.find(
+      (session) => session.id !== activeRequestId && !managedWindow.detachedByKey.has(`request:${session.id}`),
+    );
+    if (replacement) activateRequestSession(replacement);
+    else clearActiveView();
+  }, [
+    hydrated,
+    managedWindow.context.kind,
+    managedWindow.detachedByKey,
+    managedWindow.focusResource,
+    activeRequestId,
+    requestSessions,
+    activateRequestSession,
+    clearActiveView,
+  ]);
+
   const actionScopeWithCollection = {
     ...actionScope,
     ...collectionActions,
@@ -3410,6 +3559,7 @@ export function useWorkbenchContainerModel() {
     updateActiveWebSocketMockResponse,
     updateWebSocketMockScenario,
     addWebSocketMockScenario,
+    createWebSocketMockFromActiveRequest,
     openWebSocketMockScenarioFromSidebar,
     handleWebSocketMockPortChange,
     copyActiveWebSocketMockResponse,
@@ -3417,6 +3567,7 @@ export function useWorkbenchContainerModel() {
     updateActiveRestMockScenario,
     updateActiveRestMockResponse,
     addRestMockScenario,
+    createRestMockFromActiveRequest,
     updateRestMockScenarioPair,
     addRestMockScenarioPair,
     removeRestMockScenarioPair,
@@ -3424,6 +3575,7 @@ export function useWorkbenchContainerModel() {
     handleRestMockBindHostChange,
     startRestMockServer,
     stopRestMockServer,
+    sendRestMockPending,
     startWebSocketMockServer,
     stopWebSocketMockServer,
     sendWebSocketMockOnce,
@@ -3553,6 +3705,7 @@ export function useWorkbenchContainerModel() {
     WebSocketMockPanel,
     WebSocketMockSidebar,
     WindowControls,
+    managedWindow,
     activateRequestSession,
     activeCollectionRequest,
     activeCollectionRequestId,
@@ -3581,9 +3734,11 @@ export function useWorkbenchContainerModel() {
     addMockScenarioForMethod,
     addMockScenarioFromCurrent,
     addRestMockScenario,
+    createRestMockFromActiveRequest,
     addRestMockScenarioPair,
     addRestPairRow,
     addWebSocketMockScenario,
+    createWebSocketMockFromActiveRequest,
     applyWorkspacePreference,
     beginResponseResize,
     resizeResponseByKeyboard,
@@ -3596,6 +3751,7 @@ export function useWorkbenchContainerModel() {
     chooseCustomWorkspacePreference,
     chooseEnvironment,
     clearActiveResponseStable,
+    clearActiveView,
     clearHistory,
     clearResponseFilter,
     closeAllRequestSessions,
@@ -3607,6 +3763,7 @@ export function useWorkbenchContainerModel() {
     collectionMenuAnchor,
     collectionNameDraft,
     collections,
+    savedRequests,
     colorTokens,
     commitTargetDraft,
     confirmAddCollection,
@@ -3719,6 +3876,7 @@ export function useWorkbenchContainerModel() {
     isNativeBridgeAvailable,
     lastResult,
     loadExample,
+    loadSavedRequest,
     loadSample,
     loaded,
     metadata,
@@ -3734,6 +3892,8 @@ export function useWorkbenchContainerModel() {
     mockScenarioEditing,
     mockScenarioEditorDirty,
     mockScenarioEditorError,
+    pendingMockScenarioNavigation,
+    resolvePendingMockScenarioNavigation,
     mockScenarioInputRef,
     mockServer,
     setMockServer,
@@ -3792,6 +3952,7 @@ export function useWorkbenchContainerModel() {
     collectionFilter,
     removeCollection,
     removeCollectionRequest,
+    deleteSavedRequest,
     createCollectionFolder,
     renameCollectionFolder,
     removeCollectionFolder,
@@ -3804,9 +3965,11 @@ export function useWorkbenchContainerModel() {
     removeRestPairRow,
     renameCollection,
     renameCollectionRequest,
+    renameSavedRequest,
     reportPayload,
     requestFields,
     requestJson,
+    updateRequestJsonDraft,
     requestKindDraft,
     requestGrpcLibraryIdDraft,
     requestGrpcVersionIdDraft,
@@ -3819,6 +3982,7 @@ export function useWorkbenchContainerModel() {
     requestNameDialogOpen,
     requestNameDraft,
     requestResponseLayout,
+    activeRequestResponseLayout,
     effectiveRequestResponseLayout,
     horizontalLayoutAvailable,
     setRequestResponseLayout,
@@ -3831,6 +3995,8 @@ export function useWorkbenchContainerModel() {
     setResponseSearchScope,
     setPendingMessageCount,
     responseHeight,
+    responseCollapsed,
+    setResponseCollapsed,
     responseTab,
     responseWidth,
     restMethods,
@@ -3842,6 +4008,7 @@ export function useWorkbenchContainerModel() {
     runWebSocketBenchmark,
     saveCurrentEnvironment,
     saveCurrentExample,
+    saveCurrentRequestAsSaved,
     saveCurrentResultForDocs,
     saveCurrentResultForDocsStable,
     saveDocumentationSource,
@@ -3920,6 +4087,7 @@ export function useWorkbenchContainerModel() {
     stopMockServer,
     stopWebAccess,
     stopRestMockServer,
+    sendRestMockPending,
     stopWebSocketBenchmark,
     stopWebSocketMockServer,
     targetDraft,

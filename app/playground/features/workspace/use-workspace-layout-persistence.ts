@@ -12,12 +12,18 @@ import {
   minResponseWidth,
   minSidebarWidth,
 } from "../../shared/workbench-constants";
-import type { RequestResponseLayoutMode, WorkspaceLayoutSnapshot } from "../../shared/workbench-types";
+import type {
+  RequestResponseLayoutMode,
+  RequestViewStateSnapshot,
+  WorkspaceLayoutSnapshot,
+} from "../../shared/workbench-types";
 
 type StateSetter<T> = (value: T | ((current: T) => T)) => void;
 
 type WorkspaceLayoutPersistenceScope = {
   requestResponseLayout: RequestResponseLayoutMode;
+  requestViews: WorkspaceLayoutSnapshot["requestViews"];
+  setRequestViews: StateSetter<Record<string, RequestViewStateSnapshot>>;
   responseHeight: number;
   responseWidth: number;
   setRequestResponseLayout: StateSetter<RequestResponseLayoutMode>;
@@ -32,6 +38,8 @@ type WorkspaceLayoutPersistenceScope = {
 export function useWorkspaceLayoutPersistence(scope: WorkspaceLayoutPersistenceScope) {
   const {
     requestResponseLayout,
+    requestViews,
+    setRequestViews,
     responseHeight,
     responseWidth,
     setRequestResponseLayout,
@@ -51,6 +59,9 @@ export function useWorkspaceLayoutPersistence(scope: WorkspaceLayoutPersistenceS
       setResponseWidth,
       setRequestResponseLayout,
     });
+    if (layout.requestViews && typeof layout.requestViews === "object") {
+      setRequestViews(layout.requestViews);
+    }
     const persistedLayout = {
       sidebarOpen: typeof layout.sidebarOpen === "boolean" ? layout.sidebarOpen : sidebarOpen,
       sidebarWidthPx:
@@ -69,6 +80,7 @@ export function useWorkspaceLayoutPersistence(scope: WorkspaceLayoutPersistenceS
         layout.requestResponseLayout === "vertical" || layout.requestResponseLayout === "horizontal"
           ? layout.requestResponseLayout
           : requestResponseLayout,
+      requestViews: layout.requestViews ?? requestViews,
     } satisfies WorkspaceLayoutSnapshot;
 
     scheduleIdleTask("workspace-layout", () => {
@@ -83,6 +95,7 @@ export function useWorkspaceLayoutPersistence(scope: WorkspaceLayoutPersistenceS
       responseHeight,
       responseWidth,
       requestResponseLayout,
+      requestViews,
     };
   }
 

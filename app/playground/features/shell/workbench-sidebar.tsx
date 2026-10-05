@@ -3,10 +3,12 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ChangeEvent,
   type DragEvent as ReactDragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
 import {
@@ -57,7 +59,13 @@ import {
   type ProtoLibraryImportAssessment,
   type ProtoVersionImportPlan,
 } from "../proto-library/proto-version-management";
-import type { SettingsSection, SideSection } from "../../shared/workbench-types";
+import type {
+  ApiCollection,
+  ApiCollectionRequest,
+  RequestSession,
+  SettingsSection,
+  SideSection,
+} from "../../shared/workbench-types";
 import { NEW_SCHEMA_COLLECTION_TARGET } from "../collection/quick-request-creator-domain";
 import type { ProtoLibrary, ProtoLibraryVersion } from "../proto-library/proto-library-types";
 import type { WorkbenchSidebarModel } from "./workbenchShell.types";
@@ -91,11 +99,30 @@ type GlobalProtoImportReview = {
   targetCollectionId: string;
 };
 
+type RequestPaletteItem = {
+  key: string;
+  title: string;
+  subtitle: string;
+  kind: string;
+  searchText: string;
+  collection?: ApiCollection;
+  request?: ApiCollectionRequest;
+  session?: RequestSession;
+  open: boolean;
+};
+
 export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchSidebarModel }) {
   const {
     FeatureCollectionSidebar,
     UnifiedDocsSidebar,
+    activateRequestSession,
     activeCollectionRequestId,
+    activeRestMockScenario,
+    activeRestMockScenarios,
+    activeWebSocketMockScenario,
+    activeWebSocketMockScenarios,
+    addRestMockScenario,
+    addWebSocketMockScenario,
     activeDocumentationPageId,
     activeProtoLibraryId,
     activeProtoVersionId,
@@ -129,6 +156,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchSidebarModel }) {
     protoFolderInputRef,
     protoInputRef,
     protoLibraries,
+    requestSessions,
     removeCollection,
     removeCollectionFolder,
     removeCollectionRequest,
@@ -145,6 +173,8 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchSidebarModel }) {
     setProtoPreview,
     setServiceProtocol,
     setServicesSection,
+    setRestMockScenarioId,
+    selectWebSocketMockScenario,
     setSettingsSection,
     setSidebarOpen,
     setSidebarWidthPx,
@@ -160,6 +190,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchSidebarModel }) {
   const [newMenuAnchor, setNewMenuAnchor] = useState<HTMLElement | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandPaletteQuery, setCommandPaletteQuery] = useState("");
+  const [commandPaletteMode, setCommandPaletteMode] = useState<"commands" | "requests">("commands");
   const [deleteSchemaLibraryId, setDeleteSchemaLibraryId] = useState("");
   const [globalProtoImportReview, setGlobalProtoImportReview] = useState<GlobalProtoImportReview | null>(null);
   const [globalProtoImportError, setGlobalProtoImportError] = useState("");
@@ -287,15 +318,102 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchSidebarModel }) {
         openQuickRequest("");
         return;
       }
+      // Compatibility fallback when the sidebar is rendered without the workbench command layer.
       if (key === "k") {
         event.preventDefault();
-        setCommandPaletteQuery("");
-        setCommandPaletteOpen(true);
+        window.dispatchEvent(new CustomEvent("layang:open-palette", { detail: { mode: "commands" } }));
       }
     };
     window.addEventListener("keydown", handleQuickCreateShortcut);
     return () => window.removeEventListener("keydown", handleQuickCreateShortcut);
   }, [activeCollectionRequestId, collections]);
+
+  useEffect(() => {
+    const handleOpenPalette = (event: Event) => {
+      const detail = (event as CustomEvent<{ mode?: "commands" | "requests" }>).detail;
+      setCommandPaletteMode(detail?.mode === "requests" ? "requests" : "commands");
+      setCommandPaletteQuery("");
+      setCommandPaletteOpen(true);
+    };
+    window.addEventListener("layang:open-palette", handleOpenPalette);
+    return () => window.removeEventListener("layang:open-palette", handleOpenPalette);
+  }, []);
+
+  const requestPaletteItems = useMemo(() => {
+    const openBySource = new Map<string, RequestSession>();
+    for (const session of requestSessions as RequestSession[]) {
+      const sourceId = session.sourceRequestId ?? session.methodKey;
+      if (sourceId) openBySource.set(sourceId, session);
+    }
+
+    const items: RequestPaletteItem[] = [];
+    const indexedSessionIds = new Set<string>();
+    for (const collection of collections as ApiCollection[]) {
+      for (const request of collection.requests) {
+        const session = openBySource.get(request.id);
+        if (session) indexedSessionIds.add(session.id);
+        const protocol = request.kind === "grpc" ? "gRPC" : request.kind.toUpperCase();
+        const target = request.kind === "grpc" ? request.grpc?.methodFullName ?? request.grpcMethodKey ?? "" : request.url;
+        items.push({
+          key: `collection:${request.id}`,
+          title: request.name,
+          subtitle: [collection.name, request.method, target].filter(Boolean).join(" · "),
+          kind: protocol,
+          searchText: [request.name, collection.name, request.method, target, request.id].filter(Boolean).join(" ").toLowerCase(),
+          collection,
+          request,
+          session,
+          open: Boolean(session),
+        });
+      }
+    }
+
+    // Keep ad-hoc/open sessions (for example a proto method opened before it is saved
+    // into a collection) discoverable as well.
+    for (const session of requestSessions as RequestSession[]) {
+      if (indexedSessionIds.has(session.id)) continue;
+      items.push({
+        key: `session:${session.id}`,
+        title: session.title,
+        subtitle: [session.serviceName, session.requestUrl ?? session.methodKey].filter(Boolean).join(" · "),
+        kind: session.requestKind?.toUpperCase() ?? "gRPC",
+        searchText: [session.title, session.serviceName, session.methodKey, session.requestUrl].filter(Boolean).join(" ").toLowerCase(),
+        session,
+        open: true,
+      });
+    }
+
+    const query = commandPaletteQuery.trim().toLowerCase();
+    const filtered = query ? items.filter((item) => item.searchText.includes(query)) : items;
+    filtered.sort((left, right) => {
+      if (!query) {
+        if (left.open !== right.open) return left.open ? -1 : 1;
+        return left.title.localeCompare(right.title);
+      }
+      const leftTitle = left.title.toLowerCase();
+      const rightTitle = right.title.toLowerCase();
+      const leftStarts = leftTitle.startsWith(query);
+      const rightStarts = rightTitle.startsWith(query);
+      if (leftStarts !== rightStarts) return leftStarts ? -1 : 1;
+      const leftExact = leftTitle === query;
+      const rightExact = rightTitle === query;
+      if (leftExact !== rightExact) return leftExact ? -1 : 1;
+      if (left.open !== right.open) return left.open ? -1 : 1;
+      return left.title.localeCompare(right.title);
+    });
+    return filtered.slice(0, 30);
+  }, [collections, commandPaletteQuery, requestSessions]);
+
+  const openRequestFromPalette = (item: RequestPaletteItem) => {
+    setCommandPaletteOpen(false);
+    setWorkbenchSideSection("collections");
+    setSidebarOpen(true);
+    if (item.collection && item.request) {
+      selectCollectionRequest(item.collection, item.request);
+      return;
+    }
+    if (item.session) activateRequestSession(item.session);
+  };
 
   function openGlobalProtoImporter(mode: "files" | "folder") {
     setProtoImportAnchor(null);
@@ -845,6 +963,20 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchSidebarModel }) {
                     setMockSelectedMethodKey(grpcMockOverviewMethodKey);
                     setServiceProtocol("grpc-mock");
                   }}
+                  restScenarios={activeRestMockScenarios}
+                  selectedRestScenarioId={activeRestMockScenario?.id}
+                  onSelectRestScenario={(id) => {
+                    setRestMockScenarioId(id);
+                    setServiceProtocol("rest");
+                  }}
+                  onAddRestScenario={() => addRestMockScenario("success")}
+                  websocketScenarios={activeWebSocketMockScenarios}
+                  selectedWebSocketScenarioId={activeWebSocketMockScenario?.id}
+                  onSelectWebSocketScenario={(id) => {
+                    selectWebSocketMockScenario(id);
+                    setServiceProtocol("websocket");
+                  }}
+                  onAddWebSocketScenario={addWebSocketMockScenario}
                 />
               </Box>
             )}
@@ -950,7 +1082,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchSidebarModel }) {
       </Menu>
 
       <Dialog open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} fullWidth maxWidth="xs">
-        <DialogTitle>Command palette</DialogTitle>
+        <DialogTitle>{commandPaletteMode === "requests" ? "Quick open request" : "Command palette"}</DialogTitle>
         <DialogContent sx={{ pt: 1 }}>
           <Stack spacing={0.75} sx={{ mt: 0.5 }}>
             <TextField
@@ -958,29 +1090,78 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchSidebarModel }) {
               size="small"
               value={commandPaletteQuery}
               onChange={(event: TextInputChangeEvent) => setCommandPaletteQuery(event.target.value)}
-              placeholder="Search commands"
-              inputProps={{ "aria-label": "Search commands" }}
+              onKeyDown={(event: ReactKeyboardEvent<HTMLInputElement>) => {
+                if (event.key !== "Enter" || commandPaletteMode !== "requests") return;
+                const first = requestPaletteItems[0];
+                if (!first) return;
+                event.preventDefault();
+                openRequestFromPalette(first);
+              }}
+              placeholder={commandPaletteMode === "requests" ? "Search requests by name" : "Search commands"}
+              inputProps={{
+                "aria-label": commandPaletteMode === "requests" ? "Search requests by name" : "Search commands",
+              }}
             />
-            {[
-              { label: "Create requests from schema", run: () => openQuickRequest("grpc") },
-              { label: "New HTTP request", run: () => openQuickRequest("rest") },
-              { label: "New WebSocket request", run: () => openQuickRequest("websocket") },
-              { label: "New collection", run: () => { setCommandPaletteOpen(false); openAddCollectionDialog(); } },
-              { label: "Import Proto schema", run: () => { setCommandPaletteOpen(false); openGlobalProtoImporter("files"); } },
-            ]
-              .filter((command) => command.label.toLowerCase().includes(commandPaletteQuery.trim().toLowerCase()))
-              .map((command) => (
-                <Button
-                  key={command.label}
-                  variant="text"
-                  onClick={command.run}
-                  sx={{ justifyContent: "flex-start", textTransform: "none" }}
-                >
-                  {command.label}
-                </Button>
-              ))}
+            {commandPaletteMode === "requests"
+              ? requestPaletteItems.length > 0
+                ? requestPaletteItems.map((item) => (
+                  <Button
+                    key={item.key}
+                    variant="text"
+                    onClick={() => openRequestFromPalette(item)}
+                    sx={{ justifyContent: "space-between", textTransform: "none", gap: 1 }}
+                  >
+                    <Box component="span" sx={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", textAlign: "left" }}>
+                      <Box component="span" sx={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {item.title}
+                      </Box>
+                      {item.subtitle ? (
+                        <Typography component="span" variant="caption" color="text.secondary" sx={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {item.subtitle}
+                        </Typography>
+                      ) : null}
+                    </Box>
+                    <Stack direction="row" spacing={0.5} alignItems="center" sx={{ flexShrink: 0 }}>
+                      {item.open ? <Typography component="span" variant="caption" color="success.main">OPEN</Typography> : null}
+                      <Typography component="span" variant="caption" color="text.secondary">{item.kind}</Typography>
+                    </Stack>
+                  </Button>
+                ))
+                : <Typography variant="body2" color="text.secondary" sx={{ px: 0.75, py: 1 }}>No matching requests.</Typography>
+              : [
+                  { label: "Create requests from schema", run: () => openQuickRequest("grpc") },
+                  { label: "New HTTP request", run: () => openQuickRequest("rest") },
+                  { label: "New WebSocket request", run: () => openQuickRequest("websocket") },
+                  {
+                    label: "New collection",
+                    run: () => {
+                      setCommandPaletteOpen(false);
+                      openAddCollectionDialog();
+                    },
+                  },
+                  {
+                    label: "Import Proto schema",
+                    run: () => {
+                      setCommandPaletteOpen(false);
+                      openGlobalProtoImporter("files");
+                    },
+                  },
+                ]
+                  .filter((command) => command.label.toLowerCase().includes(commandPaletteQuery.trim().toLowerCase()))
+                  .map((command) => (
+                    <Button
+                      key={command.label}
+                      variant="text"
+                      onClick={command.run}
+                      sx={{ justifyContent: "flex-start", textTransform: "none" }}
+                    >
+                      {command.label}
+                    </Button>
+                  ))}
             <Typography variant="caption" color="text.secondary">
-              Ctrl/Cmd+N opens Quick Create · Ctrl/Cmd+K opens this palette
+              {commandPaletteMode === "requests"
+                ? "Ctrl/Cmd+P opens requests · Enter activates the first match"
+                : "Ctrl/Cmd+N opens Quick Create · Ctrl/Cmd+K opens commands"}
             </Typography>
           </Stack>
         </DialogContent>

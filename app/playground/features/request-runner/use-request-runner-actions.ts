@@ -22,6 +22,9 @@ import { savedExampleAssertionJson } from "../../shared/entity-utils";
 import { recordGuiCliCommand } from "../cli/cli-command-history";
 import { responseSessionRegistry } from "../response-viewer/model/responseSessionRegistry";
 import { summarizeGrpcResult } from "../response-viewer/model/responseResult.types";
+import { createRestMockScenario, createRestMockScenarioForRequest } from "../rest/rest-model";
+import { createWebSocketMockScenario } from "../websocket/websocket-model";
+import { normalizeMockExecutionConfig } from "../mock-server/mock-execution-model";
 
 type StateSetter<T> = (value: T | ((current: T) => T)) => void;
 type CollectionNamedRequest = ApiCollectionRequest & { collectionName?: string };
@@ -63,7 +66,6 @@ export function useRequestRunnerActions(ctx: ActionContext) {
     activeTransportMode,
     activeWebSocketMockResponseText,
     activeWebSocketMockScenario,
-    activeWebSocketMockScenarios,
     appendLiveEventToSession,
     assertionJson,
     benchmark,
@@ -71,7 +73,6 @@ export function useRequestRunnerActions(ctx: ActionContext) {
     collections,
     commitTargetDraft,
     createId,
-    createRestMockPresetScenario,
     createWebSocketMockScenarioForRequest,
     downloadTextFile,
     evaluateAssertions,
@@ -94,7 +95,6 @@ export function useRequestRunnerActions(ctx: ActionContext) {
     restMockServer,
     restMockStatus,
     safeJsonParse,
-    selectCollectionRequest,
     selectedMethod,
     setAssertionResults,
     setError,
@@ -102,7 +102,6 @@ export function useRequestRunnerActions(ctx: ActionContext) {
     setHistory,
     setLastResult,
     setMetadata,
-    setRequestTab,
     setResponseTab,
     setRestMockScenarioId,
     setRestMockServer,
@@ -135,86 +134,89 @@ export function useRequestRunnerActions(ctx: ActionContext) {
 
   function selectWebSocketMockScenario(scenarioId: string) {
     setWsMockScenarioId(scenarioId);
-    if (activeCollectionRequest?.kind !== "websocket") return;
+  }
+
+  function updateActiveWebSocketMockScenario(patch: Partial<WebSocketMockScenario>) {
+    const scenarioId = activeWebSocketMockScenario?.id ?? wsMockScenarioId;
+    if (!scenarioId) return;
     setWsMockServer((current) => ({
       ...current,
-      selectedScenarioIds: { ...current.selectedScenarioIds, [activeCollectionRequest.id]: scenarioId },
+      scenarios: current.scenarios.map((scenario) => {
+        if (scenario.id !== scenarioId) return scenario;
+        const merged = { ...scenario, ...patch, requestId: undefined };
+        const execution = normalizeMockExecutionConfig(merged.execution, {
+          streamOnConnect: merged.streamOnConnect,
+          sendOnMessage: merged.sendOnMessage,
+          intervalMs: merged.intervalMs,
+          loop: merged.loop,
+          maxLoops: merged.maxLoops,
+        });
+        return {
+          ...merged,
+          execution,
+          intervalMs: execution.periodic.intervalMs,
+          loop: execution.periodic.loop,
+          maxLoops: execution.periodic.maxExecutions,
+          streamOnConnect: execution.periodic.enabled,
+          sendOnMessage: execution.incoming,
+        };
+      }),
       updatedAt: new Date().toISOString(),
     }));
   }
 
-  function updateActiveWebSocketMockScenario(patch: Partial<WebSocketMockScenario>) {
-    if (activeCollectionRequest?.kind !== "websocket") return;
-    const scenarioId = activeWebSocketMockScenario?.id ?? wsMockScenarioId;
-    setWsMockServer((current) => {
-      const payload = buildWebSocketMockPayload(current);
-      const scenarios = payload.scenarios.length
-        ? payload.scenarios
-        : [createWebSocketMockScenarioForRequest(activeCollectionRequest, { id: activeCollectionRequest.id })];
-      const hasScenario = scenarios.some((scenario) => scenario.id === scenarioId);
-      const fallback = createWebSocketMockScenarioForRequest(activeCollectionRequest, {
-        id: activeCollectionRequest.id,
-      });
-      const targetId = hasScenario ? scenarioId : fallback.id;
-      const nextScenarios = (hasScenario ? scenarios : [fallback, ...scenarios]).map((scenario) =>
-        scenario.id === targetId ? { ...scenario, ...patch, requestId: activeCollectionRequest.id } : scenario,
-      );
-      return { ...current, scenarios: nextScenarios, updatedAt: new Date().toISOString() };
-    });
-  }
-
   function updateActiveWebSocketMockResponse(value: string) {
-    if (activeCollectionRequest?.kind !== "websocket") return;
     updateActiveWebSocketMockScenario({ responseText: value });
-    if (activeWebSocketMockScenario?.id === activeCollectionRequest.id || !activeWebSocketMockScenario) {
-      patchActiveCollectionRequest({ mockResponse: value });
-    }
   }
 
   function updateWebSocketMockScenario(scenarioId: string, patch: Partial<WebSocketMockScenario>) {
     if (!scenarioId) return;
-    setWsMockServer((current) => {
-      const payload = buildWebSocketMockPayload(current);
-      const nextScenarios = payload.scenarios.map((scenario) =>
-        scenario.id === scenarioId ? { ...scenario, ...patch } : scenario,
-      );
-      return { ...current, scenarios: nextScenarios, updatedAt: new Date().toISOString() };
-    });
-  }
-
-  function addWebSocketMockScenario() {
-    if (activeCollectionRequest?.kind !== "websocket") return;
-    const scenario = createWebSocketMockScenarioForRequest(activeCollectionRequest, {
-      name: `${activeCollectionRequest.name} scenario ${activeWebSocketMockScenarios.length + 1}`,
-    });
-    setWsMockScenarioId(scenario.id);
     setWsMockServer((current) => ({
       ...current,
-      scenarios: [...buildWebSocketMockPayload(current).scenarios, scenario],
-      selectedScenarioIds: { ...current.selectedScenarioIds, [activeCollectionRequest.id]: scenario.id },
+      scenarios: current.scenarios.map((scenario) => scenario.id === scenarioId ? { ...scenario, ...patch } : scenario),
       updatedAt: new Date().toISOString(),
     }));
   }
 
-  function openWebSocketMockScenarioFromSidebar(requestId: string | undefined, scenarioId: string) {
-    if (requestId) {
-      setWsMockServer((current) => ({
-        ...current,
-        selectedScenarioIds: { ...current.selectedScenarioIds, [requestId]: scenarioId },
-        updatedAt: new Date().toISOString(),
-      }));
-      setWsMockScenarioId(scenarioId);
-      for (const collection of collections) {
-        const request = collection.requests.find((item) => item.id === requestId && item.kind === "websocket");
-        if (request) {
-          selectCollectionRequest(collection, request);
-          setRequestTab("mock");
-          return;
-        }
-      }
+  function addWebSocketMockScenario() {
+    const scenario = createWebSocketMockScenario({
+      name: `WebSocket scenario ${wsMockServer.scenarios.length + 1}`,
+    });
+    setWsMockScenarioId(scenario.id);
+    setWsMockServer((current) => ({
+      ...current,
+      scenarios: [...current.scenarios, scenario],
+      updatedAt: new Date().toISOString(),
+    }));
+  }
+
+  function createWebSocketMockFromActiveRequest() {
+    if (!activeCollectionRequest || activeCollectionRequest.kind !== "websocket") {
+      showToast("Open a WebSocket request before creating a mock from it.", "warning");
+      return;
     }
+    const scenario = createWebSocketMockScenarioForRequest(activeCollectionRequest, {
+      name: `${activeCollectionRequest.name} scenario`,
+    });
+    setWsMockScenarioId(scenario.id);
+    setWsMockServer((current) => ({
+      ...current,
+      scenarios: [...current.scenarios, scenario],
+      updatedAt: new Date().toISOString(),
+    }));
+    ctx.setServiceProtocol?.("websocket");
+    ctx.setServicesSection?.("mock-servers");
+    ctx.setSideSection?.("services");
+    ctx.setSidebarOpen?.(true);
+    showToast("Global WebSocket mock created from this request.", "success");
+  }
+
+  function openWebSocketMockScenarioFromSidebar(_requestId: string | undefined, scenarioId: string) {
     selectWebSocketMockScenario(scenarioId);
-    setRequestTab("mock");
+    ctx.setServiceProtocol?.("websocket");
+    ctx.setServicesSection?.("mock-servers");
+    ctx.setSideSection?.("services");
+    ctx.setSidebarOpen?.(true);
   }
 
   function handleWebSocketMockPortChange(value: number) {
@@ -239,64 +241,37 @@ export function useRequestRunnerActions(ctx: ActionContext) {
   }
 
   function buildWebSocketMockPayload(project = wsMockServer): Pick<WebSocketMockProject, "port" | "scenarios"> {
-    const wsRequests = collections.flatMap((collection) =>
-      collection.requests
-        .filter((request) => request.kind === "websocket")
-        .map((request) => ({ ...request, collectionName: collection.name })),
-    );
-    const scenarios: WebSocketMockScenario[] = project.scenarios
-      .filter((scenario) => {
-        if (!scenario.requestId) return true;
-        return wsRequests.some((request) => request.id === scenario.requestId);
-      })
-      .map((scenario) => ({
+    const scenarios = project.scenarios.map((scenario) => {
+      const execution = normalizeMockExecutionConfig(scenario.execution, {
+        streamOnConnect: scenario.streamOnConnect,
+        sendOnMessage: scenario.sendOnMessage,
+        intervalMs: scenario.intervalMs,
+        loop: scenario.loop,
+        maxLoops: scenario.maxLoops,
+      });
+      return {
         ...scenario,
+        requestId: undefined,
         path: normalizeWebSocketMockPath(scenario.path),
-        intervalMs: Math.max(1, Math.floor(Number(scenario.intervalMs) || 1000)),
-        maxLoops: Math.max(0, Math.floor(Number(scenario.maxLoops) || 0)),
-        loop: Boolean(scenario.loop),
-        streamOnConnect: Boolean(scenario.streamOnConnect),
-        sendOnMessage: Boolean(scenario.sendOnMessage),
-        matchMode:
-          scenario.matchMode === "contains" || scenario.matchMode === "regex" || scenario.matchMode === "jsonPath"
-            ? scenario.matchMode
-            : "always",
-        matchValue: scenario.matchValue ?? "",
-        matchJsonPath: scenario.matchJsonPath ?? "",
-      }));
-
-    for (const request of wsRequests) {
-      const hasScenario = scenarios.some((scenario) => scenario.requestId === request.id || scenario.id === request.id);
-      if (!hasScenario) scenarios.push(createWebSocketMockScenarioForRequest(request, { id: request.id }));
-    }
-
-    const selectedScenarioIds = project.selectedScenarioIds ?? {};
-    scenarios.sort((left, right) => {
-      const leftSelected = left.requestId ? selectedScenarioIds[left.requestId] === left.id : false;
-      const rightSelected = right.requestId ? selectedScenarioIds[right.requestId] === right.id : false;
-      if (leftSelected !== rightSelected) return leftSelected ? -1 : 1;
-      return 0;
+        execution,
+        intervalMs: execution.periodic.intervalMs,
+        maxLoops: execution.periodic.maxExecutions,
+        loop: execution.periodic.loop,
+        streamOnConnect: execution.periodic.enabled,
+        sendOnMessage: execution.incoming,
+      };
     });
-
-    return {
-      port: normalizeWebSocketMockPort(project.port),
-      scenarios,
-    };
+    return { port: normalizeWebSocketMockPort(project.port), scenarios };
   }
 
   function buildRestMockPayload(project = restMockServer) {
-    const restRequests = collections.flatMap((collection) =>
-      collection.requests
-        .filter((request) => request.kind === "rest")
-        .map((request) => ({ ...request, collectionName: collection.name })),
-    );
-    const scenarios: RestMockScenario[] = project.scenarios
-      .filter((scenario) => {
-        if (!scenario.requestId) return true;
-        return restRequests.some((request) => request.id === scenario.requestId);
-      })
-      .map((scenario) => ({
+    return {
+      port: normalizeRestMockPort(project.port),
+      bindHost: normalizeRestMockBindHost(project.bindHost),
+      scenarios: project.scenarios.map((scenario) => ({
         ...scenario,
+        requestId: undefined,
+        execution: normalizeMockExecutionConfig(scenario.execution),
         method: (scenario.method || "GET").toUpperCase(),
         priority: Math.trunc(Number(scenario.priority) || 0),
         status: Math.min(599, Math.max(100, Math.trunc(Number(scenario.status) || 200))),
@@ -306,55 +281,62 @@ export function useRequestRunnerActions(ctx: ActionContext) {
         matchBodyContains: scenario.matchBodyContains ?? "",
         matchJsonPath: scenario.matchJsonPath ?? "",
         matchJsonEquals: scenario.matchJsonEquals ?? "",
-      }));
-
-    for (const request of restRequests) {
-      const hasScenario = scenarios.some((scenario) => scenario.requestId === request.id || scenario.id === request.id);
-      if (!hasScenario) scenarios.push(createRestMockPresetScenario(request, "success"));
-    }
-
-    return {
-      port: normalizeRestMockPort(project.port),
-      bindHost: normalizeRestMockBindHost(project.bindHost),
-      scenarios,
+      })),
     };
   }
 
   function updateActiveRestMockScenario(patch: Partial<RestMockScenario>) {
-    if (activeCollectionRequest?.kind !== "rest") return;
     const scenarioId = activeRestMockScenario?.id ?? restMockScenarioId;
-    setRestMockServer((current) => {
-      const payload = buildRestMockPayload(current);
-      const scenarios = payload.scenarios.length
-        ? payload.scenarios
-        : [createRestMockPresetScenario(activeCollectionRequest, "success")];
-      const hasScenario = scenarios.some((scenario) => scenario.id === scenarioId);
-      const nextScenarios = (
-        hasScenario ? scenarios : [createRestMockPresetScenario(activeCollectionRequest, "success"), ...scenarios]
-      ).map((scenario) =>
-        scenario.id === (hasScenario ? scenarioId : activeCollectionRequest.id)
-          ? { ...scenario, ...patch, requestId: activeCollectionRequest.id }
+    if (!scenarioId) return;
+    setRestMockServer((current) => ({
+      ...current,
+      scenarios: current.scenarios.map((scenario) =>
+        scenario.id === scenarioId
+          ? { ...scenario, ...patch, requestId: undefined, execution: normalizeMockExecutionConfig(patch.execution ?? scenario.execution) }
           : scenario,
-      );
-      return { ...current, scenarios: nextScenarios, updatedAt: new Date().toISOString() };
-    });
+      ),
+      updatedAt: new Date().toISOString(),
+    }));
   }
 
   function updateActiveRestMockResponse(value: string) {
-    if (activeCollectionRequest?.kind !== "rest") return;
     updateActiveRestMockScenario({ body: value });
-    if (activeRestMockScenario?.id === activeCollectionRequest.id || !activeRestMockScenario) {
-      patchActiveCollectionRequest({ mockResponse: value });
-    }
   }
 
-  function addRestMockScenario(preset: "success" | "not-found" | "validation-error" | "delayed") {
-    if (activeCollectionRequest?.kind !== "rest") return;
-    const scenario = createRestMockPresetScenario(activeCollectionRequest, preset);
+  function createRestMockFromActiveRequest() {
+    if (!activeCollectionRequest || activeCollectionRequest.kind !== "rest") {
+      showToast("Open a REST request before creating a mock from it.", "warning");
+      return;
+    }
+    const scenario = createRestMockScenarioForRequest(activeCollectionRequest, {
+      name: `${activeCollectionRequest.name} success`,
+    });
     setRestMockScenarioId(scenario.id);
     setRestMockServer((current) => ({
       ...current,
-      scenarios: [...buildRestMockPayload(current).scenarios, scenario],
+      scenarios: [...current.scenarios, scenario],
+      updatedAt: new Date().toISOString(),
+    }));
+    ctx.setServiceProtocol?.("rest");
+    ctx.setServicesSection?.("mock-servers");
+    ctx.setSideSection?.("services");
+    ctx.setSidebarOpen?.(true);
+    showToast("Global REST mock created from this request.", "success");
+  }
+
+  function addRestMockScenario(preset: "success" | "not-found" | "validation-error" | "delayed") {
+    const base = createRestMockScenario({ name: `REST scenario ${restMockServer.scenarios.length + 1}` });
+    const scenario = preset === "not-found"
+      ? { ...base, name: "REST not found", status: 404, priority: 20, body: JSON.stringify({ error: "Not found", timestamp: "{{now}}" }, null, 2) }
+      : preset === "validation-error"
+        ? { ...base, name: "REST validation error", status: 422, priority: 30, matchJsonPath: "$.invalid", matchJsonEquals: "true", body: JSON.stringify({ error: "Validation failed", timestamp: "{{now}}" }, null, 2) }
+        : preset === "delayed"
+          ? { ...base, name: "REST delayed success", priority: 10, delayMs: 750 }
+          : base;
+    setRestMockScenarioId(scenario.id);
+    setRestMockServer((current) => ({
+      ...current,
+      scenarios: [...current.scenarios, scenario],
       updatedAt: new Date().toISOString(),
     }));
   }
@@ -507,6 +489,24 @@ export function useRequestRunnerActions(ctx: ActionContext) {
       workspacePath: workspaceFolderPath,
     });
     showToast("WebSocket mock server stopped.", "success");
+  }
+
+  async function sendRestMockPending() {
+    if (!window.electronRestMock?.send) {
+      showToast("REST mock server is available in the desktop app only.", "warning");
+      return;
+    }
+    const result = await window.electronRestMock.send({ scenarioId: activeRestMockScenario?.id });
+    if (!result?.ok) {
+      showToast(result?.error || "Start the REST mock server before releasing pending requests.", "warning");
+      return;
+    }
+    setRestMockStatus((current) => ({ ...current, ...result, running: result.running ?? current.running }));
+    const sent = result.sent ?? 0;
+    showToast(
+      sent > 0 ? `Released ${sent} pending REST request${sent === 1 ? "" : "s"}.` : "No pending REST request matched this scenario.",
+      sent > 0 ? "success" : "info",
+    );
   }
 
   async function sendWebSocketMockOnce() {
@@ -1046,6 +1046,7 @@ export function useRequestRunnerActions(ctx: ActionContext) {
     updateActiveWebSocketMockResponse,
     updateWebSocketMockScenario,
     addWebSocketMockScenario,
+    createWebSocketMockFromActiveRequest,
     openWebSocketMockScenarioFromSidebar,
     handleWebSocketMockPortChange,
     copyActiveWebSocketMockResponse,
@@ -1055,6 +1056,7 @@ export function useRequestRunnerActions(ctx: ActionContext) {
     updateActiveRestMockScenario,
     updateActiveRestMockResponse,
     addRestMockScenario,
+    createRestMockFromActiveRequest,
     updateRestMockScenarioPair,
     addRestMockScenarioPair,
     removeRestMockScenarioPair,
@@ -1063,6 +1065,7 @@ export function useRequestRunnerActions(ctx: ActionContext) {
     startRestMockServer,
     updateRunningRestMockServer,
     stopRestMockServer,
+    sendRestMockPending,
     startWebSocketMockServer,
     stopWebSocketMockServer,
     sendWebSocketMockOnce,

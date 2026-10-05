@@ -15,10 +15,15 @@ test("Mocking exposes independent runtime switches and keeps gRPC Mock settings"
   assert.match(services, /label: "Web Access"/);
   assert.match(services, /label: "REST Mock"/);
   assert.match(services, /label: "WebSocket Mock"/);
+  assert.match(services, /endpoint: grpcEndpoint/);
+  assert.match(services, /endpoint: webEndpoint/);
+  assert.match(services, /endpoint: restEndpoint/);
+  assert.match(services, /endpoint: websocketEndpoint/);
+  assert.doesNotMatch(services, /fontFamily: "monospace", fontSize: 10/);
   assert.match(services, /onToggle\(item\.kind, event\.target\.checked\)/);
   assert.match(services, />\s*Mock Settings\s*<\/Button>/);
   assert.match(services, /<GrpcMockSettingsDialog/);
-  assert.match(services, />\s*Scenario Settings\s*<\/Button>/);
+  assert.match(services, /aria-label="Scenario settings"/);
 });
 
 test("Source Control does not render a duplicate outer Git changes sidebar", () => {

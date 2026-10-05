@@ -1,5 +1,10 @@
 "use strict";
 
+const __bundleCreateRequire = require("node:module").createRequire;
+const __bundlePath = require("node:path");
+const __bundleBaseDir = __dirname;
+
+
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const runtime = require("../lib/mock-runtime.cjs");
@@ -201,3 +206,130 @@ test("utility mock runtime routes grpc live push send", async () => {
   assert.deepEqual(calls, [{ serviceName: "demo.TrackService", methodName: "WatchTracks", scenarioId: "live-track", responseIndex: 2 }]);
   await mockRuntime.dispose();
 });
+
+
+{
+  const __bundleOrigin = __bundlePath.join(__bundleBaseDir, "mock-runtime-event-driven-regression.test.cjs");
+  const require = __bundleCreateRequire(__bundleOrigin);
+  const __dirname = __bundlePath.dirname(__bundleOrigin);
+  const __filename = __bundleOrigin;
+  const { describe: __bundleDescribe } = require("node:test");
+  __bundleDescribe("mock-runtime-event-driven-regression.test.cjs", () => {
+    const assert = require("node:assert/strict");
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const test = require("node:test");
+    
+    const ROOT = path.join(__dirname, "..");
+    
+    function read(relativePath) {
+      return fs.readFileSync(path.join(ROOT, relativePath), "utf8");
+    }
+    
+    test("utility-mode mock runtime is event-driven and creates no grpc/rest/websocket status interval", () => {
+      const polling = read("app/playground/features/mock-server/runtime/useMockRuntimePolling.ts");
+      const events = read("app/playground/features/mock-server/runtime/useMockRuntimeEvents.ts");
+      const shell = read("app/playground/features/shell/use-workbench-container-model.tsx");
+    
+      assert.match(events, /electronRuntime\?\.onEvent/);
+      assert.match(events, /mock\.statusChanged/);
+      assert.match(events, /patchGrpc/);
+      assert.match(events, /patchRest/);
+      assert.match(events, /patchWebSocket/);
+      assert.match(shell, /useMockRuntimeEvents\(\)/);
+      assert.match(polling, /runtimeModeRef\.current === "utility"/);
+    
+      const utilityGuard = polling.indexOf('runtimeModeRef.current === "utility"');
+      const grpcInterval = polling.indexOf("1500");
+      assert.ok(utilityGuard >= 0 && utilityGuard < grpcInterval, "utility guard must precede mock polling intervals");
+    });
+    
+    test("mock runtime telemetry exposes dedicated runtime status poll rate", () => {
+      const types = read("app/playground/features/mock-server/runtime/mockRuntime.types.ts");
+      const store = read("app/playground/features/mock-server/runtime/mockRuntime.store.ts");
+      const perf = read("app/playground/shared/performance/performance-stats.store.ts");
+    
+      assert.match(types, /runtimeStatusPolls: number/);
+      assert.match(store, /recordRuntimeStatusPoll/);
+      assert.match(perf, /runtimeStatusPollsPerSec/);
+    });
+    
+    
+    test("utility runtime crash clears grpc/rest/websocket running status until explicitly restarted", () => {
+      const events = read("app/playground/features/mock-server/runtime/useMockRuntimeEvents.ts");
+      assert.match(events, /runtime\.unavailable/);
+      assert.match(events, /patchGrpc\(\{ running: false/);
+      assert.match(events, /patchRest\(\{ running: false/);
+      assert.match(events, /patchWebSocket\(\{ running: false/);
+    });
+    
+  });
+}
+
+{
+  const __bundleOrigin = __bundlePath.join(__bundleBaseDir, "mock-runtime-external-store-regression.test.cjs");
+  const require = __bundleCreateRequire(__bundleOrigin);
+  const __dirname = __bundlePath.dirname(__bundleOrigin);
+  const __filename = __bundleOrigin;
+  const { describe: __bundleDescribe } = require("node:test");
+  __bundleDescribe("mock-runtime-external-store-regression.test.cjs", () => {
+    const assert = require("node:assert/strict");
+    const fs = require("node:fs");
+    const test = require("node:test");
+    const read = (path) => fs.readFileSync(path, "utf8");
+    
+    test("mock runtime status is owned by a semantic external store", () => {
+      const store = read("app/playground/features/mock-server/runtime/mockRuntime.store.ts");
+      assert.match(store, /subscribe/);
+      assert.match(store, /patchGrpc/);
+      assert.match(store, /patchRest/);
+      assert.match(store, /patchWebSocket/);
+      assert.match(store, /patchWebAccess/);
+      assert.match(store, /semanticEqual/);
+      assert.match(store, /publishedChanges/);
+    });
+    
+    test("protocol controllers do not own runtime status with React useState", () => {
+      const grpc = read("app/playground/features/mock-server/use-grpc-mock-controller.ts");
+      const rest = read("app/playground/features/rest/use-rest-controller.ts");
+      const ws = read("app/playground/features/websocket/use-websocket-controller.ts");
+      assert.doesNotMatch(grpc, /useState<MockServerStatus>/);
+      assert.doesNotMatch(rest, /useState<RestMockStatus>/);
+      assert.doesNotMatch(ws, /useState<WebSocketMockStatus>/);
+      assert.match(grpc, /mockRuntimeStore/);
+      assert.match(rest, /mockRuntimeStore/);
+      assert.match(ws, /mockRuntimeStore/);
+    });
+    
+    test("status bar subscribes directly instead of reading four runtime statuses from ctx", () => {
+      const statusBar = read("app/playground/features/shell/workbench-status-bar.tsx");
+      assert.match(statusBar, /useGrpcMockRuntimeStatus/);
+      assert.match(statusBar, /useRestMockRuntimeStatus/);
+      assert.match(statusBar, /useWebSocketMockRuntimeStatus/);
+      assert.match(statusBar, /useWebAccessRuntimeStatus/);
+    });
+    
+  });
+}
+
+{
+  const __bundleOrigin = __bundlePath.join(__bundleBaseDir, "mock-runtime-ssr-safety-regression.test.cjs");
+  const require = __bundleCreateRequire(__bundleOrigin);
+  const __dirname = __bundlePath.dirname(__bundleOrigin);
+  const __filename = __bundleOrigin;
+  const { describe: __bundleDescribe } = require("node:test");
+  __bundleDescribe("mock-runtime-ssr-safety-regression.test.cjs", () => {
+    const assert = require("node:assert/strict");
+    const fs = require("node:fs");
+    const test = require("node:test");
+    
+    test("mock runtime polling does not read window during server render", () => {
+      const source = fs.readFileSync("app/playground/features/mock-server/runtime/useMockRuntimePolling.ts", "utf8");
+      assert.match(source, /function getInitialRuntimeMode/);
+      assert.match(source, /typeof window === "undefined"/);
+      assert.match(source, /useRef<"main" \| "utility">\(getInitialRuntimeMode\(\)\)/);
+      assert.doesNotMatch(source, /useRef<"main" \| "utility">\(window\.electronRuntime/);
+    });
+    
+  });
+}

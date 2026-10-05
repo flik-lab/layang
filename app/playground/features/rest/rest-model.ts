@@ -10,6 +10,7 @@ import type { GrpcResult } from "@/lib/types";
 import { createId } from "../../shared/entity-utils";
 import { normalizeRestMockBindHost, normalizeRestMockPort } from "../workspace/workspace-model";
 import { renderExampleDocBlock } from "../docs-publisher/docs-renderer";
+import { createMockExecutionConfig, normalizeMockExecutionConfig } from "../mock-server/mock-execution-model";
 
 export const restMethods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 
@@ -34,6 +35,7 @@ export function createRestMockScenarioForRequest(
     id: overrides.id ?? createId(),
     name: overrides.name ?? `${request.name} success`,
     enabled: overrides.enabled ?? true,
+    execution: normalizeMockExecutionConfig(overrides.execution ?? createMockExecutionConfig("incoming")),
     method: overrides.method ?? request.method ?? "GET",
     path: overrides.path ?? path,
     priority: overrides.priority ?? 0,
@@ -47,7 +49,30 @@ export function createRestMockScenarioForRequest(
     matchJsonPath: overrides.matchJsonPath ?? "",
     matchJsonEquals: overrides.matchJsonEquals ?? "",
     ...overrides,
-    requestId: overrides.requestId ?? request.id,
+    requestId: undefined,
+    sourceRequestId: overrides.sourceRequestId ?? overrides.requestId ?? request.id,
+  };
+}
+
+export function createRestMockScenario(overrides: Partial<RestMockScenario> = {}): RestMockScenario {
+  return {
+    id: overrides.id ?? createId(),
+    name: overrides.name ?? "REST scenario",
+    enabled: overrides.enabled ?? true,
+    execution: normalizeMockExecutionConfig(overrides.execution ?? createMockExecutionConfig("incoming")),
+    method: (overrides.method ?? "GET").toUpperCase(),
+    path: overrides.path ?? "/mock/rest",
+    priority: overrides.priority ?? 0,
+    status: overrides.status ?? 200,
+    headers: overrides.headers ?? [{ key: "content-type", value: "application/json" }],
+    body: overrides.body ?? defaultRestMockResponse("REST scenario"),
+    delayMs: overrides.delayMs ?? 0,
+    matchQuery: overrides.matchQuery ?? [],
+    matchHeaders: overrides.matchHeaders ?? [],
+    matchBodyContains: overrides.matchBodyContains ?? "",
+    matchJsonPath: overrides.matchJsonPath ?? "",
+    matchJsonEquals: overrides.matchJsonEquals ?? "",
+    sourceRequestId: overrides.sourceRequestId ?? overrides.requestId,
   };
 }
 

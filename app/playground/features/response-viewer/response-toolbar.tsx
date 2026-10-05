@@ -10,6 +10,7 @@ import {
   KeyboardArrowRight,
   KeyboardArrowUp,
   MoreHoriz,
+  OpenInNew,
   Search,
 } from "@/components/shadcn/icons";
 import {
@@ -49,6 +50,7 @@ export type ResponseToolbarProps = {
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
   layout?: "vertical" | "horizontal";
+  onDetach?: () => void;
 };
 
 /** Keeps the common response actions visible and moves secondary output actions into one overflow menu. */
@@ -71,6 +73,7 @@ export const ResponseToolbar = memo(function ResponseToolbar({
   collapsed = false,
   onToggleCollapsed,
   layout = "vertical",
+  onDetach,
 }: ResponseToolbarProps) {
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [matchCount, setMatchCount] = useState(0);
@@ -327,6 +330,13 @@ export const ResponseToolbar = memo(function ResponseToolbar({
           </Button>
         </Stack>
       )}
+      {!collapsed && onDetach ? (
+        <Tooltip title="Open response in a separate window">
+          <IconButton size="small" onClick={onDetach} aria-label="Open response in a separate window">
+            <OpenInNew sx={{ fontSize: 16 }} />
+          </IconButton>
+        </Tooltip>
+      ) : null}
       {!collapsed && <Tooltip title={fullscreen ? "Exit full screen response" : "Open response full screen"}>
         <IconButton
           size="small"

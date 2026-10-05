@@ -7,6 +7,29 @@ import type {
   WebSocketMockStatus,
 } from "@/app/playground/shared/workbench-types";
 
+
+export type LayangWindowKind = "main" | "mocking" | "request" | "response" | "performance";
+export interface LayangWindowContext {
+  windowId?: number;
+  kind: LayangWindowKind;
+  resourceId?: string;
+  responseSessionId?: string;
+  originWindowId?: number;
+  originTabIndex?: number;
+  title?: string;
+}
+export interface LayangManagedWindowInfo extends LayangWindowContext {
+  windowId: number;
+  key: string;
+  focused?: boolean;
+}
+export interface LayangWindowEventEnvelope {
+  topic: string;
+  payload?: unknown;
+  sourceWindowId?: number;
+  sourceContext?: LayangWindowContext;
+}
+
 export type RuntimeProcessStatus = {
   status?: "ready" | "disposed" | "unavailable";
   running?: boolean;
@@ -1231,6 +1254,14 @@ declare global {
         message?: string;
         error?: string;
       }>;
+      send?: (payload: { scenarioId?: string }) => Promise<{
+        ok: boolean;
+        running?: boolean;
+        sent?: number;
+        pendingCount?: number;
+        message?: string;
+        error?: string;
+      }>;
       stop?: () => Promise<{ ok: boolean; running?: boolean; message?: string; error?: string }>;
       status?: () => Promise<{
         ok?: boolean;
@@ -1261,6 +1292,28 @@ declare global {
       maximizeToggle?: () => Promise<{ maximized: boolean }>;
       close?: () => Promise<{ ok: boolean }>;
       toggleAlwaysOnTop?: () => Promise<{ alwaysOnTop: boolean }>;
+      getContext?: () => Promise<{ ok: boolean; context?: LayangWindowContext; error?: string }>;
+      listManaged?: () => Promise<{ ok: boolean; windows?: LayangManagedWindowInfo[]; error?: string }>;
+      openDetached?: (payload: Partial<LayangWindowContext> & { kind: LayangWindowKind }) => Promise<{
+        ok: boolean;
+        existing?: boolean;
+        windowId?: number;
+        context?: LayangWindowContext;
+        error?: string;
+      }>;
+      reattach?: () => Promise<{ ok: boolean; context?: LayangWindowContext; mainWindowId?: number; error?: string }>;
+      reattachResource?: (payload: Partial<LayangWindowContext> & { kind: LayangWindowKind }) => Promise<{ ok: boolean; context?: LayangWindowContext; mainWindowId?: number; targetWindowId?: number; found?: boolean; error?: string }>;
+      focusResource?: (payload: Partial<LayangWindowContext> & { kind: LayangWindowKind }) => Promise<{
+        ok: boolean;
+        found?: boolean;
+        windowId?: number;
+        error?: string;
+      }>;
+      broadcast?: (topic: string, payload?: unknown) => Promise<{ ok: boolean; error?: string }>;
+      onReattach?: (callback: (context: LayangWindowContext) => void) => () => void;
+      onRequestReattach?: (callback: (payload: { kind?: LayangWindowKind; resourceId?: string }) => void) => () => void;
+      onRegistryChanged?: (callback: (payload: { windows?: LayangManagedWindowInfo[] }) => void) => () => void;
+      onEvent?: (callback: (event: LayangWindowEventEnvelope) => void) => () => void;
     };
   }
 }

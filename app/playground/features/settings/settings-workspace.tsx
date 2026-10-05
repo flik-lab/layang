@@ -158,7 +158,7 @@ export function SettingsWorkspace({ ctx }: { ctx: ViewContext }) {
                   </Stack>
                 </Stack>
               </SettingCard>
-              <SettingCard title="Request editor layout">
+              <SettingCard title="Default request editor layout">
                 <Stack spacing={0.65}>
                   <Stack direction="row" spacing={0.8} flexWrap="wrap" useFlexGap>
                     <Button
@@ -181,6 +181,9 @@ export function SettingsWorkspace({ ctx }: { ctx: ViewContext }) {
                       Side by side is preserved and will resume automatically when the workbench is wide enough.
                     </Typography>
                   ) : null}
+                  <Typography variant="caption" color="text.secondary">
+                    New requests use this default. Each request remembers its own Side by side or Stacked choice from the request toolbar.
+                  </Typography>
                 </Stack>
               </SettingCard>
               <SettingCard title="Interface zoom">

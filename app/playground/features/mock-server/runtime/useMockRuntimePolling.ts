@@ -6,6 +6,7 @@ import { mockRuntimeStore } from "./mockRuntime.store";
 
 export type UseMockRuntimePollingOptions = {
   mockServer: MockServerProject;
+  enabled?: boolean;
 };
 
 type RuntimeTimer = number | null;
@@ -15,12 +16,13 @@ function getInitialRuntimeMode(): "main" | "utility" {
   return window.electronRuntime?.mode === "utility" ? "utility" : "main";
 }
 
-export function useMockRuntimePolling({ mockServer }: UseMockRuntimePollingOptions): void {
+export function useMockRuntimePolling({ mockServer, enabled = true }: UseMockRuntimePollingOptions): void {
   const profileIdRef = useRef(mockServer.activeGatewayProfileId);
   const runtimeModeRef = useRef<"main" | "utility">(getInitialRuntimeMode());
   profileIdRef.current = mockServer.activeGatewayProfileId;
 
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     let grpcTimer: RuntimeTimer = null;
     let restTimer: RuntimeTimer = null;
@@ -137,5 +139,5 @@ export function useMockRuntimePolling({ mockServer }: UseMockRuntimePollingOptio
       if (webSocketTimer !== null) window.clearInterval(webSocketTimer);
       if (webAccessTimer !== null) window.clearInterval(webAccessTimer);
     };
-  }, []);
+  }, [enabled]);
 }

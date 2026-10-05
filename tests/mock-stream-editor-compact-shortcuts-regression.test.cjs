@@ -76,3 +76,14 @@ test("mock catalog status badge keeps breathing room from picker and toggle", ()
   assert.match(row, /gridTemplateColumns: "minmax\(150px, 1\.05fr\) minmax\(180px, 1\.4fr\) 82px 64px 34px"/);
   assert.match(row, /<Chip size="small" color=\{color\} variant=\{row\.status === "live" \? undefined : "outlined"\} label=\{label\} sx=\{\{ height: 22, mx: 0\.5 \}\} \/>/);
 });
+
+
+test("focused gRPC mock uses content-sized settings and gives remaining height to the editor", () => {
+  const services = read("app/playground/features/services/services-workspace.tsx");
+
+  assert.match(services, /const \[settingsPaneHeight, setSettingsPaneHeight\] = useState<number \| null>\(null\)/);
+  assert.match(services, /flex: settingsPaneHeight === null \? "0 0 auto" : `0 0 \$\{settingsPaneHeight\}px`/);
+  assert.match(services, /flex: "1 1 0"/);
+  assert.match(services, /overflowY: settingsPaneHeight === null \? "visible" : "auto"/);
+  assert.doesNotMatch(services, /editorPaneRatio/);
+});

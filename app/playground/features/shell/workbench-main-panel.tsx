@@ -8,11 +8,10 @@ import type {
   ReactNode,
 } from "react";
 import type { MetadataPair } from "@/lib/types";
-import { MoreHoriz, WarningIcon } from "@/components/shadcn/icons";
+import { KeyboardArrowLeft, MoreHoriz, OpenInNew, WarningIcon } from "@/components/shadcn/icons";
 import { Box as ShellBox } from "@/components/shadcn/compat";
 import { WorkbenchTabs } from "@/components/ui/workbench";
 import { methodKey } from "../../shared/rpc-method-utils";
-import { uiCopy } from "../../shared/ui-copy";
 import { performanceStats } from "../../shared/performance/performance-stats.store";
 import {
   defaultGrpcConnectionTimeoutMs,
@@ -21,10 +20,9 @@ import {
   railWidth,
 } from "../../shared/workbench-constants";
 import { MethodStatusIndicator } from "../../shared/components/method-status-indicator";
-import { mockScenarioDisplayName, rpcMethodKindLabel } from "../mock-server/mock-scenario-ui";
+import { mockScenarioDisplayName } from "../mock-server/mock-scenario-ui";
 import {
   GrpcMockScenarioActionsMenu,
-  GrpcMockScenarioControls,
   GrpcMockScenarioManagerDialog,
 } from "../mock-server/grpc-mock-scenario-controls";
 import {
@@ -43,11 +41,13 @@ import {
 } from "../services/services-workspace";
 import { SettingsWorkspace } from "../settings/settings-workspace";
 import { ProtoSchemaWorkspace } from "../proto-registry/proto-schema-workspace";
+import { SavedRequestControls } from "../saved-requests/SavedRequestControls";
 import { WorkbenchResponsePanel } from "../response-viewer/response-workbench-panel";
 import { GitSourceControlWorkspace } from "../git/git-source-control";
 import { ExampleEditorDialog, type ExampleEditorTab } from "../examples/examples-panel";
 import { useWorkbenchSideSection } from "./workbench-navigation-store";
 import type {
+  ApiRequestKind,
   EnvironmentConfig,
   MockScenario,
   RequestSession,
@@ -92,7 +92,7 @@ function grpcBindingIssue(status?: string | null): GrpcBindingIssue | null {
   }
 }
 
-function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeModel }) {
+export function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeModel }) {
   performanceStats.recordRenderInvocation("collections");
   const {
     Add,
@@ -100,7 +100,6 @@ function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeMo
     Api,
     Box,
     Button,
-    Chip,
     ContentCopy,
     Delete,
     DesktopWindows,
@@ -128,7 +127,6 @@ function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeMo
     Paper,
     PlayArrow,
     RequestTabs,
-    RestMockPanel,
     RestPairEditor,
     Select,
     Stack,
@@ -139,7 +137,6 @@ function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeMo
     Typography,
     UploadFile,
     WebSocketBenchmarkPanel,
-    WebSocketMockPanel,
     activateRequestSession,
     activeCollectionRequest,
     activeRequestId,
@@ -148,30 +145,23 @@ function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeMo
     activeEnvironmentKey,
     activeIsRest,
     activeIsWebSocket,
-    activeRestMockResponseText,
-    activeRestMockScenario,
-    activeRestMockScenarios,
     activeRunning,
     activeSession,
     activeTransportMode,
-    activeWebSocketMockResponseText,
-    activeWebSocketMockScenario,
-    activeWebSocketMockScenarios,
     addMetadataRow,
-    addRestMockScenario,
-    addRestMockScenarioPair,
+    createRestMockFromActiveRequest,
     addRestPairRow,
-    addWebSocketMockScenario,
+    createWebSocketMockFromActiveRequest,
     beginResponseResize,
     benchmark,
     chooseEnvironment,
     clearActiveResponseStable,
+    clearActiveView,
     closeAllRequestSessions,
     closeOtherRequestSessions,
     closeRequestSession,
     closeManualWebSocketClient,
     commitTargetDraft,
-    copyActiveWebSocketMockResponse,
     copyPreviewUrl,
     currentExamples,
     examples,
@@ -197,20 +187,18 @@ function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeMo
     openMockScenarioFolder,
     handleRequestJsonChange,
     handleResponseTabChange,
-    handleRestMockBindHostChange,
-    handleRestMockPortChange,
     handleConnectWebSocket,
     handleSendWebSocketMessage,
     handleTargetDraftChange,
     handleTransportModeChange,
-    handleWebSocketMockPortChange,
     isNativeBridgeAvailable,
     lastResult,
     loadExample,
+    loadSavedRequest,
     metadata,
     methodTypeLabel,
+    managedWindow,
     mockServer,
-    mockServerStatus,
     setMockServer,
     setMockSelectedMethodKey,
     selectProtoLibraryVersion,
@@ -225,43 +213,44 @@ function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeMo
     patchActiveCollectionRequest,
     publishDocumentationPage,
     removeMetadataRow,
-    removeRestMockScenarioPair,
+    deleteSavedRequest,
     removeRestPairRow,
     requestFields,
     requestJson,
-    requestResponseLayout,
+    updateRequestJsonDraft,
+    activeRequestResponseLayout,
     effectiveRequestResponseLayout,
     horizontalLayoutAvailable,
     requestRunner,
     requestSessions,
+    savedRequests,
     requestTab,
     responseBodyRef,
     responseFields,
     responseHeight,
+    responseCollapsed,
+    setResponseCollapsed,
     setAuthorizationMetadata,
     responseTab,
     responseWidth,
     resizeResponseByKeyboard,
     reorderRequestSessions,
+    renameSavedRequest,
     restMethods,
-    restMockServer,
-    restMockStatus,
     runExample,
     runWebSocketBenchmark,
     saveCurrentEnvironment,
     saveCurrentExample,
+    saveCurrentRequestAsSaved,
     saveCurrentResultForDocsStable,
     saveDocumentationSource,
-    selectWebSocketMockScenario,
     selectedMethod,
-    sendWebSocketMockOnce,
     setEnvMenuAnchor,
     setExamples,
     setRequestTab,
     setServiceProtocol,
     setServicesSection,
     setProtoPreview,
-    setRestMockScenarioId,
     setSideSection,
     setSidebarOpen,
     setWsBenchmarkIterations,
@@ -269,23 +258,14 @@ function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeMo
     cliPanelOpen,
     cliPanelHeight,
     showEmptyWorkbench,
-    startRestMockServer,
-    startWebSocketMockServer,
-    stopRestMockServer,
     stopWebSocketBenchmark,
-    stopWebSocketMockServer,
     targetDraft,
     toggleRequestResponseLayout,
     updateActiveRestAuth,
     updateActiveSession,
     updateActiveRestBodyType,
     updateActiveRestMethod,
-    updateActiveRestMockResponse,
-    updateActiveRestMockScenario,
-    updateActiveWebSocketMockResponse,
-    updateActiveWebSocketMockScenario,
     updateMetadataRow,
-    updateRestMockScenarioPair,
     updateRestPairRow,
     updateWebSocketSubprotocol,
     webSocketSubprotocolValue,
@@ -293,14 +273,64 @@ function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeMo
     wsBenchmarkResults,
     wsBenchmarkRunning,
     wsClientState,
-    wsMockIntervalMs,
-    wsMockLoop,
-    wsMockMaxLoops,
-    wsMockPath,
-    wsMockPort,
-    wsMockStatus,
-    wsMockStreamOnConnect,
   } = props.ctx;
+
+  const isMainWindow = managedWindow?.context?.kind === "main";
+  const visibleRequestSessions = isMainWindow
+    ? requestSessions.filter((session: RequestSession) => !managedWindow.detachedByKey.has(`request:${session.id}`))
+    : requestSessions;
+  const activeResponseDetached = Boolean(
+    managedWindow?.context?.kind !== "response" &&
+      activeRequestId &&
+      managedWindow.detachedByKey.has(`response:${activeRequestId}`),
+  );
+  const canDetachResponse = managedWindow?.context?.kind === "main" || managedWindow?.context?.kind === "request";
+  const showResponsePanel = Boolean(activeRequestId && activeSession && !showEmptyWorkbench);
+
+  const activeSavedRequestKind: ApiRequestKind | null =
+    activeCollectionRequest?.kind ??
+    activeSession?.requestKind ??
+    (selectedMethod ? "grpc" : null);
+  const savedRequestDefaultName =
+    activeCollectionRequest?.name ?? activeSession?.title ?? selectedMethod?.methodName ?? "Saved request";
+  const savedRequestControls = (
+    <SavedRequestControls
+      savedRequests={savedRequests}
+      currentKind={activeSavedRequestKind}
+      activeSavedRequestId={activeSession?.savedRequestId}
+      defaultName={savedRequestDefaultName}
+      disabled={!activeSession}
+      onLoad={(savedRequestId) => void loadSavedRequest(savedRequestId)}
+      onSave={(name, existingId) => void saveCurrentRequestAsSaved(name, existingId)}
+      onRename={(savedRequestId, name) => void renameSavedRequest(savedRequestId, name)}
+      onDelete={(savedRequestId) => void deleteSavedRequest(savedRequestId)}
+    />
+  );
+
+  async function detachRequestSession(session: RequestSession) {
+    const originTabIndex = requestSessions.findIndex((item: RequestSession) => item.id === session.id);
+    const result = await managedWindow?.openDetached?.("request", {
+      resourceId: session.id,
+      responseSessionId: session.responseSessionId || session.id,
+      originTabIndex,
+      title: session.title,
+    });
+    if (!result?.ok || activeRequestId !== session.id || !isMainWindow) return;
+    const replacement = requestSessions.find(
+      (item: RequestSession) => item.id !== session.id && !managedWindow.detachedByKey.has(`request:${item.id}`),
+    );
+    if (replacement) activateRequestSession(replacement);
+    else clearActiveView?.();
+  }
+
+  async function detachActiveResponse() {
+    if (!activeRequestId || !activeSession) return;
+    await managedWindow?.openDetached?.("response", {
+      resourceId: activeRequestId,
+      responseSessionId: activeSession.responseSessionId || activeSession.id,
+      title: activeSession.title,
+    });
+  }
 
   const [exampleEditorState, setExampleEditorState] = useState<{ id: string; tab: ExampleEditorTab } | null>(null);
   const [requestMockSettingsAnchor, setRequestMockSettingsAnchor] = useState<HTMLElement | null>(null);
@@ -1022,7 +1052,7 @@ function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeMo
           }}
         >
           <RequestTabs
-            sessions={requestSessions}
+            sessions={visibleRequestSessions}
             activeRequestId={activeRequestId}
             onActivate={(session: RequestSession) => {
               setProtoPreview(null);
@@ -1034,6 +1064,7 @@ function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeMo
             onCancel={requestRunner.cancelRequest}
             onCloseAll={closeAllRequestSessions}
             onCloseOther={closeOtherRequestSessions}
+            onDetach={isMainWindow ? detachRequestSession : undefined}
             onReorder={reorderRequestSessions}
             placement="panel"
           />
@@ -1264,9 +1295,9 @@ function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeMo
                 </Tooltip>
                 <Tooltip
                   title={
-                    requestResponseLayout === "horizontal" && !horizontalLayoutAvailable
+                    activeRequestResponseLayout === "horizontal" && !horizontalLayoutAvailable
                       ? "Side by side resumes when the window is wider; click to use stacked layout"
-                      : requestResponseLayout === "horizontal"
+                      : activeRequestResponseLayout === "horizontal"
                         ? "Stack request and response"
                         : "Show request and response side by side"
                   }
@@ -1274,14 +1305,14 @@ function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeMo
                   <IconButton
                     size="small"
                     aria-label={
-                      requestResponseLayout === "horizontal"
+                      activeRequestResponseLayout === "horizontal"
                         ? "Use stacked request and response layout"
                         : "Use side by side request and response layout"
                     }
                     onClick={toggleRequestResponseLayout}
                     sx={{ width: 32, height: 32, alignSelf: "center" }}
                   >
-                    {requestResponseLayout === "horizontal" ? (
+                    {activeRequestResponseLayout === "horizontal" ? (
                       <PanelBottom sx={{ fontSize: 16 }} />
                     ) : (
                       <PanelRight sx={{ fontSize: 16 }} />
@@ -1421,6 +1452,7 @@ function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeMo
                     if (event.key === "Enter") commitTargetDraft();
                   }}
                   inputProps={{
+                    "data-layang-primary-input": "true",
                     "aria-label": activeIsWebSocket
                       ? "WebSocket URL"
                       : activeIsRest
@@ -1545,41 +1577,25 @@ function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeMo
                         spacing={0.7}
                         alignItems="center"
                         justifyContent="space-between"
-                        flexWrap="wrap"
-                        useFlexGap
+                        sx={{ minHeight: 30, flexShrink: 0 }}
                       >
-                        <Box sx={{ minWidth: 0 }}>
-                          <Typography variant="subtitle1">WebSocket send data</Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            Data from this body is sent to the WebSocket after the connection opens. Leave it empty for
-                            connect-only.
-                          </Typography>
-                        </Box>
-                        <Stack direction="row" spacing={0.7} alignItems="center" flexWrap="wrap" useFlexGap>
-                          <Chip
-                            size="small"
-                            variant="outlined"
-                            color={wsClientState.readyState === "open" ? "success" : "default"}
-                            label={
-                              wsClientState.readyState === "open"
-                                ? `${wsClientState.messageCount} message${wsClientState.messageCount === 1 ? "" : "s"}`
-                                : "Connect from the request header"
-                            }
-                          />
-                          <Button
-                            size="small"
-                            variant="contained"
-                            startIcon={<PlayArrow />}
-                            onClick={handleSendWebSocketMessage}
-                            disabled={wsClientState.readyState !== "open" || !requestJson.trim()}
-                          >
-                            Send message
-                          </Button>
-                        </Stack>
+                        {savedRequestControls}
+                        <Button
+                          size="small"
+                          variant="contained"
+                          startIcon={<PlayArrow />}
+                          onClick={handleSendWebSocketMessage}
+                          disabled={wsClientState.readyState !== "open" || !requestJson.trim()}
+                        >
+                          Send
+                        </Button>
                       </Stack>
                       <FeatureCodeTextField
                         value={requestJson}
                         onChange={handleRequestJsonChange}
+                        onDraftChange={updateRequestJsonDraft}
+                        commitDelayMs={250}
+                        resetKey={`request-body:${activeRequestId || "unbound-request"}`}
                         minRows={7}
                         maxRows={12}
                         language="json"
@@ -1599,34 +1615,33 @@ function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeMo
                         height: "100%",
                       }}
                     >
-                      <Stack spacing={0.25}>
-                        <Typography variant="subtitle1">REST body</Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          Configure body mode for this REST request. Use the Headers and Auth & Params tabs for the rest
-                          of the request.
-                        </Typography>
+                      <Stack direction="row" alignItems="center" spacing={0.8} sx={{ minHeight: 30, flexShrink: 0 }}>
+                        <FormControl size="small" sx={{ width: 200 }}>
+                          <Select
+                            value={activeCollectionRequest?.restBodyType ?? "none"}
+                            inputProps={{ "aria-label": "REST body type" }}
+                            onChange={(event: SelectInputChangeEvent) =>
+                              updateActiveRestBodyType(event.target.value as RestBodyType)
+                            }
+                          >
+                            <MenuItem value="none">No body</MenuItem>
+                            <MenuItem value="json">JSON</MenuItem>
+                            <MenuItem value="text">Raw text</MenuItem>
+                            <MenuItem value="form-url-encoded">x-www-form-urlencoded</MenuItem>
+                          </Select>
+                        </FormControl>
+                        <Box sx={{ flex: 1, minWidth: 8 }} />
+                        {savedRequestControls}
                       </Stack>
-                      <FormControl size="small" sx={{ width: 220 }}>
-                        <Select
-                          value={activeCollectionRequest?.restBodyType ?? "none"}
-                          onChange={(event: SelectInputChangeEvent) =>
-                            updateActiveRestBodyType(event.target.value as RestBodyType)
-                          }
-                        >
-                          <MenuItem value="none">No body</MenuItem>
-                          <MenuItem value="json">JSON</MenuItem>
-                          <MenuItem value="text">Raw text</MenuItem>
-                          <MenuItem value="form-url-encoded">x-www-form-urlencoded</MenuItem>
-                        </Select>
-                      </FormControl>
                       {(activeCollectionRequest?.restBodyType ?? "none") === "none" ? (
-                        <Alert severity="info" variant="outlined">
-                          This REST request will be sent without a body.
-                        </Alert>
+                        <Box sx={{ flex: 1, minHeight: 0 }} />
                       ) : (
                         <FeatureCodeTextField
                           value={requestJson}
                           onChange={handleRequestJsonChange}
+                          onDraftChange={updateRequestJsonDraft}
+                          commitDelayMs={250}
+                          resetKey={`request-body:${activeRequestId || "unbound-request"}`}
                           minRows={7}
                           maxRows={12}
                           language={(activeCollectionRequest?.restBodyType ?? "json") === "json" ? "json" : "text"}
@@ -1684,6 +1699,7 @@ function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeMo
                           >
                             Generate from scenario
                           </Button>
+                          {savedRequestControls}
                         </Stack>
                         <Stack direction="row" spacing={0.7} alignItems="center">
                           <Button
@@ -1699,6 +1715,9 @@ function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeMo
                       <FeatureCodeTextField
                         value={requestJson}
                         onChange={handleRequestJsonChange}
+                        onDraftChange={updateRequestJsonDraft}
+                        commitDelayMs={250}
+                        resetKey={`request-body:${activeRequestId || "unbound-request"}`}
                         minRows={7}
                         maxRows={12}
                         language="json"
@@ -2007,197 +2026,55 @@ function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeMo
                       </Button>
                     </Stack>
                   ))}
-                {requestTab === "mock" &&
-                  (activeIsRest ? (
-                    <RestMockPanel
-                      request={activeCollectionRequest}
-                      scenarios={activeRestMockScenarios}
-                      activeScenario={activeRestMockScenario}
-                      mockResponseText={activeRestMockResponseText}
-                      status={restMockStatus}
-                      project={restMockServer}
-                      onMockResponseTextChange={updateActiveRestMockResponse}
-                      onPortChange={handleRestMockPortChange}
-                      onBindHostChange={handleRestMockBindHostChange}
-                      onScenarioSelect={setRestMockScenarioId}
-                      onScenarioChange={updateActiveRestMockScenario}
-                      onScenarioPairAdd={addRestMockScenarioPair}
-                      onScenarioPairUpdate={updateRestMockScenarioPair}
-                      onScenarioPairRemove={removeRestMockScenarioPair}
-                      onAddScenario={addRestMockScenario}
-                      onStart={() => void startRestMockServer()}
-                      onStop={() => void stopRestMockServer()}
-                    />
-                  ) : activeIsWebSocket ? (
-                    <WebSocketMockPanel
-                      request={activeCollectionRequest}
-                      mockResponseText={activeWebSocketMockResponseText}
-                      onMockResponseTextChange={updateActiveWebSocketMockResponse}
-                      status={wsMockStatus}
-                      port={wsMockPort}
-                      pathValue={wsMockPath}
-                      intervalMs={wsMockIntervalMs}
-                      loop={wsMockLoop}
-                      maxLoops={wsMockMaxLoops}
-                      streamOnConnect={wsMockStreamOnConnect}
-                      scenarios={activeWebSocketMockScenarios}
-                      activeScenario={activeWebSocketMockScenario}
-                      requestPaths={wsMockStatus.requestPaths}
-                      onPortChange={handleWebSocketMockPortChange}
-                      onPathChange={(value: string) => updateActiveWebSocketMockScenario({ path: value })}
-                      onIntervalMsChange={(value: number) => updateActiveWebSocketMockScenario({ intervalMs: value })}
-                      onLoopChange={(value: boolean) => updateActiveWebSocketMockScenario({ loop: value })}
-                      onMaxLoopsChange={(value: number) => updateActiveWebSocketMockScenario({ maxLoops: value })}
-                      onStreamOnConnectChange={(value: boolean) =>
-                        updateActiveWebSocketMockScenario({ streamOnConnect: value })
-                      }
-                      onScenarioSelect={selectWebSocketMockScenario}
-                      onScenarioChange={updateActiveWebSocketMockScenario}
-                      onAddScenario={addWebSocketMockScenario}
-                      onStart={() => void startWebSocketMockServer()}
-                      onStop={() => void stopWebSocketMockServer()}
-                      onSendOnce={() => void sendWebSocketMockOnce()}
-                      onCopy={copyActiveWebSocketMockResponse}
-                    />
-                  ) : (
-                    <Stack spacing={1.2} sx={{ maxWidth: 760 }}>
-                      <Paper variant="outlined" sx={{ p: 1.5 }}>
-                        <Stack spacing={1.1}>
-                          <Box sx={{ minWidth: 0 }}>
-                            <Typography variant="h6">gRPC mock</Typography>
-                            <Typography variant="caption" color="text.secondary" noWrap>
-                              {`${mockServer.bindHost}:${mockServerStatus.port ?? mockServer.port} · ${mockServerStatus.running ? uiCopy.status.running : uiCopy.status.stopped}`}
-                            </Typography>
-                          </Box>
-
-                          {activeRequestMockContext.state === "broken" ? (
-                            <Alert severity="warning" variant="outlined">
-                              <Stack spacing={0.8}>
-                                <Typography variant="body2">{activeRequestMockContext.message}</Typography>
-                                <Stack direction="row" spacing={0.6}>
-                                  <Button
-                                    size="small"
-                                    variant="contained"
-                                    onClick={() => {
-                                      setSideSection("proto-schemas");
-                                      setSidebarOpen(true);
-                                    }}
-                                  >
-                                    Open schemas
-                                  </Button>
-                                  <Button size="small" variant="text" onClick={() => setRequestTab("body")}>
-                                    Back
-                                  </Button>
-                                </Stack>
-                              </Stack>
-                            </Alert>
-                          ) : activeRequestMockContext.state === "invalid-source" ? (
-                            <Alert severity="error" variant="outlined">
-                              <Stack spacing={0.8}>
-                                <Typography variant="body2">Scenario file could not be read.</Typography>
-                                <Typography variant="caption" sx={{ fontFamily: "monospace" }}>
-                                  {activeRequestMockContext.message}
-                                </Typography>
-                                <Button
-                                  size="small"
-                                  variant="outlined"
-                                  onClick={openActiveRequestMockWorkspace}
-                                  sx={{ alignSelf: "flex-start" }}
-                                >
-                                  Open workspace
-                                </Button>
-                              </Stack>
-                            </Alert>
-                          ) : activeRequestMockContext.state === "not-grpc" ? (
-                            <Alert severity="info" variant="outlined">
-                              Select a gRPC request.
-                            </Alert>
-                          ) : (
-                            <>
-                              <Stack direction={{ xs: "column", sm: "row" }} spacing={1.2}>
-                                <Box sx={{ flex: 1, minWidth: 0 }}>
-                                  <Typography variant="caption" color="text.secondary">
-                                    Proto
-                                  </Typography>
-                                  <Typography variant="subtitle2" noWrap title={activeRequestMockContext.library.name}>
-                                    {activeRequestMockContext.library.name}
-                                  </Typography>
-                                  <Typography variant="body2" color="text.secondary">
-                                    {activeRequestMockContext.version.version}
-                                    {!activeRequestMockContext.attached ? " · Not attached" : ""}
-                                  </Typography>
-                                </Box>
-                                <Box sx={{ flex: 1, minWidth: 0 }}>
-                                  <Typography variant="caption" color="text.secondary">
-                                    Method
-                                  </Typography>
-                                  <Typography
-                                    variant="subtitle2"
-                                    noWrap
-                                    title={`${activeRequestMockContext.method.serviceName}/${activeRequestMockContext.method.methodName}`}
-                                  >
-                                    {activeRequestMockContext.method.methodName}
-                                  </Typography>
-                                  <Typography variant="body2" color="text.secondary">
-                                    {rpcMethodKindLabel(activeRequestMockContext.method)}
-                                  </Typography>
-                                </Box>
-                              </Stack>
-
-                              {(activeRequestMockContext.state === "available" ||
-                                activeRequestMockContext.state === "missing") &&
-                              !activeRequestMockContext.attached ? (
-                                <Alert severity="info" variant="outlined">
-                                  This method is not attached yet. Enabling the mock, selecting a scenario, or adding a
-                                  scenario here will attach this request's pinned Proto revision automatically.
-                                </Alert>
-                              ) : null}
-
-                              {activeRequestMockContext.state === "available" ||
-                              activeRequestMockContext.state === "missing" ? (
-                                <Paper variant="outlined" sx={{ p: 1.2, bgcolor: "action.hover" }}>
-                                  <Stack spacing={1}>
-                                    <Box>
-                                      <Typography variant="body2" fontWeight={600}>
-                                        {uiCopy.sections.scenario}
-                                      </Typography>
-                                      <Typography variant="caption" color="text.secondary">
-                                        Uses the same scenario controls and settings flow as Workspace Mock.
-                                      </Typography>
-                                    </Box>
-                                    {activeRequestMockContext.scenarios.length > 0 ? (
-                                      <GrpcMockScenarioControls
-                                        scenarios={activeRequestMockContext.scenarios}
-                                        selectedScenarioId={activeRequestMockContext.selectedScenario?.id ?? ""}
-                                        enabled={activeRequestMockContext.enabled}
-                                        onEnabledChange={setActiveRequestMockEnabled}
-                                        onScenarioSelect={selectActiveRequestScenario}
-                                        onOpenSettings={setRequestMockSettingsAnchor}
-                                      />
-                                    ) : (
-                                      <Stack direction="row" spacing={0.7} alignItems="center">
-                                        <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
-                                          No scenario for this method yet.
-                                        </Typography>
-                                        <Button size="small" variant="outlined" onClick={addActiveRequestMockScenario}>
-                                          Add scenario
-                                        </Button>
-                                      </Stack>
-                                    )}
-                                  </Stack>
-                                </Paper>
-                              ) : null}
-                              <Stack direction="row" spacing={0.7} flexWrap="wrap" useFlexGap>
-                                <Button size="small" variant="outlined" onClick={openActiveRequestMockWorkspace}>
-                                  Configure in workspace
-                                </Button>
-                              </Stack>
-                            </>
-                          )}
+                {requestTab === "mock" && (
+                  <Stack spacing={1.2} sx={{ maxWidth: 760 }}>
+                    <Paper variant="outlined" sx={{ p: 1.5 }}>
+                      <Stack spacing={1.2}>
+                        <Box>
+                          <Typography variant="h6">Global Mocking</Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            Mock scenarios now live in one workspace and keep running independently from request tabs.
+                          </Typography>
+                        </Box>
+                        <Alert severity="info" variant="outlined">
+                          Use this request as your working context, then manage gRPC, REST, and WebSocket scenarios from the global Mocking workspace.
+                        </Alert>
+                        <Stack direction="row" spacing={0.7} flexWrap="wrap" useFlexGap>
+                          <Button
+                            size="small"
+                            variant="contained"
+                            onClick={() => {
+                              if (activeIsRest) setServiceProtocol("rest");
+                              else if (activeIsWebSocket) setServiceProtocol("websocket");
+                              else selectActiveRequestMockContext();
+                              if (!activeIsRest && !activeIsWebSocket) setServiceProtocol("grpc-mock");
+                              setServicesSection("mock-servers");
+                              setSideSection("services");
+                              setSidebarOpen(true);
+                            }}
+                          >
+                            Open Global Mocking
+                          </Button>
+                          {activeIsRest ? (
+                            <Button size="small" variant="outlined" onClick={createRestMockFromActiveRequest}>
+                              Create Mock From This Request
+                            </Button>
+                          ) : null}
+                          {activeIsWebSocket ? (
+                            <Button size="small" variant="outlined" onClick={createWebSocketMockFromActiveRequest}>
+                              Create Mock From This Request
+                            </Button>
+                          ) : null}
+                          {!activeIsRest && !activeIsWebSocket ? (
+                            <Button size="small" variant="outlined" onClick={openActiveRequestMockWorkspace}>
+                              Open this gRPC method
+                            </Button>
+                          ) : null}
                         </Stack>
-                      </Paper>
-                    </Stack>
-                  ))}
+                      </Stack>
+                    </Paper>
+                  </Stack>
+                )}
                 {requestTab === "docs" && (
                   <UnifiedDocumentationPanel
                     page={activeRequestDocumentationPage}
@@ -2323,27 +2200,96 @@ function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRuntimeMo
               </Box>
           </Paper>
         )}
-            <Profiler id="Response" onRender={(_id: string, _phase: string, actualDuration: number) => performanceStats.recordReactCommit("Response", actualDuration)}>
-              <WorkbenchResponsePanel
-                activeIsRest={activeIsRest}
-                activeIsWebSocket={activeIsWebSocket}
-                activeRunning={activeRunning}
-                beginResponseResize={beginResponseResize}
-                clearActiveResponse={clearActiveResponseStable}
-                effectiveRequestResponseLayout={effectiveRequestResponseLayout}
-                exportResponse={exportResponseStable}
-                handleResponseTabChange={handleResponseTabChange}
-                onOpenDocs={() => setRequestUtilityDialog("docs")}
-                responseBodyRef={responseBodyRef}
-                responseHeight={responseHeight}
-                responseSessionId={activeSession?.responseSessionId ?? activeSession?.id ?? "__unbound__"}
-                responseTab={responseTab}
-                responseWidth={responseWidth}
-                resizeResponseByKeyboard={resizeResponseByKeyboard}
-                saveCurrentResultForDocs={saveCurrentResultForDocsStable}
-                selectedMethod={selectedMethod}
-              />
-            </Profiler>
+            {showResponsePanel ? (
+              <Profiler id="Response" onRender={(_id: string, _phase: string, actualDuration: number) => performanceStats.recordReactCommit("Response", actualDuration)}>
+              {activeResponseDetached ? (
+                <Paper
+                  elevation={0}
+                  sx={{
+                    ...panelSx,
+                    flex: effectiveRequestResponseLayout === "horizontal" ? "0 0 42px" : "0 0 36px",
+                    minHeight: effectiveRequestResponseLayout === "horizontal" ? 0 : 36,
+                    minWidth: effectiveRequestResponseLayout === "horizontal" ? 42 : 0,
+                    display: "flex",
+                    alignItems: "center",
+                    overflow: "hidden",
+                    borderRadius: 0,
+                  }}
+                >
+                  {effectiveRequestResponseLayout === "horizontal" ? (
+                    <Stack spacing={0.25} alignItems="center" justifyContent="center" sx={{ width: "100%", height: "100%", py: 0.35 }}>
+                      <Tooltip title="Focus response window">
+                        <IconButton
+                          size="small"
+                          aria-label="Focus detached response window"
+                          onClick={() => void managedWindow?.focusResource?.("response", activeRequestId)}
+                        >
+                          <OpenInNew sx={{ fontSize: 15 }} />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Back to request">
+                        <IconButton
+                          size="small"
+                          aria-label="Return detached response to request"
+                          onClick={() => void managedWindow?.reattachResource?.("response", activeRequestId)}
+                        >
+                          <KeyboardArrowLeft sx={{ fontSize: 16 }} />
+                        </IconButton>
+                      </Tooltip>
+                    </Stack>
+                  ) : (
+                    <Stack direction="row" spacing={0.5} alignItems="center" sx={{ width: "100%", minWidth: 0, px: 1 }}>
+                      <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0, flex: 1 }}>
+                        Response open in another window
+                      </Typography>
+                      <Tooltip title="Focus response window">
+                        <IconButton
+                          size="small"
+                          aria-label="Focus detached response window"
+                          onClick={() => void managedWindow?.focusResource?.("response", activeRequestId)}
+                          sx={{ flexShrink: 0 }}
+                        >
+                          <OpenInNew sx={{ fontSize: 15 }} />
+                        </IconButton>
+                      </Tooltip>
+                      <Button
+                        size="small"
+                        variant="text"
+                        startIcon={<KeyboardArrowLeft sx={{ fontSize: 15 }} />}
+                        onClick={() => void managedWindow?.reattachResource?.("response", activeRequestId)}
+                        sx={{ flexShrink: 0 }}
+                      >
+                        Back
+                      </Button>
+                    </Stack>
+                  )}
+                </Paper>
+              ) : (
+                <WorkbenchResponsePanel
+                  activeIsRest={activeIsRest}
+                  activeIsWebSocket={activeIsWebSocket}
+                  activeRunning={activeRunning}
+                  beginResponseResize={beginResponseResize}
+                  clearActiveResponse={clearActiveResponseStable}
+                  effectiveRequestResponseLayout={effectiveRequestResponseLayout}
+                  exportResponse={exportResponseStable}
+                  handleResponseTabChange={handleResponseTabChange}
+                  onOpenDocs={() => setRequestUtilityDialog("docs")}
+                  responseBodyRef={responseBodyRef}
+                  responseHeight={responseHeight}
+                  responseSessionId={activeSession?.responseSessionId ?? activeSession?.id ?? "__unbound__"}
+                  responseTab={responseTab}
+                  responseWidth={responseWidth}
+                  responseCollapsed={responseCollapsed}
+                  setResponseCollapsed={setResponseCollapsed}
+                  resizeResponseByKeyboard={resizeResponseByKeyboard}
+                  saveCurrentResultForDocs={saveCurrentResultForDocsStable}
+                  selectedMethod={selectedMethod}
+                  onDetach={canDetachResponse ? detachActiveResponse : undefined}
+                />
+              )}
+              </Profiler>
+            ) : null}
           </Stack>
 
       <Dialog
@@ -2853,6 +2799,37 @@ export function WorkbenchMainPanel(props: { ctx: WorkbenchMainPanelModel; cliPan
   if (sideSection === "collections") return <MemoCollectionsMainPanel ctx={ctx} />;
 
   if (sideSection === "services") {
+    const mockingDetached = ctx.managedWindow.context.kind === "main" && ctx.managedWindow.detachedByKey.has("mocking");
+    if (mockingDetached) {
+      const { Button, IconButton, Stack, Tooltip, Typography } = ctx;
+      return (
+        <SectionWorkspaceSurface section="services" top={sectionTop} left={normalSectionLeft} bottom={sectionBottom}>
+          <Stack
+            direction="row"
+            spacing={0.5}
+            alignItems="center"
+            sx={{ minHeight: 40, px: 1.25, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+          >
+            <Typography variant="caption" color="text.secondary" noWrap sx={{ minWidth: 0, flex: 1 }}>
+              Mocking open in another window · runtimes keep running
+            </Typography>
+            <Tooltip title="Focus Mocking window">
+              <IconButton size="small" aria-label="Focus Mocking window" onClick={() => void ctx.managedWindow.focusResource("mocking")}>
+                <OpenInNew sx={{ fontSize: 15 }} />
+              </IconButton>
+            </Tooltip>
+            <Button
+              size="small"
+              variant="text"
+              startIcon={<KeyboardArrowLeft sx={{ fontSize: 15 }} />}
+              onClick={() => void ctx.managedWindow.reattachResource("mocking")}
+            >
+              Back to Main
+            </Button>
+          </Stack>
+        </SectionWorkspaceSurface>
+      );
+    }
     return (
       <SectionWorkspaceSurface section="services" top={sectionTop} left={normalSectionLeft} bottom={sectionBottom}>
         <Profiler id="Mocking" onRender={(_id: string, _phase: string, actualDuration: number) => performanceStats.recordReactCommit("Mocking", actualDuration)}>

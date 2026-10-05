@@ -12,6 +12,16 @@ const {
   getLogger,
 } = require("../electron/utils/logger.cjs");
 
+test("logger defaults to info in development and packaged modes", () => {
+  const devUserDataPath = fs.mkdtempSync(path.join(os.tmpdir(), "layang-logger-dev-default-"));
+  const devInfo = configureLogger({ userDataPath: devUserDataPath, isPackaged: false, appName: "LayangDevDefault" });
+  assert.equal(devInfo.settings.level, "info");
+
+  const packagedUserDataPath = fs.mkdtempSync(path.join(os.tmpdir(), "layang-logger-packaged-default-"));
+  const packagedInfo = configureLogger({ userDataPath: packagedUserDataPath, isPackaged: true, appName: "LayangPackagedDefault" });
+  assert.equal(packagedInfo.settings.level, "info");
+});
+
 test("logger applies runtime settings and persists them", () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), "layang-logger-"));
   const info = configureLogger({ userDataPath, isPackaged: true, appName: "LayangTest" });

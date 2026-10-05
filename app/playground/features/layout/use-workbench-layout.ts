@@ -10,27 +10,72 @@ import { designSystem } from "../../design-system";
 import { clamp } from "../../shared/number-utils";
 import {
   collapsedSidebarWidth,
-  defaultResponseHeight,
   layoutStorageKey,
   legacyLayoutStorageKey,
   maxSidebarWidth,
-  maxStoredResponseHeight,
-  maxStoredResponseWidth,
   minResponseHeight,
   minResponseWidth,
   minSidebarWidth,
   railWidth,
   sidebarWidth,
 } from "../../shared/workbench-constants";
-import type { RequestResponseLayoutMode, WorkspaceLayoutSnapshot } from "../../shared/workbench-types";
+import type {
+  RequestResponseLayoutMode,
+  RequestViewStateSnapshot,
+  WorkspaceLayoutSnapshot,
+} from "../../shared/workbench-types";
 
 const defaultResponseWidth = 420;
 const minRequestWidth = 360;
+const minRequestHeight = 180;
 const responseSeparatorSize = 8;
 const minHorizontalWorkspaceWidth = minRequestWidth + minResponseWidth + responseSeparatorSize;
+const defaultVerticalResponseRatio = 0.42;
+const defaultHorizontalResponseRatio = 0.42;
+const minResponseRatio = 0.12;
+const maxResponseRatio = 0.88;
+const defaultRequestViewKey = "__default__";
+
+function createDefaultRequestView(): RequestViewStateSnapshot {
+  return {
+    verticalResponseRatio: defaultVerticalResponseRatio,
+    horizontalResponseRatio: defaultHorizontalResponseRatio,
+    responseCollapsed: false,
+  };
+}
+
+function normalizeRatio(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? clamp(value, minResponseRatio, maxResponseRatio)
+    : fallback;
+}
+
+function normalizeRequestView(value: Partial<RequestViewStateSnapshot> | null | undefined): RequestViewStateSnapshot {
+  const fallback = createDefaultRequestView();
+  return {
+    ...fallback,
+    ...value,
+    verticalResponseRatio: normalizeRatio(value?.verticalResponseRatio, fallback.verticalResponseRatio),
+    horizontalResponseRatio: normalizeRatio(value?.horizontalResponseRatio, fallback.horizontalResponseRatio),
+    requestResponseLayout:
+      value?.requestResponseLayout === "horizontal" || value?.requestResponseLayout === "vertical"
+        ? value.requestResponseLayout
+        : undefined,
+    responseCollapsed: Boolean(value?.responseCollapsed),
+  };
+}
 
 function availableWorkspaceWidth(viewportWidth: number, sidebarOpen: boolean, sidebarWidthPx: number) {
   return Math.max(0, viewportWidth - railWidth - (sidebarOpen ? sidebarWidthPx : collapsedSidebarWidth));
+}
+
+function availableVerticalSplitHeight(viewportHeight: number) {
+  const statusbarHeight = designSystem.size.statusbarHeight ?? 24;
+  const requestChromeAllowance = 150;
+  return Math.max(
+    minResponseHeight + minRequestHeight + responseSeparatorSize,
+    viewportHeight - designSystem.size.titlebarHeight - statusbarHeight - requestChromeAllowance,
+  );
 }
 
 function maxResponseWidthForViewport(viewportWidth: number, sidebarOpen: boolean, sidebarWidthPx: number) {
@@ -39,28 +84,124 @@ function maxResponseWidthForViewport(viewportWidth: number, sidebarOpen: boolean
 }
 
 function maxResponseHeightForViewport(viewportHeight: number) {
-  const reservedTop = 260;
-  return Math.max(minResponseHeight, viewportHeight - designSystem.size.titlebarHeight - reservedTop);
+  return Math.max(minResponseHeight, availableVerticalSplitHeight(viewportHeight) - minRequestHeight - responseSeparatorSize);
 }
 
-export function useWorkbenchLayout() {
+function responseWidthFromRatio(
+  ratio: number,
+  viewportWidth: number,
+  sidebarOpen: boolean,
+  sidebarWidthPx: number,
+) {
+  const available = Math.max(minResponseWidth, availableWorkspaceWidth(viewportWidth, sidebarOpen, sidebarWidthPx));
+  const maxWidth = maxResponseWidthForViewport(viewportWidth, sidebarOpen, sidebarWidthPx);
+  return clamp(Math.round(available * ratio), minResponseWidth, maxWidth);
+}
+
+function responseHeightFromRatio(ratio: number, viewportHeight: number) {
+  const available = availableVerticalSplitHeight(viewportHeight);
+  const maxHeight = maxResponseHeightForViewport(viewportHeight);
+  return clamp(Math.round(available * ratio), minResponseHeight, maxHeight);
+}
+
+export function useWorkbenchLayout(activeRequestId = "") {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarWidthPx, setSidebarWidthPx] = useState<number>(sidebarWidth);
-  const [responseHeight, setResponseHeight] = useState(defaultResponseHeight);
-  const [responseWidth, setResponseWidth] = useState(defaultResponseWidth);
   const [requestResponseLayout, setRequestResponseLayout] = useState<RequestResponseLayoutMode>("vertical");
   const [_requestCollapsed, setRequestCollapsed] = useState(false);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  const [requestViews, setRequestViews] = useState<Record<string, RequestViewStateSnapshot>>({});
   const sidebarResizeRef = useRef(false);
   const responseResizeRef = useRef(false);
   const resizeFrameRef = useRef<number | null>(null);
   const resizePointRef = useRef<{ clientX: number; clientY: number } | null>(null);
 
+  const activeRequestViewKey = activeRequestId || defaultRequestViewKey;
+  const activeRequestView = normalizeRequestView(requestViews[activeRequestViewKey]);
+  // Keep the render path deterministic. Real viewport dimensions are applied by
+  // the resize effect after mount so SSR and the first client render never diverge.
+  const effectiveViewportWidth = viewportSize.width || 1500;
+  const effectiveViewportHeight = viewportSize.height || 980;
+  const responseHeight = responseHeightFromRatio(activeRequestView.verticalResponseRatio, effectiveViewportHeight);
+  const responseWidth = responseWidthFromRatio(
+    activeRequestView.horizontalResponseRatio,
+    effectiveViewportWidth,
+    sidebarOpen,
+    sidebarWidthPx,
+  );
+  const responseCollapsed = Boolean(activeRequestView.responseCollapsed);
+  const activeRequestResponseLayout = activeRequestView.requestResponseLayout ?? requestResponseLayout;
+
   const horizontalLayoutAvailable =
     viewportSize.width === 0 ||
     availableWorkspaceWidth(viewportSize.width, sidebarOpen, sidebarWidthPx) >= minHorizontalWorkspaceWidth;
   const effectiveRequestResponseLayout: RequestResponseLayoutMode =
-    requestResponseLayout === "horizontal" && horizontalLayoutAvailable ? "horizontal" : "vertical";
+    activeRequestResponseLayout === "horizontal" && horizontalLayoutAvailable ? "horizontal" : "vertical";
+
+  const updateActiveRequestView = useCallback(
+    (patch: Partial<RequestViewStateSnapshot>) => {
+      setRequestViews((current) => {
+        const previous = normalizeRequestView(current[activeRequestViewKey]);
+        const next = normalizeRequestView({ ...previous, ...patch });
+        const unchanged =
+          previous.verticalResponseRatio === next.verticalResponseRatio &&
+          previous.horizontalResponseRatio === next.horizontalResponseRatio &&
+          previous.requestResponseLayout === next.requestResponseLayout &&
+          previous.responseCollapsed === next.responseCollapsed &&
+          previous.requestTab === next.requestTab &&
+          previous.responseTab === next.responseTab;
+        if (unchanged) return current;
+        return { ...current, [activeRequestViewKey]: next };
+      });
+    },
+    [activeRequestViewKey],
+  );
+
+  const setResponseHeight = useCallback(
+    (value: number | ((current: number) => number)) => {
+      const currentHeight = responseHeightFromRatio(activeRequestView.verticalResponseRatio, effectiveViewportHeight);
+      const nextHeight = typeof value === "function" ? value(currentHeight) : value;
+      const available = availableVerticalSplitHeight(effectiveViewportHeight);
+      const maxHeight = maxResponseHeightForViewport(effectiveViewportHeight);
+      const clampedHeight = clamp(nextHeight, minResponseHeight, maxHeight);
+      updateActiveRequestView({ verticalResponseRatio: clampedHeight / Math.max(1, available) });
+    },
+    [activeRequestView.verticalResponseRatio, effectiveViewportHeight, updateActiveRequestView],
+  );
+
+  const setResponseWidth = useCallback(
+    (value: number | ((current: number) => number)) => {
+      const currentWidth = responseWidthFromRatio(
+        activeRequestView.horizontalResponseRatio,
+        effectiveViewportWidth,
+        sidebarOpen,
+        sidebarWidthPx,
+      );
+      const nextWidth = typeof value === "function" ? value(currentWidth) : value;
+      const available = Math.max(
+        minResponseWidth,
+        availableWorkspaceWidth(effectiveViewportWidth, sidebarOpen, sidebarWidthPx),
+      );
+      const maxWidth = maxResponseWidthForViewport(effectiveViewportWidth, sidebarOpen, sidebarWidthPx);
+      const clampedWidth = clamp(nextWidth, minResponseWidth, maxWidth);
+      updateActiveRequestView({ horizontalResponseRatio: clampedWidth / Math.max(1, available) });
+    },
+    [
+      activeRequestView.horizontalResponseRatio,
+      effectiveViewportWidth,
+      sidebarOpen,
+      sidebarWidthPx,
+      updateActiveRequestView,
+    ],
+  );
+
+  const setResponseCollapsed = useCallback(
+    (value: boolean | ((current: boolean) => boolean)) => {
+      const next = typeof value === "function" ? value(responseCollapsed) : value;
+      updateActiveRequestView({ responseCollapsed: next });
+    },
+    [responseCollapsed, updateActiveRequestView],
+  );
 
   const snapshot = useCallback(
     (): WorkspaceLayoutSnapshot => ({
@@ -69,38 +210,70 @@ export function useWorkbenchLayout() {
       responseHeight,
       responseWidth,
       requestResponseLayout,
+      requestViews,
     }),
-    [sidebarOpen, sidebarWidthPx, responseHeight, responseWidth, requestResponseLayout],
+    [sidebarOpen, sidebarWidthPx, responseHeight, responseWidth, requestResponseLayout, requestViews],
   );
 
   const applySnapshot = useCallback(
     (layout: Partial<WorkspaceLayoutSnapshot> | null | undefined) => {
       if (!layout) return snapshot();
-      const next: WorkspaceLayoutSnapshot = snapshot();
-      if (typeof layout.sidebarOpen === "boolean") {
-        next.sidebarOpen = layout.sidebarOpen;
-        setSidebarOpen(layout.sidebarOpen);
-      }
+      if (typeof layout.sidebarOpen === "boolean") setSidebarOpen(layout.sidebarOpen);
       if (typeof layout.sidebarWidthPx === "number") {
-        next.sidebarWidthPx = clamp(layout.sidebarWidthPx, minSidebarWidth, maxSidebarWidth);
-        setSidebarWidthPx(next.sidebarWidthPx);
-      }
-      if (typeof layout.responseHeight === "number") {
-        next.responseHeight = clamp(layout.responseHeight, minResponseHeight, maxStoredResponseHeight);
-        setResponseHeight(next.responseHeight);
-      }
-      if (typeof layout.responseWidth === "number") {
-        next.responseWidth = clamp(layout.responseWidth, minResponseWidth, maxStoredResponseWidth);
-        setResponseWidth(next.responseWidth);
+        setSidebarWidthPx(clamp(layout.sidebarWidthPx, minSidebarWidth, maxSidebarWidth));
       }
       if (layout.requestResponseLayout === "horizontal" || layout.requestResponseLayout === "vertical") {
-        next.requestResponseLayout = layout.requestResponseLayout;
         setRequestResponseLayout(layout.requestResponseLayout);
       }
+
+      if (layout.requestViews && typeof layout.requestViews === "object") {
+        const normalized = Object.fromEntries(
+          Object.entries(layout.requestViews).map(([key, value]) => [key, normalizeRequestView(value)]),
+        );
+        setRequestViews(normalized);
+      } else if (typeof layout.responseHeight === "number" || typeof layout.responseWidth === "number") {
+        // Migrate legacy global pixel dimensions into the active/default request ratio.
+        const verticalAvailable = availableVerticalSplitHeight(effectiveViewportHeight);
+        const horizontalAvailable = Math.max(
+          minResponseWidth,
+          availableWorkspaceWidth(effectiveViewportWidth, sidebarOpen, sidebarWidthPx),
+        );
+        setRequestViews((current) => ({
+          ...current,
+          [activeRequestViewKey]: normalizeRequestView({
+            ...(current[activeRequestViewKey] ?? createDefaultRequestView()),
+            verticalResponseRatio:
+              typeof layout.responseHeight === "number"
+                ? clamp(layout.responseHeight, minResponseHeight, maxResponseHeightForViewport(effectiveViewportHeight)) /
+                  Math.max(1, verticalAvailable)
+                : activeRequestView.verticalResponseRatio,
+            horizontalResponseRatio:
+              typeof layout.responseWidth === "number"
+                ? clamp(
+                    layout.responseWidth,
+                    minResponseWidth,
+                    maxResponseWidthForViewport(effectiveViewportWidth, sidebarOpen, sidebarWidthPx),
+                  ) / Math.max(1, horizontalAvailable)
+                : activeRequestView.horizontalResponseRatio,
+          }),
+        }));
+      }
       setRequestCollapsed(false);
-      return next;
+      return {
+        ...snapshot(),
+        ...layout,
+      } as WorkspaceLayoutSnapshot;
     },
-    [snapshot],
+    [
+      activeRequestView.horizontalResponseRatio,
+      activeRequestView.verticalResponseRatio,
+      activeRequestViewKey,
+      effectiveViewportHeight,
+      effectiveViewportWidth,
+      sidebarOpen,
+      sidebarWidthPx,
+      snapshot,
+    ],
   );
 
   const applyCachedLayout = useCallback(() => {
@@ -132,8 +305,10 @@ export function useWorkbenchLayout() {
   );
 
   const toggleRequestResponseLayout = useCallback(() => {
-    setRequestResponseLayout((current) => (current === "horizontal" ? "vertical" : "horizontal"));
-  }, []);
+    updateActiveRequestView({
+      requestResponseLayout: activeRequestResponseLayout === "horizontal" ? "vertical" : "horizontal",
+    });
+  }, [activeRequestResponseLayout, updateActiveRequestView]);
 
   const resizeResponseByKeyboard = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -170,37 +345,15 @@ export function useWorkbenchLayout() {
         setResponseHeight(maxHeight);
       }
     },
-    [effectiveRequestResponseLayout, sidebarOpen, sidebarWidthPx],
+    [effectiveRequestResponseLayout, setResponseHeight, setResponseWidth, sidebarOpen, sidebarWidthPx],
   );
 
   useEffect(() => {
-    const syncViewport = () => {
-      setViewportSize({ width: window.innerWidth, height: window.innerHeight });
-    };
+    const syncViewport = () => setViewportSize({ width: window.innerWidth, height: window.innerHeight });
     syncViewport();
     window.addEventListener("resize", syncViewport);
     return () => window.removeEventListener("resize", syncViewport);
   }, []);
-
-  useEffect(() => {
-    if (viewportSize.height > 0) {
-      const maxHeight = maxResponseHeightForViewport(viewportSize.height);
-      setResponseHeight((current) => clamp(current, minResponseHeight, maxHeight));
-    }
-    if (viewportSize.width > 0 && requestResponseLayout === "horizontal" && horizontalLayoutAvailable) {
-      const maxWidth = maxResponseWidthForViewport(viewportSize.width, sidebarOpen, sidebarWidthPx);
-      setResponseWidth((current) => clamp(current, minResponseWidth, maxWidth));
-    }
-  }, [
-    horizontalLayoutAvailable,
-    requestResponseLayout,
-    responseHeight,
-    responseWidth,
-    sidebarOpen,
-    sidebarWidthPx,
-    viewportSize.height,
-    viewportSize.width,
-  ]);
 
   useEffect(() => {
     function applyResizePoint(point: { clientX: number; clientY: number } | null) {
@@ -220,11 +373,9 @@ export function useWorkbenchLayout() {
 
       if (responseResizeRef.current) {
         if (effectiveRequestResponseLayout === "horizontal") {
-          const maxWidth = maxResponseWidthForViewport(window.innerWidth, sidebarOpen, sidebarWidthPx);
-          setResponseWidth(clamp(window.innerWidth - point.clientX - 10, minResponseWidth, maxWidth));
+          setResponseWidth(window.innerWidth - point.clientX - 10);
         } else {
-          const maxHeight = maxResponseHeightForViewport(window.innerHeight);
-          setResponseHeight(clamp(window.innerHeight - point.clientY - 10, minResponseHeight, maxHeight));
+          setResponseHeight(window.innerHeight - point.clientY - 10);
         }
       }
     }
@@ -266,7 +417,7 @@ export function useWorkbenchLayout() {
       window.removeEventListener("mousemove", handleResizeMove);
       window.removeEventListener("mouseup", stopResize);
     };
-  }, [effectiveRequestResponseLayout, sidebarOpen, sidebarWidthPx]);
+  }, [effectiveRequestResponseLayout, setResponseHeight, setResponseWidth]);
 
   return {
     sidebarOpen,
@@ -277,7 +428,13 @@ export function useWorkbenchLayout() {
     setResponseHeight,
     responseWidth,
     setResponseWidth,
+    responseCollapsed,
+    setResponseCollapsed,
+    requestViews,
+    setRequestViews,
+    updateActiveRequestView,
     requestResponseLayout,
+    activeRequestResponseLayout,
     effectiveRequestResponseLayout,
     horizontalLayoutAvailable,
     setRequestResponseLayout,
@@ -292,4 +449,10 @@ export function useWorkbenchLayout() {
   };
 }
 
-export { defaultResponseWidth, minHorizontalWorkspaceWidth, minResponseWidth };
+export {
+  defaultHorizontalResponseRatio,
+  defaultResponseWidth,
+  defaultVerticalResponseRatio,
+  minHorizontalWorkspaceWidth,
+  minResponseWidth,
+};

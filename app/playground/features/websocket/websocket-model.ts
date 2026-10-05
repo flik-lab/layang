@@ -5,6 +5,7 @@ import type {
   WebSocketMockScenario,
 } from "../../shared/workbench-types";
 import { createId } from "../../shared/entity-utils";
+import { createMockExecutionConfig, normalizeMockExecutionConfig } from "../mock-server/mock-execution-model";
 
 export function webSocketDocKey(request: Pick<ApiCollectionRequest, "id"> | null | undefined) {
   return request?.id ? `ws:${request.id}` : "";
@@ -63,9 +64,11 @@ export function createWebSocketMockScenarioForRequest(
 ): WebSocketMockScenario {
   return {
     id: overrides.id ?? createId(),
-    requestId: overrides.requestId ?? request.id,
+    requestId: undefined,
+    sourceRequestId: overrides.sourceRequestId ?? overrides.requestId ?? request.id,
     name: overrides.name ?? `${request.name} scenario`,
     enabled: overrides.enabled ?? true,
+    execution: normalizeMockExecutionConfig(overrides.execution ?? createMockExecutionConfig("standby")),
     path: overrides.path ?? webSocketRequestPath(request),
     responseText: overrides.responseText ?? request.mockResponse ?? defaultWebSocketMockResponse(request.name),
     intervalMs: Math.max(1, Math.floor(Number(overrides.intervalMs) || 1000)),
@@ -73,6 +76,34 @@ export function createWebSocketMockScenarioForRequest(
     maxLoops: Math.max(0, Math.floor(Number(overrides.maxLoops) || 0)),
     streamOnConnect: overrides.streamOnConnect ?? false,
     sendOnMessage: overrides.sendOnMessage ?? false,
+    matchMode: overrides.matchMode ?? "always",
+    matchValue: overrides.matchValue ?? "",
+    matchJsonPath: overrides.matchJsonPath ?? "$.method",
+  };
+}
+
+export function createWebSocketMockScenario(overrides: Partial<WebSocketMockScenario> = {}): WebSocketMockScenario {
+  const execution = normalizeMockExecutionConfig(overrides.execution ?? createMockExecutionConfig("standby"), {
+    streamOnConnect: overrides.streamOnConnect,
+    sendOnMessage: overrides.sendOnMessage,
+    intervalMs: overrides.intervalMs,
+    loop: overrides.loop,
+    maxLoops: overrides.maxLoops,
+  });
+  return {
+    id: overrides.id ?? createId(),
+    requestId: undefined,
+    sourceRequestId: overrides.sourceRequestId ?? overrides.requestId,
+    name: overrides.name ?? "WebSocket scenario",
+    enabled: overrides.enabled ?? true,
+    execution,
+    path: overrides.path ?? "/mock/ws",
+    responseText: overrides.responseText ?? defaultWebSocketMockResponse("WebSocket scenario"),
+    intervalMs: execution.periodic.intervalMs,
+    loop: execution.periodic.loop,
+    maxLoops: execution.periodic.maxExecutions,
+    streamOnConnect: execution.periodic.enabled,
+    sendOnMessage: execution.incoming,
     matchMode: overrides.matchMode ?? "always",
     matchValue: overrides.matchValue ?? "",
     matchJsonPath: overrides.matchJsonPath ?? "$.method",

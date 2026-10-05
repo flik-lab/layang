@@ -1,5 +1,6 @@
 import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from "react";
 import { hasNativeGrpcBridge } from "@/lib/native-grpc-client";
+import type { LayangWindowKind } from "@/types/electron";
 import type { ColorMode } from "../../design-system";
 import { toErrorMessage } from "../../shared/error-utils";
 import {
@@ -60,6 +61,7 @@ function markLegacyLocalMigration(directoryPath: string, migration: { status?: s
 }
 
 type UseWorkspaceControllerOptions = {
+  windowKind?: LayangWindowKind;
   prefersDark: boolean;
   applyCachedLayout: () => unknown;
   applyProject: (project: ProjectData) => void;
@@ -72,6 +74,7 @@ type UseWorkspaceControllerOptions = {
 };
 
 export function useWorkspaceController({
+  windowKind = "main",
   prefersDark,
   applyCachedLayout,
   applyProject,
@@ -294,6 +297,48 @@ export function useWorkspaceController({
   }, [applyWorkspaceBundle, showToast]);
 
   useEffect(() => {
+    if (windowKind === "response") return;
+    if (!window.electronWindow?.onEvent) return;
+    let cancelled = false;
+    let reloadTimer: number | null = null;
+
+    const reloadSharedWorkspace = async (directoryPath: string) => {
+      if (cancelled || !workspaceFolderPath || !window.electronWorkspace?.openFolder || directoryPath !== workspaceFolderPath) return;
+      const autosave = workspaceAutosaveRef.current;
+      if (autosave.saving || autosave.pendingBundle || autosave.flushPromise) {
+        if (reloadTimer !== null) window.clearTimeout(reloadTimer);
+        reloadTimer = window.setTimeout(() => void reloadSharedWorkspace(directoryPath), 240);
+        return;
+      }
+      try {
+        const result = await window.electronWorkspace?.openFolder?.(directoryPath);
+        if (!cancelled && result?.ok && result.bundle) applyWorkspaceBundle(result.bundle);
+      } catch (error) {
+        if (!cancelled) console.warn("Cross-window workspace sync failed.", error);
+      }
+    };
+
+    const unsubscribe = window.electronWindow.onEvent((event) => {
+      if (event?.topic === "workspace:handoff") {
+        const payload = event.payload as { bundle?: unknown } | undefined;
+        if (payload?.bundle) applyWorkspaceBundle(payload.bundle);
+        return;
+      }
+      if (event?.topic !== "workspace:saved") return;
+      const payload = event.payload as { directoryPath?: string } | undefined;
+      const directoryPath = typeof payload?.directoryPath === "string" ? payload.directoryPath : "";
+      if (directoryPath) void reloadSharedWorkspace(directoryPath);
+    });
+
+    return () => {
+      cancelled = true;
+      if (reloadTimer !== null) window.clearTimeout(reloadTimer);
+      unsubscribe?.();
+    };
+  }, [windowKind, workspaceFolderPath, applyWorkspaceBundle]);
+
+  useEffect(() => {
+    if (windowKind === "response") return;
     if (!workspaceFolderPath || !window.electronWorkspace?.getRevision || !window.electronWorkspace?.openFolder) return;
     let cancelled = false;
     externalRevisionRef.current = "";
@@ -355,7 +400,7 @@ export function useWorkspaceController({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [workspaceFolderPath, applyWorkspaceBundle, showToast]);
+  }, [windowKind, workspaceFolderPath, applyWorkspaceBundle, showToast]);
 
   async function applyWorkspacePreference(directoryPath?: string) {
     if (!window.electronWorkspace?.ensureFolder) return;

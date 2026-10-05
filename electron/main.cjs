@@ -37,6 +37,13 @@ const { configureAppZoomSettings } = require("./utils/app-zoom-settings.cjs");
 const { configureSecureSecrets } = require("./utils/secure-secrets.cjs");
 const { configureWebHttpsCertificates } = require("./utils/web-https-certificates.cjs");
 const { createWindow } = require("./window/create-window.cjs");
+const {
+  broadcastWorkspaceSaved,
+  configureWindowManager,
+  createMainWindow,
+  getMainWindow,
+  restoreDetachedWindows,
+} = require("./window/window-manager.cjs");
 const { readJsonIfExists, walkDirectory, writeTextInside } = require("./utils/file-utils.cjs");
 const { windowFromEvent } = require("./utils/ipc-utils.cjs");
 const { safePathSegment } = require("./utils/path-utils.cjs");
@@ -59,6 +66,7 @@ let pendingWorkspaceOpen = findWorkspaceArgument(process.argv);
 const workspaceInternalWriteAt = new Map();
 const workspaceInternalFingerprint = new Map();
 const workspaceWriteInProgress = new Set();
+const workspaceWriteQueues = new Map();
 let utilityRuntimeHost = null;
 let transportRuntimeManager = null;
 const runtimeMode = process.env.LAYANG_RUNTIME_MODE || "utility";
@@ -99,7 +107,7 @@ function startApplication() {
     if (deepLink) dispatchDeepLink(deepLink);
     const workspacePath = findWorkspaceArgument(commandLine);
     if (workspacePath) dispatchWorkspaceOpen(workspacePath);
-    const existingWindow = BrowserWindow.getAllWindows()[0];
+    const existingWindow = getMainWindow() || BrowserWindow.getAllWindows()[0];
     if (!existingWindow) return;
 
     if (existingWindow.isMinimized()) existingWindow.restore();
@@ -156,8 +164,9 @@ function startApplication() {
         });
       });
     }
+    configureWindowManager({ app, createWindow });
     configureAutoUpdates();
-    const win = createWindow();
+    const win = createMainWindow();
     win.webContents.once("did-finish-load", () => {
       if (pendingDeepLink) {
         win.webContents.send("layang:deep-link", pendingDeepLink);
@@ -167,10 +176,11 @@ function startApplication() {
         win.webContents.send("workspace:open-request", pendingWorkspaceOpen);
         pendingWorkspaceOpen = "";
       }
+      restoreDetachedWindows();
     });
 
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+      if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
     });
   });
 
@@ -207,7 +217,7 @@ function findDeepLink(argumentsList) {
 
 function dispatchDeepLink(url) {
   if (!url?.startsWith("layang://")) return;
-  const win = BrowserWindow.getAllWindows()[0];
+  const win = getMainWindow() || BrowserWindow.getAllWindows()[0];
   if (!win || win.webContents.isLoading()) {
     pendingDeepLink = url;
     return;
@@ -221,7 +231,7 @@ function dispatchDeepLink(url) {
 function dispatchWorkspaceOpen(directoryPath) {
   if (!directoryPath) return;
   const resolvedPath = path.resolve(directoryPath);
-  const win = BrowserWindow.getAllWindows()[0];
+  const win = getMainWindow() || BrowserWindow.getAllWindows()[0];
   if (!win || win.webContents.isLoading()) {
     pendingWorkspaceOpen = resolvedPath;
     return;
@@ -551,6 +561,7 @@ ipcMain.handle("workspace:save-folder", async (event, payload) => {
   if (!targetPath) return { ok: false, cancelled: true };
 
   await writeWorkspaceFolder(targetPath, payload?.bundle ? payload.bundle : {});
+  broadcastWorkspaceSaved(targetPath, win);
   return { ok: true, directoryPath: targetPath };
 });
 
@@ -778,6 +789,19 @@ async function chooseWorkspaceDirectory(win, title) {
  */
 async function writeWorkspaceFolder(directoryPath, bundle) {
   const resolvedDirectory = path.resolve(directoryPath);
+  const previous = workspaceWriteQueues.get(resolvedDirectory) || Promise.resolve();
+  const queued = previous
+    .catch(() => undefined)
+    .then(() => writeWorkspaceFolderNow(resolvedDirectory, bundle));
+  workspaceWriteQueues.set(resolvedDirectory, queued);
+  try {
+    await queued;
+  } finally {
+    if (workspaceWriteQueues.get(resolvedDirectory) === queued) workspaceWriteQueues.delete(resolvedDirectory);
+  }
+}
+
+async function writeWorkspaceFolderNow(resolvedDirectory, bundle) {
   workspaceWriteInProgress.add(resolvedDirectory);
   workspaceInternalWriteAt.set(resolvedDirectory, Date.now());
   try {

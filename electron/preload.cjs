@@ -387,6 +387,7 @@ contextBridge.exposeInMainWorld("electronRestMock", {
   start: (payload) => ipcRenderer.invoke("rest-mock:start", payload),
   stop: () => ipcRenderer.invoke("rest-mock:stop"),
   update: (payload) => ipcRenderer.invoke("rest-mock:update", payload),
+  send: (payload) => ipcRenderer.invoke("rest-mock:send", payload),
   status: () => ipcRenderer.invoke("rest-mock:status"),
   isAvailable: true,
 });
@@ -396,6 +397,37 @@ contextBridge.exposeInMainWorld("electronWindow", {
   maximizeToggle: () => ipcRenderer.invoke("window:maximize-toggle"),
   close: () => ipcRenderer.invoke("window:close"),
   toggleAlwaysOnTop: () => ipcRenderer.invoke("window:toggle-always-on-top"),
+  getContext: () => ipcRenderer.invoke("window:get-context"),
+  listManaged: () => ipcRenderer.invoke("window:list-managed"),
+  openDetached: (payload) => ipcRenderer.invoke("window:open-detached", payload),
+  reattach: () => ipcRenderer.invoke("window:reattach"),
+  reattachResource: (payload) => ipcRenderer.invoke("window:reattach-resource", payload),
+  focusResource: (payload) => ipcRenderer.invoke("window:focus-resource", payload),
+  broadcast: (topic, payload) => ipcRenderer.invoke("window:broadcast", { topic, payload }),
+  onReattach: (callback) => {
+    if (typeof callback !== "function") return () => undefined;
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("layang:window-reattach", listener);
+    return () => ipcRenderer.removeListener("layang:window-reattach", listener);
+  },
+  onRequestReattach: (callback) => {
+    if (typeof callback !== "function") return () => undefined;
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("layang:request-reattach", listener);
+    return () => ipcRenderer.removeListener("layang:request-reattach", listener);
+  },
+  onRegistryChanged: (callback) => {
+    if (typeof callback !== "function") return () => undefined;
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("layang:window-registry-changed", listener);
+    return () => ipcRenderer.removeListener("layang:window-registry-changed", listener);
+  },
+  onEvent: (callback) => {
+    if (typeof callback !== "function") return () => undefined;
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("layang:window-event", listener);
+    return () => ipcRenderer.removeListener("layang:window-event", listener);
+  },
   isAvailable: true,
 });
 

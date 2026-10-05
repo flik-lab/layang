@@ -7,6 +7,8 @@ import { defaultMockPort } from "../../shared/workbench-constants";
 import { performanceStats } from "../../shared/performance/performance-stats.store";
 import { normalizeMockBindHost, normalizeMockPort } from "./mock-scenario-model";
 import { mockRuntimeStore } from "./runtime/mockRuntime.store";
+import type { ProtoLibrary } from "../proto-library/proto-library-types";
+import { resolveEffectiveMockProtoSources } from "./mock-proto-sources";
 
 type UseMockRuntimeSyncOptions = {
   delayMs: number;
@@ -15,6 +17,7 @@ type UseMockRuntimeSyncOptions = {
   setMockServerStatus: Dispatch<SetStateAction<MockServerStatus>>;
   loaded: LoadedProto | null;
   protoFiles: ProtoSourceFile[];
+  protoLibraries: ProtoLibrary[];
   protoRuntimeRegistry: ProtoRuntimeRegistry;
   workspaceFolderPath: string;
   activeProtoLibraryId: string;
@@ -27,12 +30,13 @@ type UseMockRuntimeSyncOptions = {
 function resolveRuntimeSchema(
   options: Pick<
     UseMockRuntimeSyncOptions,
-    "mockServer" | "loaded" | "protoFiles" | "protoRuntimeRegistry" | "activeProtoLibraryId" | "activeProtoVersionId"
+    "mockServer" | "loaded" | "protoFiles" | "protoLibraries" | "protoRuntimeRegistry" | "activeProtoLibraryId" | "activeProtoVersionId"
   >,
 ) {
-  const { mockServer, loaded, protoFiles, protoRuntimeRegistry, activeProtoLibraryId, activeProtoVersionId } = options;
-  const sources = mockServer.protoSources?.length
-    ? mockServer.protoSources
+  const { mockServer, loaded, protoFiles, protoLibraries, protoRuntimeRegistry, activeProtoLibraryId, activeProtoVersionId } = options;
+  const automaticSources = resolveEffectiveMockProtoSources(mockServer.protoSources, protoLibraries);
+  const sources = automaticSources.length
+    ? automaticSources
     : activeProtoLibraryId && activeProtoVersionId
       ? [{ libraryId: activeProtoLibraryId, versionId: activeProtoVersionId }]
       : [];
@@ -54,6 +58,7 @@ export async function syncRunningMockServerFromEditor({
   setMockServerStatus,
   loaded,
   protoFiles,
+  protoLibraries,
   protoRuntimeRegistry,
   workspaceFolderPath,
   activeProtoLibraryId,
@@ -70,6 +75,7 @@ export async function syncRunningMockServerFromEditor({
     mockServer,
     loaded,
     protoFiles,
+    protoLibraries,
     protoRuntimeRegistry,
     activeProtoLibraryId,
     activeProtoVersionId,
@@ -167,7 +173,7 @@ function mockRuntimeStatusEqual(left: MockServerStatus, right: MockServerStatus)
 }
 
 export function useMockRuntimeSync(options: UseMockRuntimeSyncOptions) {
-  const { delayMs, loaded, protoFiles, mockServer, activeProtoLibraryId, activeProtoVersionId } = options;
+  const { delayMs, loaded, protoFiles, protoLibraries, mockServer, activeProtoLibraryId, activeProtoVersionId } = options;
   const latestOptionsRef = useRef(options);
   const syncInFlightRef = useRef(false);
   const syncPendingRef = useRef(false);
@@ -208,6 +214,7 @@ export function useMockRuntimeSync(options: UseMockRuntimeSyncOptions) {
     mockServer,
     loaded,
     protoFiles,
+    protoLibraries,
     delayMs,
     activeProtoLibraryId,
     activeProtoVersionId,

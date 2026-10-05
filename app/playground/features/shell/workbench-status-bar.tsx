@@ -1,9 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import appPackage from "@/package.json";
 import { Terminal } from "@/components/shadcn/icons";
 import { Box, Button, Stack, Typography } from "@/components/shadcn/compat";
-import { PerformanceStatsPanel } from "../../shared/performance/PerformanceStatsPanel";
 import {
   useGrpcMockRuntimeStatus,
   useRestMockRuntimeStatus,
@@ -11,10 +10,7 @@ import {
   useWebSocketMockRuntimeStatus,
 } from "../mock-server/runtime/useMockRuntimeSelector";
 import type { WorkbenchCliPanelModel, WorkbenchStatusBarModel } from "./workbenchShell.types";
-import {
-  DEFAULT_PERFORMANCE_DIAGNOSTICS_ENABLED,
-  performanceStats,
-} from "../../shared/performance/performance-stats.store";
+import { performanceStats } from "../../shared/performance/performance-stats.store";
 
 export function WorkbenchStatusBar({
   ctx,
@@ -24,7 +20,6 @@ export function WorkbenchStatusBar({
   ctx: WorkbenchStatusBarModel;
 } & WorkbenchCliPanelModel) {
   performanceStats.recordRenderInvocation("statusBar");
-  const [perfOpen, setPerfOpen] = useState(DEFAULT_PERFORMANCE_DIAGNOSTICS_ENABLED);
   const { workspaceFolderPath } = ctx;
   const mockServerStatus = useGrpcMockRuntimeStatus();
   const webAccessStatus = useWebAccessRuntimeStatus();
@@ -68,10 +63,9 @@ export function WorkbenchStatusBar({
         <Box sx={{ flex: 1 }} />
         <Button
           size="small"
-          variant={perfOpen ? "contained" : "text"}
-          aria-pressed={perfOpen}
-          onClick={() => setPerfOpen((current: boolean) => !current)}
-          title="Toggle performance diagnostics"
+          variant="text"
+          onClick={() => void window.electronWindow?.openDetached?.({ kind: "performance", title: "Performance" })}
+          title="Open performance diagnostics window"
           sx={{ minWidth: 42, height: 20, px: 0.6, borderRadius: 0 }}
         >Perf</Button>
         <Button
@@ -84,16 +78,15 @@ export function WorkbenchStatusBar({
         >
           <Terminal sx={{ fontSize: 13 }} /> CLI
         </Button>
-        <Typography variant="caption" sx={{ color: "text.secondary" }} noWrap>
-          Local
+        <Typography
+          variant="caption"
+          title={`Layang ${appPackage.version}`}
+          sx={{ color: "text.secondary", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}
+          noWrap
+        >
+          v{appPackage.version}
         </Typography>
       </Stack>
-      <PerformanceStatsPanel
-        open={perfOpen}
-        onClose={() => setPerfOpen(false)}
-        streamActive={Boolean(ctx.activeRunning)}
-        mockActive={Boolean(mockServerStatus?.running || restMockStatus?.running || wsMockStatus?.running || webAccessStatus?.running)}
-      />
     </Box>
   );
 }

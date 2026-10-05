@@ -55,6 +55,60 @@
   --workbench-tree-row: 22px;
   --workbench-tree-indent: 10px;
   --workbench-tree-guide: rgba(126, 134, 166, 0.30);
+  /* CodeMirror editor palette: VS Code Dark+ inspired, tuned for Layang. */
+  --code-editor-text: #d4d4d4;
+  --code-editor-gutter-text: #858585;
+  --code-editor-gutter-active: #c6c6c6;
+  --code-editor-cursor: #aeafad;
+  --code-editor-active-line: rgba(255, 255, 255, 0.045);
+  --code-syntax-keyword: #c586c0;
+  --code-syntax-property: #9cdcfe;
+  --code-syntax-variable: #9cdcfe;
+  --code-syntax-function: #dcdcaa;
+  --code-syntax-definition: #4fc1ff;
+  --code-syntax-type: #4ec9b0;
+  --code-syntax-string: #ce9178;
+  --code-syntax-number: #b5cea8;
+  --code-syntax-boolean: #569cd6;
+  --code-syntax-regexp: #d16969;
+  --code-syntax-escape: #d7ba7d;
+  --code-syntax-operator: #d4d4d4;
+  --code-syntax-punctuation: #d4d4d4;
+  --code-syntax-meta: #d7ba7d;
+  --code-syntax-comment: #6a9955;
+  --code-syntax-heading: #569cd6;
+  --code-syntax-link: #3794ff;
+  --code-syntax-invalid: #f44747;
+
+  /* CodeMirror search chrome: colored enough to scan quickly without bright native controls. */
+  --cm-search-panel-bg: #111827;
+  --cm-search-panel-border: #2a3548;
+  --cm-search-input-bg: #0b1220;
+  --cm-search-input-border: #34445c;
+  --cm-search-input-focus: #4f9cf9;
+  --cm-search-text: #dbe7f5;
+  --cm-search-muted: #93a4bd;
+  --cm-search-disabled-bg: #171d28;
+  --cm-search-disabled-text: #748198;
+  --cm-search-next-bg: #173a63;
+  --cm-search-next-border: #2f6fb1;
+  --cm-search-next-text: #dbeafe;
+  --cm-search-prev-bg: #153944;
+  --cm-search-prev-border: #2f6f7d;
+  --cm-search-prev-text: #cffafe;
+  --cm-search-all-bg: #352653;
+  --cm-search-all-border: #6d55a3;
+  --cm-search-all-text: #ede9fe;
+  --cm-search-replace-bg: #174238;
+  --cm-search-replace-border: #2f7d68;
+  --cm-search-replace-text: #d1fae5;
+  --cm-search-replace-all-bg: #563a16;
+  --cm-search-replace-all-border: #9a6726;
+  --cm-search-replace-all-text: #fef3c7;
+  --cm-search-match-bg: rgba(59, 130, 246, 0.24);
+  --cm-search-match-border: rgba(96, 165, 250, 0.62);
+  --cm-search-match-current-bg: rgba(245, 158, 11, 0.34);
+  --cm-search-match-current-border: rgba(251, 191, 36, 0.82);
 }
 
 * {
@@ -295,6 +349,58 @@ button:disabled {
   --scrollbar-track: #f7f8fa;
   --scrollbar-thumb: #c8cfda;
   --scrollbar-thumb-hover: #aeb8c7;
+  --code-editor-text: #24292f;
+  --code-editor-gutter-text: #667085;
+  --code-editor-gutter-active: #172033;
+  --code-editor-cursor: #172033;
+  --code-editor-active-line: rgba(9, 105, 218, 0.055);
+  --code-syntax-keyword: #8250df;
+  --code-syntax-property: #0550ae;
+  --code-syntax-variable: #0550ae;
+  --code-syntax-function: #6639ba;
+  --code-syntax-definition: #0969da;
+  --code-syntax-type: #087990;
+  --code-syntax-string: #a31515;
+  --code-syntax-number: #098658;
+  --code-syntax-boolean: #0000ff;
+  --code-syntax-regexp: #811f3f;
+  --code-syntax-escape: #795e26;
+  --code-syntax-operator: #24292f;
+  --code-syntax-punctuation: #57606a;
+  --code-syntax-meta: #795e26;
+  --code-syntax-comment: #008000;
+  --code-syntax-heading: #0969da;
+  --code-syntax-link: #0969da;
+  --code-syntax-invalid: #cf222e;
+
+  --cm-search-panel-bg: #f6f8fb;
+  --cm-search-panel-border: #cbd5e1;
+  --cm-search-input-bg: #ffffff;
+  --cm-search-input-border: #aeb8c7;
+  --cm-search-input-focus: #2563eb;
+  --cm-search-text: #172033;
+  --cm-search-muted: #667085;
+  --cm-search-disabled-bg: #e8ecf2;
+  --cm-search-disabled-text: #8a94a5;
+  --cm-search-next-bg: #dbeafe;
+  --cm-search-next-border: #60a5fa;
+  --cm-search-next-text: #1e3a8a;
+  --cm-search-prev-bg: #cffafe;
+  --cm-search-prev-border: #67e8f9;
+  --cm-search-prev-text: #164e63;
+  --cm-search-all-bg: #ede9fe;
+  --cm-search-all-border: #a78bfa;
+  --cm-search-all-text: #4c1d95;
+  --cm-search-replace-bg: #d1fae5;
+  --cm-search-replace-border: #6ee7b7;
+  --cm-search-replace-text: #065f46;
+  --cm-search-replace-all-bg: #fef3c7;
+  --cm-search-replace-all-border: #fbbf24;
+  --cm-search-replace-all-text: #78350f;
+  --cm-search-match-bg: rgba(59, 130, 246, 0.17);
+  --cm-search-match-border: rgba(37, 99, 235, 0.48);
+  --cm-search-match-current-bg: rgba(245, 158, 11, 0.24);
+  --cm-search-match-current-border: rgba(180, 83, 9, 0.58);
 }
 
 .request-tab-strip {
@@ -1192,3 +1298,157 @@ button:disabled {
 .virtual-json-scroll-host--plain .code-viewer {
   min-height: 0;
 }
+
+/* CodeMirror search panel: colored, high-contrast Layang chrome. */
+.cm-editor .cm-panels,
+.cm-editor .cm-panel.cm-search {
+  background: var(--cm-search-panel-bg) !important;
+  color: var(--cm-search-text) !important;
+  border-color: var(--cm-search-panel-border) !important;
+}
+
+.cm-editor .cm-panel.cm-search {
+  padding: 8px 10px !important;
+  border-bottom: 1px solid var(--cm-search-panel-border) !important;
+}
+
+.cm-editor .cm-panel.cm-search .cm-textfield {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  height: 30px !important;
+  min-width: 180px !important;
+  margin: 2px 7px 2px 0 !important;
+  padding: 0 9px !important;
+  border: 1px solid var(--cm-search-input-border) !important;
+  border-radius: 5px !important;
+  outline: none !important;
+  background: var(--cm-search-input-bg) !important;
+  color: var(--cm-search-text) !important;
+  box-shadow: none !important;
+}
+
+.cm-editor .cm-panel.cm-search .cm-textfield::placeholder {
+  color: var(--cm-search-muted) !important;
+  opacity: 1 !important;
+}
+
+.cm-editor .cm-panel.cm-search .cm-textfield:focus {
+  border-color: var(--cm-search-input-focus) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cm-search-input-focus) 22%, transparent) !important;
+}
+
+.cm-editor .cm-panel.cm-search button.cm-button,
+.cm-editor .cm-panel.cm-search button[name="next"],
+.cm-editor .cm-panel.cm-search button[name="prev"],
+.cm-editor .cm-panel.cm-search button[name="select"],
+.cm-editor .cm-panel.cm-search button[name="replace"],
+.cm-editor .cm-panel.cm-search button[name="replaceAll"] {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  height: 30px !important;
+  min-width: 54px !important;
+  margin: 2px 7px 2px 0 !important;
+  padding: 0 11px !important;
+  border-radius: 5px !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  font: inherit !important;
+  font-weight: 600 !important;
+  line-height: 28px !important;
+  opacity: 1 !important;
+  transition: filter 120ms ease, border-color 120ms ease, transform 80ms ease !important;
+}
+
+.cm-editor .cm-panel.cm-search button[name="next"] {
+  border: 1px solid var(--cm-search-next-border) !important;
+  background: var(--cm-search-next-bg) !important;
+  color: var(--cm-search-next-text) !important;
+}
+
+.cm-editor .cm-panel.cm-search button[name="prev"] {
+  border: 1px solid var(--cm-search-prev-border) !important;
+  background: var(--cm-search-prev-bg) !important;
+  color: var(--cm-search-prev-text) !important;
+}
+
+.cm-editor .cm-panel.cm-search button[name="select"] {
+  border: 1px solid var(--cm-search-all-border) !important;
+  background: var(--cm-search-all-bg) !important;
+  color: var(--cm-search-all-text) !important;
+}
+
+.cm-editor .cm-panel.cm-search button[name="replace"] {
+  border: 1px solid var(--cm-search-replace-border) !important;
+  background: var(--cm-search-replace-bg) !important;
+  color: var(--cm-search-replace-text) !important;
+}
+
+.cm-editor .cm-panel.cm-search button[name="replaceAll"] {
+  border: 1px solid var(--cm-search-replace-all-border) !important;
+  background: var(--cm-search-replace-all-bg) !important;
+  color: var(--cm-search-replace-all-text) !important;
+}
+
+.cm-editor .cm-panel.cm-search button:hover:not(:disabled) {
+  filter: brightness(1.16) saturate(1.08) !important;
+}
+
+.cm-editor .cm-panel.cm-search button:active:not(:disabled) {
+  transform: translateY(1px) !important;
+}
+
+.cm-editor .cm-panel.cm-search button:focus-visible {
+  outline: 2px solid var(--cm-search-input-focus) !important;
+  outline-offset: 1px !important;
+}
+
+.cm-editor .cm-panel.cm-search button:disabled,
+.cm-editor .cm-panel.cm-search .cm-button:disabled {
+  border: 1px solid var(--cm-search-panel-border) !important;
+  background: var(--cm-search-disabled-bg) !important;
+  color: var(--cm-search-disabled-text) !important;
+  opacity: 1 !important;
+  cursor: default !important;
+  filter: none !important;
+}
+
+.cm-editor .cm-panel.cm-search label {
+  color: var(--cm-search-text) !important;
+  font-weight: 500 !important;
+}
+
+.cm-editor .cm-panel.cm-search input[type="checkbox"] {
+  accent-color: var(--cm-search-input-focus) !important;
+}
+
+.cm-editor .cm-panel.cm-search button[name="close"] {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  width: 30px !important;
+  min-width: 30px !important;
+  height: 30px !important;
+  padding: 0 !important;
+  border: 1px solid transparent !important;
+  border-radius: 5px !important;
+  background: transparent !important;
+  color: var(--cm-search-muted) !important;
+  opacity: 1 !important;
+}
+
+.cm-editor .cm-panel.cm-search button[name="close"]:hover {
+  border-color: color-mix(in srgb, var(--destructive) 55%, transparent) !important;
+  background: color-mix(in srgb, var(--destructive) 18%, transparent) !important;
+  color: #fecaca !important;
+}
+
+.cm-editor .cm-searchMatch {
+  background: var(--cm-search-match-bg) !important;
+  outline: 1px solid var(--cm-search-match-border) !important;
+}
+
+.cm-editor .cm-searchMatch.cm-searchMatch-selected {
+  background: var(--cm-search-match-current-bg) !important;
+  outline: 1px solid var(--cm-search-match-current-border) !important;
+}
+

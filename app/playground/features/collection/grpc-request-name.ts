@@ -17,7 +17,7 @@ export function uniqueCollectionRequestName(methodName: string, existingNames: r
 function legacyReadableGrpcRequestName(methodName: string): string {
   return methodName
     .trim()
-    .replace(/[_\-.]+/g, " ")
+    .replace(/[_.-]+/g, " ")
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
     .replace(/\s+/g, " ")

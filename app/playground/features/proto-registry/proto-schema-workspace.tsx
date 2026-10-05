@@ -16,6 +16,7 @@ import {
   Stack,
   Typography,
 } from "@/components/shadcn/compat";
+import { LayangCodeEditor } from "@/components/editor/layang-code-editor";
 import { copyTextWithAnnouncement } from "@/lib/accessibility";
 import { loadProtoFiles } from "@/lib/proto-loader";
 import type { LoadedProto, ProtoSourceFile, RpcMethodInfo } from "@/lib/types";
@@ -611,29 +612,15 @@ export function ProtoSchemaWorkspace({ ctx }: { ctx: ViewContext | Record<string
         {outlineOpen && !editing ? <ProtoOutline items={outlineItems} onSelect={selectOutlineItem} /> : null}
         <Box sx={{ minWidth: 0, minHeight: 0, flex: 1, overflow: "hidden" }}>
           {editing ? (
-            <textarea
-              aria-label={`Edit ${selectedFile?.name ?? "Proto source"}`}
+            <LayangCodeEditor
               value={draftText}
-              onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setDraftText(event.target.value)}
-              spellCheck={false}
-              style={{
-                display: "block",
-                width: "100%",
-                height: "100%",
-                minHeight: 0,
-                resize: "none",
-                border: 0,
-                outline: 0,
-                padding: "14px 18px",
-                background: "var(--background)",
-                color: "var(--foreground)",
-                fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
-                fontSize: "12.5px",
-                lineHeight: "1.65",
-                tabSize: 2,
-                whiteSpace: "pre",
-                overflow: "auto",
-              }}
+              onChange={setDraftText}
+              language="proto"
+              ariaLabel={`Edit ${selectedFile?.name ?? "Proto source"}`}
+              minRows={18}
+              fullHeight
+              resetKey={`proto:${library.id}:${version.id}:${selectedFile?.name ?? "source"}`}
+              style={{ height: "100%", border: 0 }}
             />
           ) : selectedFile ? (
             <ProtoSourceViewer file={selectedFile} targetLine={targetLine} />

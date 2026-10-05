@@ -13,6 +13,14 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { railWidth } from "./shared/workbench-constants";
 import { useWorkbenchSideSection } from "./features/shell/workbench-navigation-store";
 import { performanceStats } from "./shared/performance/performance-stats.store";
+import { PerformanceStatsHost } from "./shared/performance/PerformanceStatsHost";
+import {
+  DetachedMockingWindow,
+  DetachedPerformanceWindow,
+  DetachedRequestWindow,
+  DetachedResponseWindow,
+} from "./features/windows/detached-window-surfaces";
+import { useResponseWindowSync } from "./features/windows/use-response-window-sync";
 
 type NavigationAwareCliTerminalPanelProps = {
   height: number;
@@ -53,6 +61,15 @@ export default function WorkbenchContainer() {
   const [cliPanelOpen, setCliPanelOpen] = useState(false);
   const [cliPanelHeight, setCliPanelHeight] = useState(260);
 
+  const detachedWindowContext = viewContext.managedWindow.context;
+  const windowKind = detachedWindowContext.kind;
+  const normalizedDetachedTitle = (detachedWindowContext.title ?? "").trim().toLowerCase();
+  const performanceLikeWindow =
+    windowKind === "performance" ||
+    (!detachedWindowContext.resourceId && !detachedWindowContext.responseSessionId && normalizedDetachedTitle === "performance");
+  const performanceWindowOpen = viewContext.managedWindow.windows.some((item) => item.kind === "performance");
+  useResponseWindowSync(viewContext);
+
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.key !== "`") return;
@@ -62,6 +79,29 @@ export default function WorkbenchContainer() {
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
   }, []);
+
+  if (performanceLikeWindow) {
+    return (
+      <WorkbenchShell theme={theme} density={viewContext.densityMode}>
+        <DetachedPerformanceWindow ctx={viewContext} />
+      </WorkbenchShell>
+    );
+  }
+
+  if (windowKind !== "main") {
+    return (
+      <WorkbenchShell theme={theme} density={viewContext.densityMode}>
+        {windowKind === "mocking" ? (
+          <DetachedMockingWindow ctx={viewContext} />
+        ) : windowKind === "response" ? (
+          <DetachedResponseWindow ctx={viewContext} />
+        ) : (
+          <DetachedRequestWindow ctx={viewContext} />
+        )}
+        <WorkbenchDialogs ctx={viewContext} />
+      </WorkbenchShell>
+    );
+  }
 
   return (
     <WorkbenchShell theme={theme} density={viewContext.densityMode}>
@@ -82,6 +122,10 @@ export default function WorkbenchContainer() {
           onHeightChange={setCliPanelHeight}
         />
         <WorkbenchStatusBar ctx={viewContext} cliPanelOpen={cliPanelOpen} setCliPanelOpen={setCliPanelOpen} />
+        <PerformanceStatsHost
+          activeRunning={Boolean(viewContext.activeRunning)}
+          enabled={performanceWindowOpen}
+        />
       </SidebarProvider>
     </WorkbenchShell>
   );

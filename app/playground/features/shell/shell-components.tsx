@@ -38,7 +38,7 @@ function requestTabContextLabel(session: RequestSession) {
 }
 
 /** Renders Electron window controls for the custom titlebar. */
-export function WindowControls() {
+export function WindowControls({ onClose }: { onClose?: () => void } = {}) {
   const [pinned, setPinned] = useState(false);
 
   async function togglePinned() {
@@ -87,7 +87,10 @@ export function WindowControls() {
         <IconButton
           size="small"
           aria-label="Close window"
-          onClick={() => void window.electronWindow?.close?.()}
+          onClick={() => {
+            if (onClose) onClose();
+            else void window.electronWindow?.close?.();
+          }}
           sx={iconButtonSx}
         >
           <Close sx={{ fontSize: 16 }} />
@@ -106,6 +109,7 @@ export function RequestTabs({
   onCancel,
   onCloseAll,
   onCloseOther,
+  onDetach,
   onReorder,
   placement = "panel",
 }: {
@@ -116,6 +120,7 @@ export function RequestTabs({
   onCancel: (sessionId: string) => void;
   onCloseAll?: () => void;
   onCloseOther?: (sessionId?: string) => void;
+  onDetach?: (session: RequestSession) => void;
   onReorder?: (sourceId: string, targetId: string, position: "before" | "after") => void;
   placement?: "top" | "panel";
 }) {
@@ -431,6 +436,12 @@ export function RequestTabs({
           onClick={() => runTabMenuAction((session) => onCloseOther?.(session.id))}
         >
           {uiCopy.actions.closeOtherTabs}
+        </MenuItem>
+        <MenuItem
+          disabled={!menuSession || !onDetach}
+          onClick={() => runTabMenuAction((session) => onDetach?.(session))}
+        >
+          Move to new window
         </MenuItem>
         <MenuItem
           disabled={sessions.length === 0 || !onCloseAll}

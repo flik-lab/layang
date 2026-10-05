@@ -21,6 +21,7 @@ import { createPinnedGrpcBinding, findProtoVersion } from "../proto-library/prot
 import type { ProtoLibrary, ProtoLibraryVersion } from "../proto-library/proto-library-types";
 import { recordGuiCliCommand } from "../cli/cli-command-history";
 import { performanceStats } from "../../shared/performance/performance-stats.store";
+import { resolveEffectiveMockProtoSources } from "./mock-proto-sources";
 
 type StateSetter<T> = (value: T | ((current: T) => T)) => void;
 type MockScenarioEditorDraft = {
@@ -135,6 +136,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
     setMockScenarioEditorDraft,
     setMockScenarioEditorDirty,
     setMockScenarioEditorError,
+    setPendingMockScenarioNavigation,
     setMockServer,
     setMockServerStatus,
     setWebAccessStatus,
@@ -242,7 +244,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
   }
 
   function saveMockScenarioEditorDraft(editorTextOverride?: string) {
-    if (!selectedMethod) return;
+    if (!selectedMethod) return false;
     const key = methodKey(selectedMethod);
     const draftMatches =
       mockScenarioEditorDraft &&
@@ -254,14 +256,14 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
     if (!parsed.ok) {
       setMockScenarioEditorError(parsed.error);
       showToast(parsed.error, "error");
-      return;
+      return false;
     }
     const nextScenario = parsed.bundle.scenarios[0];
     if (!nextScenario) {
       const error = "No scenario found to save.";
       setMockScenarioEditorError(error);
       showToast(error, "warning");
-      return;
+      return false;
     }
     const replacementId =
       currentMockSelectedScenarioId ||
@@ -297,6 +299,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
     });
     clearMockScenarioEditorDraftState();
     showToast("Mock scenario saved.", "success");
+    return true;
   }
 
   function discardMockScenarioEditorDraft() {
@@ -887,8 +890,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
   /**
    * Chooses the scenario that will be used when this method is enabled for mocking.
    */
-  function handleMockScenarioSelectChange(method: RpcMethodInfo, scenarioId: string) {
-    const key = methodKey(method);
+  function forceMockScenarioSelectChange(key: string, scenarioId: string) {
     if (!scenarioId) return;
     clearMockScenarioEditorDraftState();
     setBoundMockServer((current) => ({
@@ -896,6 +898,16 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
       selectedScenarioIds: { ...current.selectedScenarioIds, [key]: scenarioId },
       updatedAt: new Date().toISOString(),
     }));
+  }
+
+  function handleMockScenarioSelectChange(method: RpcMethodInfo, scenarioId: string) {
+    const key = methodKey(method);
+    if (!scenarioId || mockServer.selectedScenarioIds[key] === scenarioId) return;
+    if (mockScenarioEditorDirty) {
+      setPendingMockScenarioNavigation?.({ methodKey: key, scenarioId });
+      return;
+    }
+    forceMockScenarioSelectChange(key, scenarioId);
   }
 
   /** Opens the method-only scenario rename/delete dialog. */
@@ -1244,8 +1256,9 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
   }
 
   function resolveRuntimeSchema(project: MockServerProject) {
-    const configuredSources = project.protoSources?.length
-      ? project.protoSources
+    const automaticSources = resolveEffectiveMockProtoSources(project.protoSources, protoLibraries);
+    const configuredSources = automaticSources.length
+      ? automaticSources
       : activeProtoLibraryId && activeProtoVersionId
         ? [{ libraryId: activeProtoLibraryId, versionId: activeProtoVersionId }]
         : [];
@@ -1302,7 +1315,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
       };
       const schema = resolveRuntimeSchema(effectiveMockServer);
       if (!schema.protoFiles.length || !schema.methods.length) {
-        return { ok: false, error: "Attach at least one Proto source before starting gRPC Mock." };
+        return { ok: false, error: "Import at least one Proto schema before starting gRPC Mock." };
       }
       const activeScenarioIds = effectiveMockServer.selectedScenarioIds ?? {};
       if (!window.electronMock?.start) {
@@ -1415,6 +1428,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
         setMockServerStatus,
         loaded,
         protoFiles,
+        protoLibraries,
         protoRuntimeRegistry,
         workspaceFolderPath,
         activeProtoLibraryId,
@@ -1461,6 +1475,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
         setMockServerStatus,
         loaded,
         protoFiles,
+        protoLibraries,
         protoRuntimeRegistry,
         workspaceFolderPath,
         activeProtoLibraryId,
@@ -1554,7 +1569,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
       };
       const schema = resolveRuntimeSchema(effectiveMockServer);
       if (!schema.protoFiles.length || !schema.methods.length) {
-        const message = "Attach at least one Proto source before starting Web Access.";
+        const message = "Import at least one Proto schema before starting Web Access.";
         setWebAccessStatus({ running: false, runtimeKind: "gateway", message });
         showToast(message, "warning");
         return false;
@@ -1757,6 +1772,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
     addMockScenarioFromCurrent,
     addMockScenarioForMethod,
     handleMockScenarioSelectChange,
+    forceMockScenarioSelectChange,
     openMockScenarioManager,
     confirmRenameMockScenario,
     deleteEditingMockScenario,

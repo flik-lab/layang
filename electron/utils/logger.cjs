@@ -24,7 +24,7 @@ const state = {
   settingsFilePath: "",
   logDir: "",
   logFilePath: "",
-  level: normalizeLogLevel(process.env.LAYANG_LOG_LEVEL, process.env.NODE_ENV === "production" ? "info" : "debug"),
+  level: normalizeLogLevel(process.env.LAYANG_LOG_LEVEL, "info"),
   mirrorToConsole: process.env.LAYANG_LOG_CONSOLE === "1" || process.env.NODE_ENV !== "production",
   maxBytes: normalizePositiveInteger(process.env.LAYANG_LOG_MAX_BYTES, defaultMaxBytes),
   maxTotalBytes: normalizePositiveInteger(process.env.LAYANG_LOG_MAX_TOTAL_BYTES, defaultMaxTotalBytes),
@@ -110,7 +110,7 @@ function configureLogger(options = {}) {
   state.logDir = path.join(userDataPath, "logs");
   const startupDefaults = normalizeSettings(
     {
-      level: options.level ?? (state.isPackaged ? "info" : "debug"),
+      level: options.level ?? "info",
       mirrorToConsole: options.mirrorToConsole ?? !state.isPackaged,
       maxBytes: options.maxBytes ?? defaultMaxBytes,
       maxTotalBytes: options.maxTotalBytes ?? defaultMaxTotalBytes,

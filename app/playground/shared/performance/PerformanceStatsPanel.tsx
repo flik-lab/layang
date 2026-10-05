@@ -6,13 +6,21 @@ import { mockRuntimeStore } from "../../features/mock-server/runtime/mockRuntime
 import { responseSessionRegistry } from "../../features/response-viewer/model/responseSessionRegistry";
 import { transportLifecycleStore } from "../../features/response-viewer/model/transportLifecycle.store";
 import { useWorkbenchSideSection } from "../../features/shell/workbench-navigation-store";
-import { performanceStats, usePerformanceStatsSnapshot, type PerformanceRecommendation } from "./performance-stats.store";
+import {
+  performanceStats,
+  usePerformanceStatsSnapshot,
+  type PerformanceRecommendation,
+  type PerformanceSnapshot,
+} from "./performance-stats.store";
 
 type PerformanceStatsPanelProps = {
   open: boolean;
   onClose: () => void;
   streamActive: boolean;
   mockActive: boolean;
+  snapshotOverride?: PerformanceSnapshot | null;
+  historyOverride?: PerformanceSnapshot[];
+  standalone?: boolean;
 };
 
 function formatRate(value: number, suffix = "/s"): string {
@@ -55,7 +63,7 @@ function Recommendation({ item }: { item: PerformanceRecommendation; key?: strin
 }
 
 
-async function syncRuntimeDiagnostics(): Promise<void> {
+export async function syncRuntimeDiagnostics(): Promise<void> {
   const response = responseSessionRegistry.getDebugStats();
   const mock = mockRuntimeStore.getDebugStats();
   const bridge = typeof window !== "undefined" ? window.electronGrpcWebTransport : undefined;
@@ -76,12 +84,21 @@ async function syncRuntimeDiagnostics(): Promise<void> {
   });
 }
 
-export function PerformanceStatsPanel({ open, onClose, streamActive, mockActive }: PerformanceStatsPanelProps) {
+export function PerformanceStatsPanel({
+  open,
+  onClose,
+  streamActive,
+  mockActive,
+  snapshotOverride = null,
+  historyOverride,
+  standalone = false,
+}: PerformanceStatsPanelProps) {
   const sideSection = useWorkbenchSideSection();
-  const snapshot = usePerformanceStatsSnapshot();
+  const localSnapshot = usePerformanceStatsSnapshot();
+  const snapshot = snapshotOverride ?? localSnapshot;
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || snapshotOverride) return;
     void syncRuntimeDiagnostics();
     performanceStats.setEnabled(true);
     performanceStats.setRuntime({ section: sideSection, streamActive, mockActive });
@@ -95,11 +112,20 @@ export function PerformanceStatsPanel({ open, onClose, streamActive, mockActive 
       window.clearInterval(timer);
       performanceStats.setEnabled(false);
     };
-  }, [mockActive, open, sideSection, streamActive]);
+  }, [mockActive, open, sideSection, snapshotOverride, streamActive]);
 
   if (!open) return null;
 
   const copySnapshot = async () => {
+    if (snapshotOverride) {
+      const exportValue = {
+        copiedAt: new Date().toISOString(),
+        snapshot: snapshotOverride,
+        history: historyOverride ?? [],
+      };
+      await navigator.clipboard.writeText(JSON.stringify(exportValue, null, 2));
+      return;
+    }
     await syncRuntimeDiagnostics();
     const exportValue = {
       copiedAt: new Date().toISOString(),
@@ -115,16 +141,17 @@ export function PerformanceStatsPanel({ open, onClose, streamActive, mockActive 
       role="dialog"
       aria-label="Performance stats"
       sx={{
-        position: "fixed",
-        right: 8,
-        bottom: 28,
+        position: standalone ? "relative" : "fixed",
+        right: standalone ? "auto" : 8,
+        bottom: standalone ? "auto" : 28,
         zIndex: 2200,
-        width: "min(760px, calc(100vw - 24px))",
-        maxHeight: "min(720px, calc(100vh - 48px))",
+        width: standalone ? "100%" : "min(760px, calc(100vw - 24px))",
+        height: standalone ? "100%" : "auto",
+        maxHeight: standalone ? "100%" : "min(720px, calc(100vh - 48px))",
         overflow: "auto",
         border: "1px solid",
         borderColor: "var(--border-strong)",
-        borderRadius: 1,
+        borderRadius: standalone ? 0 : 1,
         bgcolor: "background.paper",
         p: 1.2,
       }}
@@ -135,9 +162,9 @@ export function PerformanceStatsPanel({ open, onClose, streamActive, mockActive 
           {snapshot.runtime.section} · 500 ms sampling
         </Typography>
         <Box sx={{ flex: 1 }} />
-        <Button size="small" variant="text" onClick={() => performanceStats.reset()}>Reset</Button>
+        {!snapshotOverride ? <Button size="small" variant="text" onClick={() => performanceStats.reset()}>Reset</Button> : null}
         <Button size="small" variant="outlined" onClick={() => void copySnapshot()}>Copy Snapshot JSON</Button>
-        <Button size="small" variant="text" onClick={onClose}>Close</Button>
+        {!standalone ? <Button size="small" variant="text" onClick={onClose}>Close</Button> : null}
       </Stack>
 
       <Box sx={{ mb: 1, p: 0.8, border: "1px solid", borderColor: "divider", bgcolor: "action.hover" }}>

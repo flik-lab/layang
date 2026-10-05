@@ -6,6 +6,7 @@ const {
   startRestMockServer,
   stopRestMockServer,
   updateRestMockServer,
+  sendRestMockResponse,
 } = require("../services/rest-mock-server.cjs");
 
 function registerRestMockIpc(options = {}) {
@@ -33,6 +34,18 @@ function registerRestMockIpc(options = {}) {
       const result = runtimeMode === "utility"
         ? await invokeUtility("mock.rest.update", payload || {})
         : await updateRestMockServer(payload || {});
+      return { ok: true, ...(result || {}) };
+    } catch (error) {
+      return { ok: false, error: error?.message ? String(error.message) : String(error) };
+    }
+  });
+
+
+  ipcMain.handle("rest-mock:send", async (_event, payload) => {
+    try {
+      const result = runtimeMode === "utility"
+        ? await invokeUtility("mock.rest.send", payload || {})
+        : sendRestMockResponse(payload || {});
       return { ok: true, ...(result || {}) };
     } catch (error) {
       return { ok: false, error: error?.message ? String(error.message) : String(error) };

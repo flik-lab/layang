@@ -83,6 +83,8 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchDialogsModel }) {
     mockScenarioDialogOpen,
     mockScenarioDraftId,
     mockScenarioEditing,
+    pendingMockScenarioNavigation,
+    resolvePendingMockScenarioNavigation,
     importCertificateSettingsFile,
     loggerDraft,
     loggerInfo,
@@ -1572,6 +1574,29 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchDialogsModel }) {
           <Button onClick={() => setCertificateSettingsOpen(false)}>Close</Button>
           <Button variant="contained" onClick={() => void saveCertificateSettings()}>
             Save
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog
+        open={Boolean(pendingMockScenarioNavigation)}
+        onClose={() => resolvePendingMockScenarioNavigation("cancel")}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>Unsaved mock changes</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">
+            The current mock scenario has unsaved changes. Save them before switching scenarios, discard them, or
+            cancel the switch.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => resolvePendingMockScenarioNavigation("cancel")}>Cancel</Button>
+          <Button color="error" onClick={() => resolvePendingMockScenarioNavigation("discard")}>
+            Discard
+          </Button>
+          <Button variant="contained" onClick={() => resolvePendingMockScenarioNavigation("save")}>
+            Save &amp; Switch
           </Button>
         </DialogActions>
       </Dialog>

@@ -26,6 +26,7 @@ import { formatTimestampShort } from "../../shared/formatters";
 import { buttonSx, compactCardSx, iconButtonSx } from "../../shared/workbench-constants";
 import type { SavedExample } from "../../shared/workbench-types";
 import { WorkbenchTabs } from "@/components/ui/workbench";
+import { CodeTextField as FeatureCodeTextField } from "../request-editor/request-editor-panels";
 
 export type ExampleEditorTab = "general" | "request" | "response" | "documentation";
 
@@ -354,18 +355,23 @@ export function ExampleEditorDialog({
                   pairs={draft.metadata}
                   onChange={(metadata) => setDraft({ ...draft, metadata })}
                 />
-                <TextField
-                  multiline
-                  minRows={14}
-                  label="Request JSON"
-                  value={draft.requestJson}
-                  onChange={(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-                    setDraft({ ...draft, requestJson: event.target.value })
-                  }
-                  error={Boolean(requestJsonError)}
-                  helperText={requestJsonError || "This is the executable request used by Load and Run."}
-                  inputProps={{ style: codeInputStyle }}
-                />
+                <Stack spacing={0.45}>
+                  <Typography variant="caption" color={requestJsonError ? "error.main" : "text.secondary"}>
+                    Request JSON
+                  </Typography>
+                  <FeatureCodeTextField
+                    value={draft.requestJson}
+                    onChange={(requestJson) => setDraft({ ...draft, requestJson })}
+                    minRows={14}
+                    maxRows={24}
+                    language="json"
+                    fullscreenTitle="Example request JSON"
+                    resetKey={`example-request:${draft.id}`}
+                  />
+                  <Typography variant="caption" color={requestJsonError ? "error.main" : "text.secondary"}>
+                    {requestJsonError || "This is the executable request used by Load and Run."}
+                  </Typography>
+                </Stack>
               </Stack>
             ) : null}
 
@@ -392,36 +398,41 @@ export function ExampleEditorDialog({
                   pairs={draft.expectedTrailers ?? []}
                   onChange={(expectedTrailers) => setDraft({ ...draft, expectedTrailers })}
                 />
-                <TextField
-                  multiline
-                  minRows={10}
-                  label="Expected response JSON"
-                  value={draft.expectedJson}
-                  onChange={(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-                    setDraft({ ...draft, expectedJson: event.target.value })
-                  }
-                  error={Boolean(responseJsonError)}
-                  helperText={
-                    responseJsonError ||
-                    "The expected payload displayed in docs and used by existing example assertions."
-                  }
-                  inputProps={{ style: codeInputStyle }}
-                />
-                <TextField
-                  multiline
-                  minRows={5}
-                  label="Additional assertions JSON"
-                  value={draft.assertions ?? ""}
-                  onChange={(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-                    setDraft({ ...draft, assertions: event.target.value })
-                  }
-                  error={Boolean(assertionsError)}
-                  helperText={
-                    assertionsError || "Optional structured assertions, such as JSONPath checks or field expectations."
-                  }
-                  placeholder={'{"grpcStatus":"0","minMessages":1,"maxLatencyMs":3000}'}
-                  inputProps={{ style: codeInputStyle }}
-                />
+                <Stack spacing={0.45}>
+                  <Typography variant="caption" color={responseJsonError ? "error.main" : "text.secondary"}>
+                    Expected response JSON
+                  </Typography>
+                  <FeatureCodeTextField
+                    value={draft.expectedJson}
+                    onChange={(expectedJson) => setDraft({ ...draft, expectedJson })}
+                    minRows={10}
+                    maxRows={20}
+                    language="json"
+                    fullscreenTitle="Example expected response JSON"
+                    resetKey={`example-response:${draft.id}`}
+                  />
+                  <Typography variant="caption" color={responseJsonError ? "error.main" : "text.secondary"}>
+                    {responseJsonError ||
+                      "The expected payload displayed in docs and used by existing example assertions."}
+                  </Typography>
+                </Stack>
+                <Stack spacing={0.45}>
+                  <Typography variant="caption" color={assertionsError ? "error.main" : "text.secondary"}>
+                    Additional assertions JSON
+                  </Typography>
+                  <FeatureCodeTextField
+                    value={draft.assertions ?? ""}
+                    onChange={(assertions) => setDraft({ ...draft, assertions })}
+                    minRows={5}
+                    maxRows={14}
+                    language="json"
+                    fullscreenTitle="Example assertions JSON"
+                    resetKey={`example-assertions:${draft.id}`}
+                  />
+                  <Typography variant="caption" color={assertionsError ? "error.main" : "text.secondary"}>
+                    {assertionsError || "Optional structured assertions, such as JSONPath checks or field expectations."}
+                  </Typography>
+                </Stack>
               </Stack>
             ) : null}
 
@@ -729,7 +740,6 @@ function parseLines(value: string): string[] {
     .filter(Boolean);
 }
 
-const codeInputStyle = { fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace", fontSize: 12 };
 const previewCodeSx = {
   mt: 0.35,
   mb: 1,

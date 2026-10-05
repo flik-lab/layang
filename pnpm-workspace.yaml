@@ -10,3 +10,7 @@ ignoredBuiltDependencies:
 onlyBuiltDependencies:
   - electron
   - electron-winstaller
+
+nodeLinker: hoisted
+publicHoistPattern:
+  - '*'

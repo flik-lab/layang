@@ -1,5 +1,55 @@
 # Changelog
 
+## 1.1.6
+
+### Added
+
+* Added responsive request/response layouts with per-request split ratios, collapse state, and view-state restoration.
+* Added keyboard-first commands for send, close, Quick Open, focus, save, and request-tab navigation.
+* Added Global Mocking for gRPC, REST, and WebSocket with shared Incoming, Standby, Periodic, Scheduled, and Hybrid execution triggers.
+* Added detachable Mocking, Request, and Response windows with reattach controls, duplicate-window focusing, and multi-monitor restoration.
+
+### Changed
+
+* Replaced Layang's custom code textareas with direct CodeMirror 6 editors across REST/gRPC/WebSocket request bodies, mock payloads, examples/assertions, Markdown documentation, scripts, and `.proto` editing.
+* Centralized editor behavior in `LayangCodeEditor`, keeping document, selection, undo/redo, search, and scrolling inside CodeMirror instead of React workbench state.
+* Added CodeMirror language support for JSON, YAML, JavaScript/TypeScript, Markdown, and a lightweight Protocol Buffers tokenizer while keeping ordinary multiline form fields native.
+* Changed REST and WebSocket mock scenarios from request-owned runtime state to global mock resources while retaining source-request provenance.
+* Unified mock execution semantics across gRPC, REST, and WebSocket through trigger-based runtime behavior.
+* Changed responsive sidebar collapse to a temporary viewport behavior so the user's saved sidebar preference is preserved.
+* Improved multi-window workspace synchronization, atomic persistence, response-session mirroring, and stream update coalescing.
+* Simplified gRPC server-streaming mock execution to Periodic, Standby, and Hybrid in the UI; new stream scenarios default to Periodic behavior.
+* Changed Quick Open (`Ctrl/Cmd+P`) to search the full request collection by name, method, endpoint, and collection instead of only already-open request tabs.
+* Persisted the Side-by-side vs Stacked request/response placement per request, with the workspace layout setting acting only as the default for new requests.
+* Buffered request-body editor commits while keeping the local draft immediate, reducing whole-workbench churn during typing and detached-window workflows.
+* Removed implementation branding from the editor chrome and tuned the shared syntax palette for clearer dark-mode contrast across JSON, YAML, scripts, Markdown, and Proto.
+* Styled the built-in CodeMirror search/replace panel to match Layang controls with readable dark-mode inputs, buttons, checkboxes, focus rings, and disabled states.
+* Switched the CodeMirror editor syntax palette to a VS Code Dark+ inspired scheme so properties, strings, numbers, booleans, functions, types, comments, regex, and errors are visually distinct without changing the search panel.
+* Moved Performance diagnostics into a dedicated managed window opened from the status bar, so diagnostics no longer compete with Mocking/Request z-index layers.
+* Compacted WebSocket and REST request-body controls by removing redundant helper copy/badges and keeping primary controls on one row.
+* Compacted REST/WebSocket mock headers and shared execution controls so mode, timing, loop, and limits stay aligned on one horizontal control row.
+* Moved mock response variable hints into hover titles instead of permanent helper rows to reduce vertical noise.
+* Compacted focused gRPC mock editing into a single Scenario + execution row, removed the duplicate manual-send scenario selector, and shortened stream controls to Mode, Interval, Loop, and Max.
+* Added a persisted request/response-style vertical splitter between gRPC mock controls and the scenario editor so the editor can keep most of the workspace height.
+* Applied the same compact settings + resizable editor layout to REST and WebSocket mock scenarios for consistent Mocking UX across protocols.
+
+### Fixed
+
+* Fixed Next.js hydration mismatches caused by browser-only window context and viewport measurements during the server render.
+* Fixed a detached-response layout update loop that could trigger `Maximum update depth exceeded` and stall multiple renderer windows.
+* Reduced frameless-window drag overhead by persisting native window bounds only after move/resize activity settles.
+* Collapsed detached responses to a compact focus/return bar in the owning request and restored the compact mock runtime switcher UI.
+* Added graceful Back controls for detached Response and Mocking surfaces while keeping Focus as a compact icon action.
+* Fixed `Ctrl+S` being blocked by editor keyboard propagation and added save/discard/cancel guards for unsaved mock changes.
+* Fixed REST Hybrid defaults so Standby and Periodic behavior is not immediately bypassed by Incoming responses.
+* Fixed detached-window handoff ordering so state is saved before it is broadcast or reattached.
+* Fixed off-screen restored windows by clamping saved bounds to available displays and limited pending REST mock requests to prevent unbounded growth.
+* Fixed detached Response windows reloading the complete workspace after every save from another window.
+* Fixed request-body cursor/scroll updates from going through React state on every interaction; line highlighting now updates directly while the latest draft remains available to Send/Ctrl+Enter.
+* Forced CodeMirror search/replace action buttons through the global Layang theme so Chromium native disabled-button chrome cannot reappear over dark mode.
+* Fixed the compatibility `Divider` leaking the MUI-only `flexItem` prop into the DOM and triggering React console warnings.
+* Prevented the dedicated Performance window from running workspace autosave and duplicate runtime polling while it displays snapshots from the main renderer.
+
 ## 1.1.5
 
 ### Improvements
@@ -281,3 +331,9 @@
 * Added Markdown/HTML API docs generation.
 * Added CLI workspace validation, request listing, mock checks, and native gRPC runs.
 * Added Windows desktop build and installer workflow.
+
+### gRPC Mock layout follow-up
+- Removed the large empty settings spacer above the gRPC scenario editor.
+- gRPC settings now size to their content by default; dragging the divider stores an explicit per-method settings height.
+- The scenario editor now consumes the remaining workspace height, matching the Request/Response split behavior more closely.
+- Full-height CodeMirror editors can shrink to `min-height: 0`, preventing the bottom of the editor/scroll area from being clipped inside flex split panes.

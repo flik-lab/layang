@@ -82,7 +82,8 @@ export type UseRequestRunnerOptions = {
   upsertRequestSessionPreservingOrder: (session: RequestSession) => void;
   activateRequestSession: (session: RequestSession) => void;
   updateRequestSession: (sessionId: string, patch: Partial<RequestSession>) => void;
-  beforeRunRequest?: () => Promise<void> | void;
+  beforeRunRequest?: () => Promise<void> | undefined;
+  getRequestJson?: () => string;
   workspaceFolderPath?: string;
 };
 
@@ -128,7 +129,7 @@ export function useRequestRunner(options: UseRequestRunnerOptions) {
 
       const methodToRun = overrides?.overrideMethod ?? selectedMethod;
       const collectionRequest = overrides?.overrideCollectionRequest ?? activeCollectionRequest;
-      const requestToRun = overrides?.overrideRequestJson ?? requestJson;
+      const requestToRun = overrides?.overrideRequestJson ?? options.getRequestJson?.() ?? requestJson;
       const metadataToRun = overrides?.overrideMetadata ?? metadata;
       const assertionToRun = overrides?.overrideAssertionJson ?? assertionJson;
 
