@@ -53,7 +53,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - name: Install dependencies
-        run: pnpm install 
+        run: pnpm install --frozen-lockfile
       - name: Typecheck
         run: pnpm run typecheck
       - name: Lint
