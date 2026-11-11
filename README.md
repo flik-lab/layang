@@ -5,7 +5,7 @@
 # Layang
 
 [![Website](https://img.shields.io/badge/website-layang.mff.web.id-blue)](https://layang.mff.web.id/)
-[![Version](https://img.shields.io/badge/version-1.1.6-blue)](https://github.com/flik-lab/layang/releases)
+[![Source version](https://img.shields.io/badge/source%20version-1.2.0-blue)](./package.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Layang is a desktop API workbench for REST, WebSocket, gRPC, and gRPC-Web. It uses workspace folders as the source of truth, so the same requests, schemas, mocks, environments, and documentation can be used from both the desktop app and CLI.
@@ -46,15 +46,12 @@ The gRPC service workspace groups:
 
 Request-specific examples and documentation stay with the request instead of being managed from a separate global screen.
 
-## Release 1.1.6
+## What's new in 1.2.0
 
-Version `1.1.6` focuses on responsive daily workflows, global Mocking 2.0, and detachable multi-window workspaces.
-
-* Added per-request Request/Response split state with responsive small-window behavior.
-* Added keyboard-first navigation and actions, including Quick Open, Send, Save, close, focus, and request-tab navigation shortcuts.
-* Added global REST, WebSocket, and gRPC mock scenarios with Incoming, Standby, Periodic, Scheduled, and Hybrid execution triggers.
-* Added detachable Mocking, Request, and Response windows with Back to Main / Back to Request reattachment and persisted multi-monitor layout.
-* Hardened dirty-state guards, cross-window persistence, response mirroring, pending REST mock limits, and release/runtime regression coverage.
+* File-based gRPC mock scenarios with focused per-method editing, periodic delivery, and manual sends.
+* Progressive scenario indexing and revision-checked updates to a running Native gRPC mock.
+* Proto ZIP import, hardened Electron IPC, and main-process REST requests.
+* gRPC service and scenario references, REST OpenAPI 3.1, and static documentation.
 
 See [CHANGELOG.md](./CHANGELOG.md) for the full release history.
 

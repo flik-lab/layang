@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.0
+
+### Added
+
+* Import multi-file proto ZIP archives and preserve their import paths.
+* Publish readable gRPC service and scenario references, REST OpenAPI 3.1, and static documentation.
+
+### Changed
+
+* Store each gRPC mock scenario in its own canonical YAML file and migrate legacy bundles with a backup.
+* Edit scenarios and configure stream delivery in the per-method Mocking panel.
+* Index large scenario catalogs progressively and apply the selected Native scenario while clients stay connected.
+* Harden Electron IPC and run REST requests through the main process.
+* Apply and send Gateway scenario revisions atomically, with cancellation and stream backpressure.
+
 ## 1.1.6
 
 ### Added
