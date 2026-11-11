@@ -31,9 +31,12 @@ The deterministic performance regression fixtures live in `tests/fixtures/perfor
 They model a 1,000-track response and a large Mocking catalog with 100 Proto revisions, 2,000 RPC methods, and 5,000 scenarios.
 
 ```bash
-node --test tests/mock-catalog-worker-runtime.test.cjs tests/mock-catalog-performance-regression.test.cjs
-node --test tests/grpc-mock-large-catalog-ui-regression.test.cjs tests/sidebar-navigation-hot-path-regression.test.cjs
+node --test tests/suite-mock-catalog.test.cjs tests/suite-performance-runtime.test.cjs
+node --test tests/suite-pr00-pr01.test.cjs
+node --expose-gc scripts/benchmarks/mock-baseline.cjs --scenario-count 5000 --payload-kb 1 --samples 12 --warmup 3 --output benchmarks/baseline/mock-5000-1kb.json
 ```
+
+Run `benchmarks/README.md` for workload configuration, process-isolated Electron profiling, and metrics interpretation. Synthetic Node timings below are **not** UI navigation benchmarks.
 
 Phase budgets:
 

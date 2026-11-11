@@ -1,5 +1,6 @@
 "use client";
 
+import { readProtoImportFiles } from "../proto-library/read-proto-import-files";
 import {
   useCallback,
   useEffect,
@@ -142,9 +143,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchSidebarModel }) {
     handleProtoFiles,
     hydrated,
     importExampleFile,
-    importMockScenarioFile,
     importWorkspaceFiles,
-    mockScenarioInputRef,
     mockSelectedMethodKey,
     setMockSelectedMethodKey,
     openAddCollectionDialog,
@@ -438,17 +437,10 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchSidebarModel }) {
   ) {
     if (!files || files.length === 0) return;
     try {
-      const selected = Array.from(files).filter((file) => file.name.toLowerCase().endsWith(".proto"));
-      if (selected.length === 0) throw new Error("Select one or more .proto files.");
-      const sources = await Promise.all(
-        selected.map(async (file) => ({
-          name: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name,
-          text: await file.text(),
-        })),
-      );
+      const { sources, archiveName } = await readProtoImportFiles(files);
       loadProtoFiles(sources);
       const firstPath = sources[0]?.name.replaceAll("\\", "/") ?? "Proto Schema";
-      const schemaName = firstPath.includes("/") ? firstPath.split("/")[0] : firstPath.replace(/\.proto$/i, "");
+      const schemaName = archiveName || (firstPath.includes("/") ? firstPath.split("/")[0] : firstPath.replace(/\.proto$/i, ""));
       const assessment = assessProtoLibraryImport(protoLibraries, sources);
       if (!assessment) {
         const imported = createProtoLibraryFromImport(schemaName || "Proto Schema", "Revision 1", sources);
@@ -625,19 +617,11 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchSidebarModel }) {
         onChange={(event) => void importExampleFile(event.target.files)}
       />
       <input
-        ref={mockScenarioInputRef}
-        hidden
-        multiple
-        type="file"
-        accept=".json,.yaml,.yml"
-        onChange={(event) => void importMockScenarioFile(event.target.files)}
-      />
-      <input
         ref={globalProtoFileInputRef}
         hidden
         multiple
         type="file"
-        accept=".proto,text/x-protobuf"
+        accept=".proto,.zip,text/x-protobuf,application/zip"
         onChange={(event) => void reviewGlobalProtoFiles(event.target.files, "schemas", "")}
       />
       <input
@@ -944,6 +928,10 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchSidebarModel }) {
             {sideSection === "services" && (
               <Box sx={{ py: 0.35 }}>
                 <MockingSidebar
+                  mockServer={ctx.mockServer}
+                  protoRuntimeRegistry={ctx.protoRuntimeRegistry}
+                  protoLibraries={ctx.protoLibraries}
+                  workspaceKey={ctx.workspaceFolderPath || "unsaved"}
                   running={Boolean(ctx.mockServerStatus?.running)}
                   selectedMethodKey={mockSelectedMethodKey}
                   serviceProtocol={serviceProtocol}
@@ -1077,7 +1065,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchSidebarModel }) {
       )}
 
       <Menu anchorEl={protoImportAnchor} open={Boolean(protoImportAnchor)} onClose={() => setProtoImportAnchor(null)}>
-        <MenuItem onClick={() => openGlobalProtoImporter("files")}>Import files</MenuItem>
+        <MenuItem onClick={() => openGlobalProtoImporter("files")}>Import files or ZIP</MenuItem>
         <MenuItem onClick={() => openGlobalProtoImporter("folder")}>Import folder</MenuItem>
       </Menu>
 

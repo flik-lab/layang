@@ -1,5 +1,6 @@
 "use client";
 
+import { readProtoImportFiles } from "../proto-library/read-proto-import-files";
 import {
   useEffect,
   useCallback,
@@ -632,6 +633,9 @@ export function ProtoExplorerPanel({
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateFiles, setUpdateFiles] = useState<ProtoSourceFile[]>([]);
   const [updateError, setUpdateError] = useState("");
+  const [readingProto, setReadingProto] = useState(false);
+  const readingProtoRef = useRef(false);
+  const zipImportAvailable = typeof window !== "undefined" && Boolean(window.electronProtoImport);
   const [updateExistingRequests, setUpdateExistingRequests] = useState(true);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteLibraryId, setDeleteLibraryId] = useState("");
@@ -766,17 +770,12 @@ export function ProtoExplorerPanel({
   }, [resetCreate]);
 
   const readFiles = async (event: ChangeEvent<HTMLInputElement>, mode: "create" | "update") => {
+    const input = event.currentTarget;
+    if (readingProtoRef.current) { input.value = ""; return; }
+    readingProtoRef.current = true;
+    setReadingProto(true);
     try {
-      const selectedFiles = Array.from(event.target.files ?? []).filter((file) =>
-        file.name.toLowerCase().endsWith(".proto"),
-      );
-      if (selectedFiles.length === 0) throw new Error("Select one or more .proto files.");
-      const sources = await Promise.all(
-        selectedFiles.map(async (file) => ({
-          name: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name,
-          text: await file.text(),
-        })),
-      );
+      const { sources, archiveName } = await readProtoImportFiles(input.files);
       if (mode === "create") {
         loadProtoFiles(sources);
         const firstPath = sources[0]?.name.replaceAll("\\", "/") ?? "Proto Schema";
@@ -795,7 +794,7 @@ export function ProtoExplorerPanel({
             })
           : null;
         setCreateFiles(sources);
-        setCreateName((current) => current.trim() || rootName || "Proto Schema");
+        setCreateName((current) => current.trim() || archiveName || rootName || "Proto Schema");
         setCreateAssessment(assessment);
         setCreateRevisionLabel(revisionLabel);
         setCreateRevisionPlan(revisionPlan);
@@ -816,12 +815,14 @@ export function ProtoExplorerPanel({
         setUpdateError(message);
       }
     } finally {
-      event.target.value = "";
+      input.value = "";
+      readingProtoRef.current = false;
+      setReadingProto(false);
     }
   };
 
   const submitCreate = () => {
-    if (createFiles.length === 0) return;
+    if (readingProtoRef.current || createFiles.length === 0) return;
     try {
       onCreateLibrary(createName.trim() || "Proto Schema", "Revision 1", createFiles);
       closeCreate();
@@ -927,17 +928,17 @@ export function ProtoExplorerPanel({
   };
 
   const createSchemaDialog = (
-    <Dialog open={createOpen} onClose={closeCreate} fullWidth maxWidth="xl">
+    <Dialog open={createOpen} onClose={readingProto ? undefined : closeCreate} fullWidth maxWidth="xl">
       <DialogTitle>Add proto schema</DialogTitle>
       <DialogContent>
         <Stack spacing={1.15} sx={{ pt: 0.5 }}>
           <Typography variant="body2" color="text.secondary">
-            Choose proto files or a folder.
+            {zipImportAvailable ? "Choose proto files, a folder, or a ZIP archive." : "Choose proto files or a folder."}
           </Typography>
           <input
             ref={createFileInputRef}
             type="file"
-            accept=".proto,text/x-protobuf"
+            accept={zipImportAvailable ? ".proto,.zip,text/x-protobuf,application/zip" : ".proto,text/x-protobuf"}
             multiple
             hidden
             onChange={(event) => void readFiles(event, "create")}
@@ -952,13 +953,14 @@ export function ProtoExplorerPanel({
             onChange={(event) => void readFiles(event, "create")}
           />
           <Stack direction="row" spacing={0.75}>
-            <Button variant="outlined" onClick={() => createFileInputRef.current?.click()}>
-              Choose files
+            <Button variant="outlined" disabled={readingProto} onClick={() => createFileInputRef.current?.click()}>
+              {zipImportAvailable ? "Choose files or ZIP" : "Choose files"}
             </Button>
-            <Button variant="outlined" onClick={() => createFolderInputRef.current?.click()}>
+            <Button variant="outlined" disabled={readingProto} onClick={() => createFolderInputRef.current?.click()}>
               Choose folder
             </Button>
           </Stack>
+          {readingProto && <Typography role="status" variant="caption">Reading proto sources…</Typography>}
           {createFiles.length > 0 && (
             <>
               <TextField
@@ -1115,22 +1117,23 @@ export function ProtoExplorerPanel({
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button variant="text" onClick={closeCreate}>
+        <Button variant="text" disabled={readingProto} onClick={closeCreate}>
           Cancel
         </Button>
         {!createAssessment && (
-          <Button variant="contained" disabled={createFiles.length === 0} onClick={submitCreate}>
+          <Button variant="contained" disabled={readingProto || createFiles.length === 0} onClick={submitCreate}>
             Add schema
           </Button>
         )}
         {createAssessment?.kind === "revision-candidate" && (
-          <Button variant="outlined" onClick={submitCreate}>
+          <Button variant="outlined" disabled={readingProto} onClick={submitCreate}>
             Create separate schema
           </Button>
         )}
         {createAssessment && (
           <Button
             variant={createAssessment.kind === "revision-candidate" ? "outlined" : "contained"}
+            disabled={readingProto}
             onClick={useExistingSchema}
           >
             {createAssessment.kind === "revision-candidate" ? "Use existing" : "Use existing"}
@@ -1139,6 +1142,7 @@ export function ProtoExplorerPanel({
         {createRevisionPlan && (
           <Button
             variant={createAssessment?.kind === "revision-candidate" ? "contained" : "outlined"}
+            disabled={readingProto}
             onClick={submitCreateRevision}
           >
             Create revision
@@ -1619,7 +1623,7 @@ export function ProtoExplorerPanel({
 
       {createSchemaDialog}
 
-      <Dialog open={updateOpen} onClose={() => setUpdateOpen(false)} fullWidth maxWidth="xl">
+      <Dialog open={updateOpen} onClose={readingProto ? undefined : () => setUpdateOpen(false)} fullWidth maxWidth="xl">
         <DialogTitle>Update {selectedLibrary?.name ?? "proto schema"}</DialogTitle>
         <DialogContent>
           <Stack spacing={1.1} sx={{ pt: 0.5 }}>
@@ -1629,7 +1633,7 @@ export function ProtoExplorerPanel({
             <input
               ref={updateFileInputRef}
               type="file"
-              accept=".proto,text/x-protobuf"
+              accept={zipImportAvailable ? ".proto,.zip,text/x-protobuf,application/zip" : ".proto,text/x-protobuf"}
               multiple
               hidden
               onChange={(event) => void readFiles(event, "update")}
@@ -1644,13 +1648,14 @@ export function ProtoExplorerPanel({
               onChange={(event) => void readFiles(event, "update")}
             />
             <Stack direction="row" spacing={0.75}>
-              <Button variant="outlined" onClick={() => updateFileInputRef.current?.click()}>
-                Choose files
+              <Button variant="outlined" disabled={readingProto} onClick={() => updateFileInputRef.current?.click()}>
+                {zipImportAvailable ? "Choose files or ZIP" : "Choose files"}
               </Button>
-              <Button variant="outlined" onClick={() => updateFolderInputRef.current?.click()}>
+              <Button variant="outlined" disabled={readingProto} onClick={() => updateFolderInputRef.current?.click()}>
                 Choose folder
               </Button>
             </Stack>
+            {readingProto && <Typography role="status" variant="caption">Reading proto sources…</Typography>}
             {updateFiles.length > 0 && (
               <Typography variant="body2">
                 {updateFiles.length} changed file{updateFiles.length === 1 ? "" : "s"} ready.
@@ -1678,8 +1683,8 @@ export function ProtoExplorerPanel({
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setUpdateOpen(false)}>Cancel</Button>
-          <Button variant="contained" disabled={updateFiles.length === 0} onClick={submitUpdate}>
+          <Button disabled={readingProto} onClick={() => setUpdateOpen(false)}>Cancel</Button>
+          <Button variant="contained" disabled={readingProto || updateFiles.length === 0} onClick={submitUpdate}>
             Create revision
           </Button>
         </DialogActions>

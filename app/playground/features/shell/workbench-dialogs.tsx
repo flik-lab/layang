@@ -68,9 +68,7 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchDialogsModel }) {
     applyProtoVersionImportPlan,
     confirmAddCollection,
     confirmAddCollectionRequest,
-    confirmRenameMockScenario,
     confirmSaveCurrentEnvironment,
-    deleteEditingMockScenario,
     docsPreview,
     downloadTextFile,
     envDialogMode,
@@ -80,11 +78,8 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchDialogsModel }) {
     envDraftNativeTarget,
     envDraftGrpcWebUrl,
     envDraftWebSocketUrl,
-    mockScenarioDialogOpen,
-    mockScenarioDraftId,
-    mockScenarioEditing,
-    pendingMockScenarioNavigation,
-    resolvePendingMockScenarioNavigation,
+
+
     importCertificateSettingsFile,
     loggerDraft,
     loggerInfo,
@@ -116,8 +111,6 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchDialogsModel }) {
     setCertificateSettingsOpen,
     setLoggerDraft,
     setLoggerSettingsOpen,
-    setMockScenarioDialogOpen,
-    setMockScenarioDraftId,
     setRequestNameDialogOpen,
     setRequestNameDraft,
     setRequestKindDraft,
@@ -500,32 +493,6 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchDialogsModel }) {
           </Button>
         </DialogActions>
       </Dialog>
-      <Dialog open={mockScenarioDialogOpen} onClose={() => setMockScenarioDialogOpen(false)} fullWidth maxWidth="xs">
-        <DialogTitle>Edit scenario</DialogTitle>
-        <DialogContent sx={{ pt: 1 }}>
-          <Stack spacing={1.2} sx={{ mt: 0.5 }}>
-            <TextField
-              autoFocus
-              size="small"
-              label="Scenario name"
-              value={mockScenarioDraftId}
-              onChange={(event: TextInputChangeEvent) => setMockScenarioDraftId(event.target.value)}
-              placeholder="sayhello-success"
-            />
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button color="error" onClick={deleteEditingMockScenario} disabled={!mockScenarioEditing}>
-            Delete
-          </Button>
-          <Box sx={{ flex: 1 }} />
-          <Button onClick={() => setMockScenarioDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={confirmRenameMockScenario} disabled={!mockScenarioEditing}>
-            Save
-          </Button>
-        </DialogActions>
-      </Dialog>
-
       <Dialog open={collectionDialogOpen} onClose={() => setCollectionDialogOpen(false)} fullWidth maxWidth="xs">
         <DialogTitle>Add collection</DialogTitle>
         <DialogContent sx={{ pt: 1 }}>
@@ -1574,29 +1541,6 @@ export function WorkbenchDialogs(props: { ctx: WorkbenchDialogsModel }) {
           <Button onClick={() => setCertificateSettingsOpen(false)}>Close</Button>
           <Button variant="contained" onClick={() => void saveCertificateSettings()}>
             Save
-          </Button>
-        </DialogActions>
-      </Dialog>
-      <Dialog
-        open={Boolean(pendingMockScenarioNavigation)}
-        onClose={() => resolvePendingMockScenarioNavigation("cancel")}
-        fullWidth
-        maxWidth="xs"
-      >
-        <DialogTitle>Unsaved mock changes</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" color="text.secondary">
-            The current mock scenario has unsaved changes. Save them before switching scenarios, discard them, or
-            cancel the switch.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => resolvePendingMockScenarioNavigation("cancel")}>Cancel</Button>
-          <Button color="error" onClick={() => resolvePendingMockScenarioNavigation("discard")}>
-            Discard
-          </Button>
-          <Button variant="contained" onClick={() => resolvePendingMockScenarioNavigation("save")}>
-            Save &amp; Switch
           </Button>
         </DialogActions>
       </Dialog>

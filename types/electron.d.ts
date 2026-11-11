@@ -360,8 +360,42 @@ export interface LayangGitCommitDetails extends LayangGitLogEntry {
   diff: string;
 }
 
+type LayangScenarioExecution = import("../app/playground/shared/workbench-types").MockExecutionConfig;
+type LayangScenarioDeliverySettings = {
+  mode: Exclude<LayangScenarioExecution["mode"], "scheduled">;
+  intervalMs: number;
+  loop: boolean;
+  maxExecutions: number;
+};
+
+type LayangScenarioIndexItem = {
+  methodKey: string; scenarioId: string; fileRef: string; name: string; enabled: boolean;
+  executionMode: string; responseCount: number; revision: number; contentHash: string;
+  execution?: LayangScenarioExecution;
+  size: number; mtimeMs: number;
+};
+
+type LayangScenarioIndexResult = { ok: boolean; cached?: boolean; items?: LayangScenarioIndexItem[]; error?: string };
+
 declare global {
   interface Window {
+    electronHttp?: {
+      isAvailable: boolean;
+      invoke: (payload: {
+        runId: string;
+        url: string;
+        method: string;
+        headers: Record<string, string>;
+        body?: string;
+      }) => Promise<{
+        status: number;
+        ok: boolean;
+        statusText: string;
+        headers: Record<string, string>;
+        body: string;
+      }>;
+      cancel: (runId: string) => Promise<{ cancelled: boolean }>;
+    };
     electronRuntime?: {
       isAvailable: boolean;
       mode: "main" | "utility";
@@ -492,6 +526,64 @@ declare global {
       reset?: () => Promise<LayangAppZoomInfo>;
       onChanged?: (callback: (info: LayangAppZoomInfo) => void) => () => void;
     };
+    electronProtoImport?: {
+      readZip: (bytes: Uint8Array) => Promise<{
+        ok: boolean; files?: Array<{ name: string; text: string }>; error?: string;
+      }>;
+    };
+    electronMockScenarioStore?: {
+      isAvailable: boolean;
+      list: (directoryPath: string) => Promise<LayangScenarioIndexResult>;
+      readCachedIndex: (directoryPath: string) => Promise<LayangScenarioIndexResult>;
+      reveal: (directoryPath: string, ref: { methodKey: string; scenarioId: string }) => Promise<{ ok: boolean; error?: string }>;
+      onIndexProgress: (callback: (directoryPath: string, items: LayangScenarioIndexItem[]) => void) => () => void;
+      read: (directoryPath: string, ref: {methodKey: string; scenarioId: string}) => Promise<{
+        ok: boolean; scenario?: {sourceText: string; revision: number; contentHash: string; execution?: LayangScenarioExecution}; error?: string;
+      }>;
+      saveExecution: (directoryPath: string, ref: { methodKey: string; scenarioId: string },
+        settings: LayangScenarioDeliverySettings, expectedRevision: number, expectedHash: string, includeSource: boolean) => Promise<{
+          ok: boolean; saved?: { revision: number; contentHash: string; execution?: LayangScenarioExecution; sourceText?: string };
+          conflict?: { revision: number; contentHash: string }; error?: string;
+        }>;
+      save: (directoryPath: string, ref: {methodKey: string; scenarioId: string}, sourceText: string,
+        expectedRevision: number, expectedHash: string) => Promise<{
+          ok: boolean; saved?: {revision: number; contentHash: string; execution?: LayangScenarioExecution};
+          conflict?: {revision: number; contentHash: string}; error?: string;
+        }>;
+      delete: (directoryPath: string, ref: {methodKey: string; scenarioId: string},
+        expectedRevision: number, expectedHash: string) => Promise<{
+          ok: boolean; conflict?: {revision: number; contentHash: string}; error?: string;
+        }>;
+      sendNative: (directoryPath: string, ref: {methodKey: string; scenarioId: string},
+        expectedSavedRevision: number, expectedSavedHash: string,
+        expectedRuntimeRevision: number, expectedRuntimeHash: string, expectedConfigVersion: number,
+        options?: { responseIndex?: number; sendAll?: boolean }) => Promise<{
+          ok: boolean; error?: string; message?: string; matched?: number; sent?: number;
+        }>;
+      applyNative: (directoryPath: string, ref: {methodKey: string; scenarioId: string},
+        expectedRevision: number, expectedHash: string) => Promise<{
+          ok: boolean; applied?: {appliedRevision:number;scenarioContentHash:string;configVersion:number;scenarioCount:number;snapshotHash:string};
+          error?: string;
+        }>;
+      applyGateway: (directoryPath: string, profileId: string, ref: {methodKey:string;scenarioId:string},
+        expectedRevision:number, expectedHash:string) => Promise<{
+          ok:boolean; applied?:{appliedRevision:number;scenarioContentHash:string;configVersion:number;scenarioCount:number;snapshotHash:string};error?:string;
+        }>;
+      sendGateway: (directoryPath: string, profileId: string, ref:{methodKey:string;scenarioId:string},
+        expectedSavedRevision:number, expectedSavedHash:string,
+        expectedRuntimeRevision:number, expectedRuntimeHash:string, expectedConfigVersion:number) => Promise<{
+          ok:boolean; message?:string;matched?:number;sent?:number;backpressured?:number;error?:string;
+        }>;
+      applySendGateway: (directoryPath:string, profileId:string, ref:{methodKey:string;scenarioId:string},
+        expectedRevision:number, expectedHash:string) => Promise<{
+          ok:boolean; applied?:{appliedRevision:number;scenarioContentHash:string;configVersion:number};
+          delivery?:{sent:number;matched:number;backpressured:number;message?:string};error?:string;
+        }>;
+      migrate: (directoryPath: string, confirm?: boolean) => Promise<{
+        ok: boolean; dryRun?: boolean; methods?: number; scenarios?: number; migrated?: number;
+        backupPath?: string; legacyPreserved?: boolean; error?: string;
+      }>;
+    };
     electronWorkspace?: {
       isAvailable: boolean;
       createFolder?: (
@@ -513,7 +605,6 @@ declare global {
         cleanupWarning?: string;
         error?: string;
       }>;
-      readMockServer?: (directoryPath: string) => Promise<{ ok: boolean; mockServer?: unknown; error?: string }>;
       getDefaultFolder?: () => Promise<{ ok: boolean; directoryPath?: string; error?: string }>;
       ensureDefaultFolder?: (
         bundle: unknown,
@@ -887,6 +978,7 @@ declare global {
         workspaceDirectory?: string;
         uiRuntimeRevision?: number;
         mockServerUpdatedAt?: string;
+        scenarioContentHash?: string;
       }) => Promise<{
         ok: boolean;
         port?: number;
@@ -901,6 +993,9 @@ declare global {
         activeScenarioIds?: Record<string, string>;
         enabledMethods?: Record<string, boolean>;
         configVersion?: number;
+        appliedRevision?: number;
+        scenarioContentHash?: string;
+        source?: string;
         requestLog?: GrpcMockRequestLog[];
         updatedAt?: string;
         message?: string;
@@ -936,6 +1031,7 @@ declare global {
         workspaceDirectory?: string;
         uiRuntimeRevision?: number;
         mockServerUpdatedAt?: string;
+        scenarioContentHash?: string;
       }) => Promise<{
         ok: boolean;
         running?: boolean;
@@ -952,10 +1048,15 @@ declare global {
         activeScenarioIds?: Record<string, string>;
         enabledMethods?: Record<string, boolean>;
         configVersion?: number;
+        appliedRevision?: number;
+        scenarioContentHash?: string;
+        source?: string;
         requestLog?: GrpcMockRequestLog[];
         updatedAt?: string;
         message?: string;
         error?: string;
+        ignoredStaleUpdate?: boolean;
+        unchanged?: boolean;
       }>;
       sendStream?: (payload: {
         serviceName: string;
@@ -963,12 +1064,20 @@ declare global {
         scenarioId?: string;
         responseIndex?: number;
         sendAll?: boolean;
+        expectedUiRuntimeRevision?: number;
+        expectedScenarioContentHash?: string;
+        expectedConfigVersion?: number;
       }) => Promise<{
         ok: boolean;
         running?: boolean;
         matched?: number;
         sent?: number;
         backpressured?: number;
+        scenarioId?: string;
+        responseIndex?: number;
+        appliedRevision?: number;
+        scenarioContentHash?: string;
+        configVersion?: number;
         activeLivePushStreamCount?: number;
         livePushStreams?: Array<{
           serviceName: string;
@@ -994,6 +1103,9 @@ declare global {
         activeScenarioIds?: Record<string, string>;
         enabledMethods?: Record<string, boolean>;
         configVersion?: number;
+        appliedRevision?: number;
+        scenarioContentHash?: string;
+        source?: string;
         activeLivePushStreamCount?: number;
         livePushStreams?: Array<{
           serviceName: string;

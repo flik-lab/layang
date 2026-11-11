@@ -604,7 +604,7 @@ async function invokeRestRequest(options: {
       bodyType === "form-url-encoded" ? "application/x-www-form-urlencoded" : "application/json";
   }
   options.onEvent({ type: "log", level: "info", message: `HTTP ${method}`, details: { url: requestUrl.toString() } });
-  const response = await fetch(requestUrl.toString(), {
+  const response = await fetchRestResponse(requestUrl.toString(), {
     method,
     headers,
     body: hasBody ? options.body : undefined,
@@ -638,6 +638,44 @@ async function invokeRestRequest(options: {
     completedAt: completedAt.toISOString(),
     transport: "rest",
   };
+}
+
+type RestFetchResponse = Pick<Response, "status" | "ok" | "statusText" | "headers" | "text">;
+
+async function fetchRestResponse(url: string, init: {
+  method: string;
+  headers: Record<string, string>;
+  body?: string;
+  signal: AbortSignal;
+}): Promise<RestFetchResponse> {
+  const desktop = typeof window === "undefined" ? undefined : window.electronHttp;
+  if (!desktop?.isAvailable) return fetch(url, init);
+  if (init.signal.aborted) throw new DOMException("Aborted", "AbortError");
+  const runId = createId();
+  const cancel = () => { void desktop.cancel(runId).catch(() => undefined); };
+  init.signal.addEventListener("abort", cancel, { once: true });
+  try {
+    const result = await desktop.invoke({
+      runId,
+      url,
+      method: init.method,
+      headers: init.headers,
+      ...(init.body === undefined ? {} : { body: init.body }),
+    });
+    if (init.signal.aborted) throw new DOMException("Aborted", "AbortError");
+    return {
+      status: result.status,
+      ok: result.ok,
+      statusText: result.statusText,
+      headers: new Headers(result.headers),
+      text: async () => result.body,
+    };
+  } catch (error) {
+    if (init.signal.aborted) throw new DOMException("Aborted", "AbortError");
+    throw error;
+  } finally {
+    init.signal.removeEventListener("abort", cancel);
+  }
 }
 
 async function invokeWebSocketRequest(options: {

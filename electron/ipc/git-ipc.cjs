@@ -1,7 +1,7 @@
 "use strict";
 
 const path = require("node:path");
-const { ipcMain } = require("electron");
+const { ipcMain } = require("../utils/trusted-ipc-main.cjs");
 const git = require("../../lib/git-client.cjs");
 const gitUx = require("../../lib/git-ux-v2.cjs");
 

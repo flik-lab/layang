@@ -95,7 +95,8 @@ const __suiteBaseDir = __dirname;
           const runtime = read("app/playground/features/mock-server/catalog/mockCatalogRuntime.ts");
           const types = read("app/playground/features/mock-server/catalog/mockCatalog.types.ts");
           assert.doesNotMatch(runtime, /scenarioText\s*,/);
-          assert.match(runtime, /catalogScenarios/);
+          assert.doesNotMatch(runtime, /mockServer\.methodFiles|scenarioText/);
+          assert.match(runtime, /await readProtoCatalog/);
           assert.doesNotMatch(types, /MockCatalogScenarioFileInput[\s\S]*scenarioText:\s*string/);
           assert.match(types, /scenarioCount:\s*number/);
         });
@@ -224,30 +225,16 @@ const __suiteBaseDir = __dirname;
     test("Mocking auto-discovers active workspace Proto schemas", () => {
       const helper = read("app/playground/features/mock-server/mock-proto-sources.ts");
       const services = read("app/playground/features/services/services-workspace.tsx");
-      const runtimeSync = read("app/playground/features/mock-server/use-mock-runtime-sync.ts");
       const actions = read("app/playground/features/mock-server/use-grpc-mock-editor-actions.ts");
     
       assert.match(helper, /library\.lifecycle === "archived"/);
       assert.match(helper, /library\.defaultVersionId/);
       assert.match(services, /resolveEffectiveMockProtoSources\(mockServer\.protoSources, protoLibraries\)/);
       assert.match(services, /Synced automatically from workspace Proto Schemas/);
-      assert.match(runtimeSync, /resolveEffectiveMockProtoSources\(mockServer\.protoSources, protoLibraries\)/);
-      assert.match(actions, /resolveEffectiveMockProtoSources\(project\.protoSources, protoLibraries\)/);
+      assert.match(read("app/playground/features/mock-server/resolve-runtime-schema.ts"), /resolveEffectiveMockProtoSources\(project\.protoSources, context\.protoLibraries\)/);
       assert.match(actions, /Import at least one Proto schema before starting gRPC Mock/);
     });
     
-    test("Mock split handles stay visibly gray before hover", () => {
-      const split = read("app/playground/features/mock-server/workspace/MockScenarioSplitPane.tsx");
-      const services = read("app/playground/features/services/services-workspace.tsx");
-    
-      for (const source of [split, services]) {
-        assert.match(source, /height: 10/);
-        assert.match(source, /bgcolor: "var\(--muted\)"/);
-        assert.match(source, /borderTop: "1px solid var\(--border-strong\)"/);
-        assert.match(source, /bgcolor: "var\(--muted-foreground\)"/);
-        assert.match(source, /cursor: "row-resize"/);
-      }
-    });
     
   });
 }

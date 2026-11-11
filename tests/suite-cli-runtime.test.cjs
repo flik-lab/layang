@@ -22,7 +22,7 @@ const __suiteBaseDir = __dirname;
     );
     
     test("CLI mock runtime watcher is declared after the gRPC mock controller setters exist", () => {
-      const controllerIndex = source.indexOf("const grpcMock = useGrpcMockController({");
+      const controllerIndex = source.indexOf("const grpcMock = useGrpcMockController(");
       const setterIndex = source.indexOf("setMockServerStatus,", controllerIndex);
       const watcherIndex = source.indexOf("window.electronCli?.mockRuntimeStatus", controllerIndex);
     

@@ -1,6 +1,7 @@
 "use strict";
 
-const { ipcMain, shell } = require("electron");
+const { shell } = require("electron");
+const { ipcMain } = require("../utils/trusted-ipc-main.cjs");
 const {
   allowedLevels,
   applyLoggerSettings,

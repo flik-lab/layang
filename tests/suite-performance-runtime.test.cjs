@@ -257,16 +257,16 @@ const __suiteBaseDir = __dirname;
       assert.match(workspace, /frozenMessageIds/);
     });
     
-    test("mock runtime update avoids renderer-side giant scenario parsing and stringify signatures", () => {
-      const runtimeSync = read("app/playground/features/mock-server/use-mock-runtime-sync.ts");
+    test("canonical runtime compilation hydrates scenarios only at privileged boundary", () => {
+      const shell = read("app/playground/features/shell/use-workbench-container-model.tsx");
+      const canonical = read("lib/grpc-canonical-runtime.cjs");
       const actions = read("app/playground/features/mock-server/use-grpc-mock-editor-actions.ts");
-      assert.doesNotMatch(runtimeSync, /parseAllMockScenarioFiles/);
-      assert.doesNotMatch(runtimeSync, /scenarios:\s*parsed\.bundle\.scenarios/);
-      assert.match(runtimeSync, /methodFiles/);
+      assert.doesNotMatch(shell, /useMockRuntimeSync\(/);
+      assert.match(canonical, /repo\.buildRuntimeSnapshot\(/);
+      assert.match(canonical, /methodFiles: _oldFiles/);
       assert.doesNotMatch(actions, /const parsed = parseAllMockScenarioFiles\(effectiveMockServer/);
-      assert.match(actions, /methodFiles:/);
     });
-    
+
     test("performance p95 uses a rolling time window instead of sticky session samples", () => {
       const source = read("app/playground/shared/performance/performance-stats.store.ts");
       assert.match(source, /DURATION_WINDOW_MS/);
@@ -283,11 +283,11 @@ const __suiteBaseDir = __dirname;
       assert.match(source, /publish\(\{ orderedMessageIds: ordered, latestMessageId, controlEvents: nextControls \}, true\)/);
     });
     
-    test("Electron mock runtime owns scenario parsing for methodFiles payloads", () => {
+    test("Electron mock runtime consumes compiled canonical scenarios, not legacy methodFiles", () => {
       const service = read("electron/services/grpc-mock-server.cjs");
-      assert.match(service, /parseScenarioBundle/);
       assert.match(service, /resolveRuntimeScenarios/);
-      assert.match(service, /payload\?\.methodFiles/);
+      assert.match(service, /Array\.isArray\(payload\?\.scenarios\)/);
+      assert.doesNotMatch(service, /parseScenarioBundle|payload\?\.methodFiles/);
     });
     
   });

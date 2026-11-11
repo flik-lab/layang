@@ -32,7 +32,6 @@ type ActionContext = Record<string, any> & {
   loaded: LoadedProto | null;
   protoFiles: ProtoSourceFile[];
   allMockScenarios: MockScenario[];
-  currentMockScenarios: MockScenario[];
   metadata: MetadataPair[];
   environments: EnvironmentConfig[];
   selectedMethod: RpcMethodInfo | null;
@@ -64,7 +63,7 @@ export function useDocsActions(ctx: ActionContext) {
     createId,
     createRequestSession,
     currentExamples,
-    currentMockScenarios,
+
     docResults,
     downloadTextFile,
     environments,
@@ -370,7 +369,7 @@ export function useDocsActions(ctx: ActionContext) {
         examples: currentExamples,
         protoFiles,
         latestResult: activeDocsResult,
-        mockScenarios: currentMockScenarios,
+        mockScenarios: [],
         currentRequestJson: requestJson,
         currentMetadata: metadata,
       }),

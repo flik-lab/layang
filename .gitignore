@@ -4,6 +4,7 @@ node_modules/
 # Next.js
 .next/
 out/
+public/workers/proto-catalog.worker.js
 
 # Electron/Electron Forge
 dist/
@@ -30,6 +31,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 *.log
+/reports/
 
 # OS/editor
 .DS_Store

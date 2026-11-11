@@ -175,7 +175,7 @@ const __suiteBaseDir = __dirname;
       const detached = read("app/playground/features/windows/detached-window-surfaces.tsx");
       const controller = read("app/playground/features/workspace/use-workspace-controller.ts");
       assert.match(detached, /broadcast\?\.\("workspace:handoff"/);
-      assert.match(detached, /mockScenarioEditorDirty && !ctx\.saveMockScenarioEditorDraft\(\)/);
+      assert.match(detached, /if \(saveScenario && !\(await saveScenario\(\)\)\) return;\s*await closeDetachedAfterHandoff/);
       assert.match(controller, /event\?\.topic === "workspace:handoff"/);
     });
     
@@ -455,7 +455,10 @@ const __suiteBaseDir = __dirname;
       assert.equal(version.files[0].name, "greeter.proto");
       assert.equal(workspace.project.mockServer.enabledMethods["demo.Greeter/SayHello"], true);
       assert.equal(workspace.project.mockServer.selectedScenarioIds["demo.Greeter/SayHello"], "hello");
-      assert.equal(workspace.project.mockServer.methodFiles["demo.Greeter/SayHello"] !== undefined, true);
+      assert.deepEqual(workspace.project.mockServer.methodFiles, {});
+      const { GrpcScenarioRepository } = require("../lib/grpc-scenario-repository.cjs");
+      const index = await new GrpcScenarioRepository(root).listMetadata();
+      assert.ok(index.items.some((item) => item.scenarioId === "hello"), "legacy body should migrate to v3");
     });
     
     test("invalid legacy gRPC mock source aborts migration before layang.yml is committed", async (t) => {

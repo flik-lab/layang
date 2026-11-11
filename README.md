@@ -130,7 +130,7 @@ Server-streaming scenarios support:
 
 Manual Send can publish a saved scenario response to an active Live Push stream without closing the connection.
 
-If a scenario file is changed outside Layang, use **Update from file** to reload it into the editor and running mock server.
+For gRPC, select a scenario under **Services → gRPC → Scenarios**, save its revision, and explicitly **Apply Native** or **Apply Gateway** to activate it. Manual Send requires an acknowledged active revision. External file changes are detected through the revision/content-hash check. Historical `mocks/grpc/methods/*.mock.yml` files are converted once, with verified backups, into independent file-based v3 documents. See [Canonical gRPC Scenarios](./docs/FILE_BASED_GRPC_SCENARIOS.md).
 
 ## Web Access
 
@@ -207,7 +207,7 @@ layang docs:check ./workspace
 layang docs:build ./workspace --check
 ```
 
-Generated wiki output is written to `docs/wiki-export/`.
+Generated Markdown and REST OpenAPI are written to `docs/published/`. The static site is written to `docs/site/`, and the wiki bundle to `docs/wiki-export/`. See the [workspace publishing guide](docs/WORKSPACE_DOCUMENTATION.md) for the output layout, source links, and scenario catalog.
 
 ## CLI
 

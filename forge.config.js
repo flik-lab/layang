@@ -43,6 +43,8 @@ export default {
       /^\/docs($|\/)/,
       /^\/github-pages($|\/)/,
       /^\/tests($|\/)/,
+      /^\/reports($|\/)/,
+      /^\/benchmarks($|\/)/,
       /^\/layangMock\.rar$/,
       /^\/tsconfig\.tsbuildinfo$/,
     ],

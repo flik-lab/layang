@@ -1,4 +1,5 @@
 import type * as protobuf from "protobufjs";
+import { createBoundedRevisionCache } from "@/lib/bounded-revision-cache.mjs";
 import type { RpcMethodInfo } from "@/lib/types";
 import { toErrorMessage } from "../../shared/error-utils";
 import { isPlainRecord } from "../../shared/json-utils";
@@ -728,8 +729,21 @@ export function safeMockScenarioRelativePath(method: RpcMethodInfo, scenarioId: 
   return `${safeMockFileBaseName(method)}/${scenarioName}.${ext}`;
 }
 
+// Cache only recently used parsed method files, never an unbounded project-sized
+// collection. Revision is the exact immutable source text, not length/mtime:
+// same-length edits must invalidate the parsed scenario immediately.
+const parsedMockMethodFileCache = createBoundedRevisionCache<MockParseResult>({
+  maxEntries: 96,
+  maxWeight: 24 * 1024 * 1024,
+});
+
+/** Frees parsed scenario bodies when switching to another workspace. */
+export function clearParsedMockMethodFileCache(): void {
+  parsedMockMethodFileCache.clear();
+}
+
 /**
- * Parses all split per-method scenario files into one runtime bundle while preserving per-file defaults.
+ * Parses split per-method files into a runtime bundle with bounded incremental reuse.
  */
 export function parseAllMockScenarioFiles(project: MockServerProject, methods: RpcMethodInfo[]): MockParseResult {
   try {
@@ -739,12 +753,20 @@ export function parseAllMockScenarioFiles(project: MockServerProject, methods: R
       return parseMockScenarioText(project.scenarioText, project.format, project.port);
     const scenarios: MockScenario[] = [];
     const selectedScenarioIds: MockScenarioSelection = { ...project.selectedScenarioIds };
-    const keys = methodList.length ? methodList.map((method) => methodKey(method)) : Object.keys(files);
+    const methodsByKey = new Map(methodList.map((method) => [methodKey(method), method]));
+    const keys = methodList.length ? [...methodsByKey.keys()] : Object.keys(files);
     for (const key of keys) {
-      const method = methodList.find((item) => methodKey(item) === key) ?? null;
+      const method = methodsByKey.get(key) ?? null;
       const file = method ? getMockMethodScenarioFile(project, method) : files[key];
       if (!file) continue;
-      const parsed = parseMockScenarioText(file.scenarioText, file.format, project.port);
+      const cacheKey = `${key}::${file.format}::${project.port}`;
+      let parsed = parsedMockMethodFileCache.get(cacheKey, file.scenarioText);
+      if (!parsed) {
+        parsed = parseMockScenarioText(file.scenarioText, file.format, project.port);
+        // Approximation includes the input string and expanded parsed objects.
+        // Extremely large method files bypass the cache and cannot pin UI heap.
+        parsedMockMethodFileCache.set(cacheKey, file.scenarioText, parsed, file.scenarioText.length * 6);
+      }
       if (parsed.ok === false) return { ok: false, error: `${key}: ${parsed.error}` };
       const methodScenarios = method
         ? parsed.bundle.scenarios.filter(

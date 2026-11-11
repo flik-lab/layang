@@ -47,19 +47,6 @@ const __suiteBaseDir = __dirname;
       assert.match(services, /toggleWebRuntime/);
     });
     
-    test("legacy Web Access workspace state opens the focused gRPC workspace", () => {
-      const services = read("app/playground/features/services/services-workspace.tsx");
-    
-      assert.match(
-        services,
-        /serviceProtocol === "grpc-mock" \|\| serviceProtocol === "web-access"[\s\S]*?<GrpcFocusedMockWorkspace ctx=\{ctx\} \/>/,
-      );
-      assert.match(services, /function GrpcFocusedMockWorkspace/);
-      assert.match(services, /function MockRuntimeStrip/);
-      assert.match(services, /label: "Web Access"/);
-      assert.match(services, /Scenario/);
-      assert.match(services, /FeatureCodeTextField/);
-    });
     
     test("portal layers keep notifications above dialogs, menus, and tooltips", () => {
       const compat = read("components/shadcn/compat.tsx");
@@ -75,7 +62,7 @@ const __suiteBaseDir = __dirname;
     });
     
     test("Web Access uses centered padded sections instead of edge-aligned controls", () => {
-      const services = read("app/playground/features/services/services-workspace.tsx");
+      const services = read("app/playground/features/services/web-access-panel.tsx");
       const security = read("app/playground/features/services/web-access-security-panel.tsx");
     
       assert.match(services, /const webAccessPageSx = \{[\s\S]*?maxWidth: 960[\s\S]*?mx: "auto"/);
@@ -93,7 +80,7 @@ const __suiteBaseDir = __dirname;
     
     
     test("Web Access protocol changes do not silently rewrite the user port", () => {
-      const services = read("app/playground/features/services/services-workspace.tsx");
+      const services = read("app/playground/features/services/web-access-panel.tsx");
       const protocolBlock = services.slice(services.indexOf('inputProps={{ "aria-label": "Browser protocol" }}'), services.indexOf('title="HTTPS certificate"'));
       assert.doesNotMatch(protocolBlock, /port:\s*Number\(draftWeb\.port\)/);
       assert.match(services, /Recommended HTTPS port: 8443/);

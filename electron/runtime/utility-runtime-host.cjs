@@ -25,6 +25,10 @@ function createUtilityRuntimeHost(options = {}) {
   const readyTimeoutMs = Math.max(100, Number(options.readyTimeoutMs) || 5_000);
   const restartDelayMs = Math.max(0, Number(options.restartDelayMs) || 250);
   const maxRestarts = Math.max(0, Math.floor(Number(options.maxRestarts) || 1));
+  const commandTimeoutMs = Number.isFinite(options.commandTimeoutMs)
+    ? Math.max(100, Math.floor(options.commandTimeoutMs)) : 60_000;
+  const maxPendingCommands = Number.isFinite(options.maxPendingCommands)
+    ? Math.max(1, Math.floor(options.maxPendingCommands)) : 128;
   const listeners = new Set();
   const pending = new Map();
   let child = null;
@@ -45,11 +49,15 @@ function createUtilityRuntimeHost(options = {}) {
 
   const rejectPending = (message) => {
     const error = new Error(message);
-    for (const entry of pending.values()) entry.reject(error);
+    for (const entry of pending.values()) {
+      clearTimeout(entry.timer);
+      entry.reject(error);
+    }
     pending.clear();
   };
 
-  const handlePortMessage = (event) => {
+  const handlePortMessage = (event, sourceGeneration) => {
+    if (sourceGeneration !== generation || disposed) return;
     const message = event?.data;
     if (isEventEnvelope(message)) {
       if (message.event === "runtime.ready") ready = true;
@@ -59,7 +67,9 @@ function createUtilityRuntimeHost(options = {}) {
     if (!isResponseEnvelope(message)) return;
     const deferred = pending.get(message.requestId);
     if (!deferred) return;
+    if (deferred.generation !== sourceGeneration) return;
     pending.delete(message.requestId);
+    clearTimeout(deferred.timer);
     if (message.ok) deferred.resolve(message.payload);
     else deferred.reject(new Error(message.error || "Utility runtime command failed."));
   };
@@ -123,7 +133,8 @@ function createUtilityRuntimeHost(options = {}) {
       attachChildLifecycle(runtimeChild);
       const channel = new MessageChannelMain();
       port = channel.port2;
-      port.on("message", handlePortMessage);
+      const attachedGeneration = generation;
+      port.on("message", (event) => handlePortMessage(event, attachedGeneration));
       port.start();
 
       const readyDeferred = createDeferred();
@@ -157,11 +168,33 @@ function createUtilityRuntimeHost(options = {}) {
   };
 
   const invoke = async (type, payload = null) => {
+    if ((disposing || disposed) && type !== "runtime.dispose") {
+      throw new Error("Utility runtime host is shutting down.");
+    }
     if (!ready || !child || !port) await start();
+    if (!ready || !child || !port) throw new Error("Utility runtime is unavailable.");
+    if (pending.size >= maxPendingCommands) {
+      throw new Error(`Utility runtime pending-command limit (${maxPendingCommands}) reached.`);
+    }
     const requestId = `runtime:${Date.now()}:${++requestSequence}`;
     const deferred = createDeferred();
-    pending.set(requestId, deferred);
-    port.postMessage(createCommandEnvelope(requestId, type, payload));
+    const sourceGeneration = generation;
+    const entry = { ...deferred, generation: sourceGeneration, timer: null };
+    entry.timer = setTimeout(() => {
+      if (pending.get(requestId) !== entry) return;
+      pending.delete(requestId);
+      entry.reject(new Error(`Utility runtime command ${type} timed out after ${commandTimeoutMs} ms.`));
+      emit({ protocolVersion: 1, type: "event", event: "runtime.commandTimeout",
+        payload: { command: type, generation: sourceGeneration } });
+    }, commandTimeoutMs);
+    pending.set(requestId, entry);
+    try {
+      port.postMessage(createCommandEnvelope(requestId, type, payload));
+    } catch (error) {
+      pending.delete(requestId);
+      clearTimeout(entry.timer);
+      entry.reject(error);
+    }
     return deferred.promise;
   };
 
@@ -177,6 +210,8 @@ function createUtilityRuntimeHost(options = {}) {
     pid: child?.pid,
     generation,
     restartCount,
+    pendingCommandCount: pending.size,
+    maxPendingCommands,
   });
 
   const dispose = async () => {

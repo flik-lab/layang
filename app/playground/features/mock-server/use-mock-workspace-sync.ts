@@ -10,7 +10,6 @@ type UseWorkspaceFolderAutosaveOptions = {
   workspaceFolderPath: string;
   workspaceAutosaveRef: MutableRefObject<WorkspaceAutosaveState>;
   getWorkspaceExportBundle: () => WorkspaceExportBundle;
-  clearMockServerLocalDirty: () => void;
   dependencies: unknown[];
 };
 
@@ -20,7 +19,6 @@ export function useWorkspaceFolderAutosave({
   workspaceFolderPath,
   workspaceAutosaveRef,
   getWorkspaceExportBundle,
-  clearMockServerLocalDirty,
   dependencies,
 }: UseWorkspaceFolderAutosaveOptions) {
   useEffect(() => {
@@ -29,8 +27,8 @@ export function useWorkspaceFolderAutosave({
       runWhenIdle(() => {
         const bundle = getWorkspaceExportBundle();
         const saveState = workspaceAutosaveRef.current;
-        void enqueueWorkspaceAutosave(saveState, bundle, workspaceFolderPath).then(() => {
-          if (!saveState.pendingBundle && !saveState.saving) clearMockServerLocalDirty();
+        void enqueueWorkspaceAutosave(saveState, bundle, workspaceFolderPath).catch((error) => {
+          console.warn("Workspace autosave pending retry.", error);
         });
       });
     }, delayMs);
@@ -40,7 +38,6 @@ export function useWorkspaceFolderAutosave({
     workspaceFolderPath,
     delayMs,
     getWorkspaceExportBundle,
-    clearMockServerLocalDirty,
     workspaceAutosaveRef,
     ...dependencies,
   ]);

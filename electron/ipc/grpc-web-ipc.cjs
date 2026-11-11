@@ -1,6 +1,7 @@
 "use strict";
 
-const { ipcMain, net } = require("electron");
+const { net } = require("electron");
+const { ipcMain } = require("../utils/trusted-ipc-main.cjs");
 const { TextDecoder } = require("node:util");
 
 const activeGrpcWebCalls = new Map();

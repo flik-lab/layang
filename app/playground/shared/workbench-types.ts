@@ -447,6 +447,11 @@ export type GrpcGatewayLog = {
 
 export type GrpcGatewayStatus = {
   running: boolean;
+  workspaceDirectory?: string;
+  configVersion?: number;
+  appliedRevision?: number;
+  scenarioContentHash?: string;
+  activeManualStreamCount?: number;
   profileId?: string;
   name?: string;
   mode?: GrpcGatewayMode;
@@ -536,6 +541,9 @@ export type MockServerStatus = {
   startedAt?: string;
   updatedAt?: string;
   configVersion?: number;
+  appliedRevision?: number;
+  scenarioContentHash?: string;
+  source?: string;
   activeCallCount?: number;
   pendingTimerCount?: number;
   activeLivePushStreamCount?: number;

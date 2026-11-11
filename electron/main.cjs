@@ -1,10 +1,12 @@
-const { app, autoUpdater, BrowserWindow, ipcMain, dialog, shell } = require("electron");
+const { app, autoUpdater, BrowserWindow, dialog, shell } = require("electron");
+const { ipcMain } = require("./utils/trusted-ipc-main.cjs");
 const { spawn } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const fsSync = require("node:fs");
 const path = require("node:path");
 const { registerGrpcMockIpc } = require("./ipc/grpc-mock-ipc.cjs");
+const { registerGrpcScenarioStoreIpc } = require("./ipc/grpc-scenario-store-ipc.cjs");
 const { registerGrpcGatewayIpc } = require("./ipc/grpc-gateway-ipc.cjs");
 const { registerNativeGrpcIpc } = require("./ipc/native-grpc-ipc.cjs");
 const { registerWebSocketMockIpc } = require("./ipc/ws-mock-ipc.cjs");
@@ -16,10 +18,15 @@ const { registerAppZoomIpc } = require("./ipc/app-zoom-ipc.cjs");
 const { registerGitIpc } = require("./ipc/git-ipc.cjs");
 const { registerCliIpc, stopActiveCliRuns } = require("./ipc/cli-ipc.cjs");
 const { registerRuntimeIpc } = require("./ipc/runtime-ipc.cjs");
+const { registerRestTransportIpc } = require("./ipc/rest-transport-ipc.cjs");
+const { readProtoZip } = require("./services/proto-zip-import.cjs");
 const { registerGrpcWebTransportIpc } = require("./ipc/grpc-web-transport-ipc.cjs");
 const { createUtilityRuntimeHost } = require("./runtime/utility-runtime-host.cjs");
 const { createDisposableTransportRuntimeManager } = require("./runtime/disposable-transport-runtime-manager.cjs");
 const {
+  getMockServerStatus,
+  updateActiveMockServer,
+  sendMockServerStreamMessage,
   normalizeActiveScenarioIds,
   normalizeEnabledMethods,
   normalizeMockBindHost,
@@ -29,7 +36,8 @@ const {
   stopMockServer,
 } = require("./services/grpc-mock-server.cjs");
 const { stopWebSocketMockServer } = require("./services/ws-mock-server.cjs");
-const { stopAllGatewayProfiles } = require("./services/grpc-gateway-server.cjs");
+const { stopAllGatewayProfiles, getGatewayProfileStatus, applyGatewayRuntimeSnapshot,
+  applyAndSendGatewaySnapshot, sendGatewayStreamMessage } = require("./services/grpc-gateway-server.cjs");
 const { stopRestMockServer } = require("./services/rest-mock-server.cjs");
 const { configureLogger, getLogger, registerProcessErrorHandlers } = require("./utils/logger.cjs");
 const { configureCertificateSettings, shouldAllowCertificateError } = require("./utils/certificate-settings.cjs");
@@ -88,6 +96,22 @@ function startApplication() {
   registerWindowIpc();
   registerNativeGrpcIpc({ runtimeMode, getRuntimeHost: () => utilityRuntimeHost });
   registerGrpcMockIpc({ runtimeMode, getRuntimeHost: () => utilityRuntimeHost });
+  registerGrpcScenarioStoreIpc(ipcMain, {
+    revealFile: (file) => shell.showItemInFolder(file),
+    getNativeStatus: () => runtimeMode === "utility"
+      ? utilityRuntimeHost?.invoke("mock.grpc.status")
+      : getMockServerStatus(),
+    updateNative: (payload) => runtimeMode === "utility"
+      ? utilityRuntimeHost?.invoke("mock.grpc.update", payload)
+      : updateActiveMockServer(payload, "ui"),
+    sendNative: (payload) => runtimeMode === "utility"
+      ? utilityRuntimeHost?.invoke("mock.grpc.send", payload)
+      : sendMockServerStreamMessage(payload),
+    getGatewayStatus: (profileId) => getGatewayProfileStatus(profileId),
+    applyGateway: (payload) => applyGatewayRuntimeSnapshot(payload),
+    applySendGateway: (payload) => applyAndSendGatewaySnapshot(payload),
+    sendGateway: (payload) => sendGatewayStreamMessage(payload),
+  });
   registerGrpcGatewayIpc();
   registerWebSocketMockIpc({ runtimeMode, getRuntimeHost: () => utilityRuntimeHost });
   registerRestMockIpc({ runtimeMode, getRuntimeHost: () => utilityRuntimeHost });
@@ -96,6 +120,18 @@ function startApplication() {
   registerAppZoomIpc();
   registerGitIpc();
   registerCliIpc();
+  let readingProtoZip = false;
+  ipcMain.handle("proto:read-zip", async (_event, bytes) => {
+    if (readingProtoZip) return { ok: false, error: "Another proto ZIP is being read." };
+    readingProtoZip = true;
+    try {
+      return { ok: true, files: await readProtoZip(bytes) };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    } finally {
+      readingProtoZip = false;
+    }
+  });
 
   if (process.platform === "win32") {
     app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
@@ -151,6 +187,7 @@ function startApplication() {
     utilityRuntimeHost = createUtilityRuntimeHost();
     transportRuntimeManager = createDisposableTransportRuntimeManager();
     registerRuntimeIpc({ getRuntimeHost: () => utilityRuntimeHost });
+    registerRestTransportIpc();
     registerGrpcWebTransportIpc({ getTransportRuntimeManager: () => transportRuntimeManager });
     await utilityRuntimeHost.start().catch((error) => {
       mainLogger.error("failed to start utility runtime", {
@@ -565,22 +602,6 @@ ipcMain.handle("workspace:save-folder", async (event, payload) => {
   return { ok: true, directoryPath: targetPath };
 });
 
-ipcMain.handle("workspace:read-mock-server", async (_event, payload) => {
-  const directoryPath = payload && typeof payload.directoryPath === "string" ? payload.directoryPath.trim() : "";
-  if (!directoryPath) return { ok: false, error: "Missing workspace folder path." };
-  try {
-    // Git-friendly workspaces store gRPC mock state under mocks/grpc/*.yml.
-    // Reading the legacy mocks/mock-server.json tree here can return a stale
-    // snapshot and overwrite the live editor when Start is clicked.
-    const gitWorkspace = await readGitWorkspace(directoryPath);
-    if (gitWorkspace?.mockServer) return { ok: true, mockServer: gitWorkspace.mockServer };
-    const mockServer = await readMockServerFromFolder(path.join(directoryPath, "mocks"));
-    return { ok: true, mockServer };
-  } catch (error) {
-    return { ok: false, error: error?.message ? String(error.message) : String(error) };
-  }
-});
-
 ipcMain.handle("workspace:open-path", async (_event, payload) => {
   const directoryPath = payload && typeof payload.directoryPath === "string" ? payload.directoryPath.trim() : "";
   const relativePath = payload && typeof payload.relativePath === "string" ? payload.relativePath.trim() : "";
@@ -833,7 +854,10 @@ async function computeWorkspaceRevision(directoryPath) {
       const absolute = path.join(directory, entry.name);
       const relative = path.relative(root, absolute).replaceAll("\\", "/");
       if (entry.isDirectory()) {
-        if (relative === "docs/site" || relative === "docs/published" || relative === "docs/wiki-export") continue;
+        // The scenario catalog handles its own refresh. Walking these files on
+        // each workspace poll competes with indexing and triggers unrelated reloads.
+        if (relative === "mocks/grpc/scenarios" || relative === "mocks/grpc/.cache" ||
+            relative === "docs/site" || relative === "docs/published" || relative === "docs/wiki-export") continue;
         await visit(absolute);
       } else if (entry.isFile()) {
         const stat = await fs.stat(absolute);

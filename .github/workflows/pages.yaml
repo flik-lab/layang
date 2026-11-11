@@ -7,6 +7,9 @@ on:
     paths:
       - "github-pages/**"
       - ".github/workflows/pages.yaml"
+      - "lib/docs-*.cjs"
+      - "lib/docs-core.mjs"
+      - "tests/fixtures/docs-publication-workspace.cjs"
 
   workflow_dispatch:
 
@@ -30,6 +33,27 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build example API reference
+        run: |
+          workspace="$RUNNER_TEMP/tactical-navigation"
+          node tests/fixtures/docs-publication-workspace.cjs "$workspace"
+          node bin/layang.cjs docs:build "$workspace"
+          node bin/layang.cjs docs:build "$workspace" --check
+          mkdir -p github-pages/reference
+          cp -R "$workspace/docs/site/." github-pages/reference/
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

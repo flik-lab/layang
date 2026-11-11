@@ -1,8 +1,10 @@
 "use strict";
 
+const { loadGrpcProtoWorkspace } = require("../../lib/load-grpc-proto-workspace.cjs");
+
 const fs = require("node:fs/promises");
 const grpc = require("@grpc/grpc-js");
-const protoLoader = require("@grpc/proto-loader");
+
 const { writeProtoWorkspace } = require("../utils/file-utils.cjs");
 const { getCurrentCertificateSettings } = require("../utils/certificate-settings.cjs");
 const { safeRelativePath } = require("../utils/path-utils.cjs");
@@ -38,14 +40,7 @@ async function invokeNativeGrpc(payload, emit = () => undefined, registerCall = 
 
   try {
     const rootProtoFiles = payload.protoFiles.map((file) => safeRelativePath(file.name));
-    const packageDefinition = protoLoader.loadSync(rootProtoFiles, {
-      includeDirs: [workspaceDir],
-      keepCase: false,
-      longs: String,
-      enums: String,
-      defaults: true,
-      oneofs: true,
-    });
+    const packageDefinition = loadGrpcProtoWorkspace(workspaceDir, rootProtoFiles);
 
     const loadedPackage = grpc.loadPackageDefinition(packageDefinition);
     const ServiceCtor = getByDottedPath(loadedPackage, payload.method.serviceName);

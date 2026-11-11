@@ -150,6 +150,10 @@ function createManagedWindow(context) {
   return win;
 }
 
+function isManagedWindow(win) {
+  return Boolean(win && managed.get(win.id)?.win === win && !win.isDestroyed());
+}
+
 function getWindowContext(win) {
   if (!win) return normalizeContext({ kind: "main" });
   const entry = managed.get(win.id);
@@ -395,6 +399,7 @@ module.exports = {
   focusManagedWindow,
   getMainWindow,
   getWindowContext,
+  isManagedWindow,
   listManagedWindows,
   openDetachedWindow,
   reattachManagedWindow,

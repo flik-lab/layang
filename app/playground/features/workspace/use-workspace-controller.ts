@@ -18,6 +18,8 @@ import {
 } from "../../shared/workspace-versions";
 import { readStoredProject } from "./workspace-model";
 import { createWorkspaceAutosaveState } from "./workspace-autosave";
+import { mockCatalogStore } from "../mock-server/catalog/mockCatalog.store";
+import { clearParsedMockMethodFileCache } from "../mock-server/mock-scenario-core";
 
 type ToastSeverity = "info" | "success" | "warning" | "error";
 
@@ -91,6 +93,16 @@ export function useWorkspaceController({
   const [workspaceSetupDefaultPath, setWorkspaceSetupDefaultPath] = useState("");
   const [workspaceSetupPending, setWorkspaceSetupPending] = useState(false);
   const workspaceAutosaveRef = useRef(createWorkspaceAutosaveState());
+  const previousWorkspacePathRef = useRef("");
+  useEffect(() => {
+    const previousPath = previousWorkspacePathRef.current;
+    if (previousPath && previousPath !== workspaceFolderPath) {
+      mockCatalogStore.dispose();
+      clearParsedMockMethodFileCache();
+      // No workspace body or scenario summaries should be retained from the old project.
+    }
+    previousWorkspacePathRef.current = workspaceFolderPath;
+  }, [workspaceFolderPath]);
   const externalRevisionRef = useRef("");
   const pendingExternalRevisionRef = useRef({ fingerprint: "", seen: 0 });
   const externalReloadBusyRef = useRef(false);
@@ -266,7 +278,17 @@ export function useWorkspaceController({
       switching = true;
       try {
         const autosave = workspaceAutosaveRef.current;
-        if (autosave.flushPromise) await autosave.flushPromise.catch(() => undefined);
+        if (autosave.flushPromise) {
+          try {
+            await autosave.flushPromise;
+          } catch {
+            // The unsaved snapshot remains pending; never discard it.
+          }
+        }
+        if (autosave.pendingBundle || autosave.saving) {
+          showToast("Workspace has unsaved changes. Retry Save before switching folders.", "error");
+          return;
+        }
 
         const result = await window.electronWorkspace?.openFolder?.(nextPath);
         if (!result?.ok || !result.bundle) {

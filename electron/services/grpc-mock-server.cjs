@@ -1,18 +1,21 @@
 "use strict";
 
-const fsSync = require("node:fs");
+const { loadGrpcProtoWorkspace } = require("../../lib/load-grpc-proto-workspace.cjs");
+const { MAX_SNAPSHOT_BYTES } = require("../../lib/grpc-scenario-limits.cjs");
+
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const { performance } = require("node:perf_hooks");
-const { readGitWorkspace } = require("../../lib/git-workspace.cjs");
-const { parseScenarioBundle } = require("../../lib/workspace-v6-codec.cjs");
 const { createGrpcMockLivePushRegistry, selectGrpcMockManualResponses } = require("../../lib/grpc-mock-live-push.cjs");
+const { createGrpcMockDrainGate } = require("../../lib/grpc-mock-drain-gate.cjs");
+const { calculateNextCadenceDeadline } = require("../../lib/grpc-stream-cadence.cjs");
 const { executionAllows, getNextScheduleAt, normalizeMockExecution } = require("../../lib/mock-execution-engine.cjs");
 const grpc = require("@grpc/grpc-js");
-const protoLoader = require("@grpc/proto-loader");
-const { readJsonIfExists, walkDirectory, writeProtoWorkspace } = require("../utils/file-utils.cjs");
+
+const { writeProtoWorkspace } = require("../utils/file-utils.cjs");
 const { safeRelativePath } = require("../utils/path-utils.cjs");
+const { assertManualSendRevision } = require("../../lib/grpc-mock-scenario-revision.cjs");
 const {
   isStaleUiRuntimeUpdate,
   markUiRuntimeUpdate,
@@ -63,6 +66,7 @@ function createMockServerStatusPayload(serverState, extra) {
       : localTarget;
   return {
     running: true,
+    workspaceDirectory: serverState.watchedWorkspaceDir || "",
     port,
     bindHost,
     bindAddress: `${bindHost}:${port}`,
@@ -143,6 +147,8 @@ async function startMockServerNow(payload) {
   const protoFiles = Array.isArray(payload.protoFiles) ? payload.protoFiles : [];
   const methods = Array.isArray(payload.methods) ? payload.methods : [];
   const scenarios = resolveRuntimeScenarios(payload);
+  const scenarioContentHash = resolveScenarioContentHash(payload, scenarios);
+  verifyScenarioContentHash(payload, scenarioContentHash);
   const streamDefaults = normalizeRuntimeStreamSettings(payload.streamDefaults || {}, {
     intervalMs: 1000,
     loop: false,
@@ -160,14 +166,7 @@ async function startMockServerNow(payload) {
 
   const workspaceDir = await writeProtoWorkspace(protoFiles);
   const rootProtoFiles = protoFiles.map((file) => safeRelativePath(file.name));
-  const packageDefinition = protoLoader.loadSync(rootProtoFiles, {
-    includeDirs: [workspaceDir],
-    keepCase: false,
-    longs: String,
-    enums: String,
-    defaults: true,
-    oneofs: true,
-  });
+  const packageDefinition = loadGrpcProtoWorkspace(workspaceDir, rootProtoFiles);
   const loadedPackage = grpc.loadPackageDefinition(packageDefinition);
   const server = new grpc.Server({
     "grpc.max_receive_message_length": Math.max(1024, Number(limits.maxReceiveBytes) || 50 * 1024 * 1024),
@@ -259,13 +258,19 @@ async function startMockServerNow(payload) {
     hasUiRuntimeOverride: false,
     lastUiRuntimeUpdateAt: 0,
     lastUiRuntimeRevision: 0,
+    scenarioContentHash,
+    canonicalScenarios: scenarios,
   };
+  if (Number(payload.uiRuntimeRevision) > 0) markUiRuntimeUpdate(activeMockServer, payload);
   return createMockServerStatusPayload(activeMockServer, {
     scenarioCount: runtime.scenarioIndex.length,
     activeScenarioIds: runtime.activeScenarioIds,
     enabledMethods: runtime.enabledMethods,
     methodCount,
     configVersion: runtime.configVersion,
+    appliedRevision: activeMockServer.lastUiRuntimeRevision,
+    scenarioContentHash,
+    source: runtime.source,
   });
 }
 
@@ -375,19 +380,13 @@ function resolveRuntimeActiveScenarioIds(scenarios, selectedScenarioIds) {
 }
 
 function hasRuntimeScenarioSource(payload) {
-  return Boolean(Array.isArray(payload?.scenarios) || (payload?.methodFiles && typeof payload.methodFiles === "object"));
+  return Array.isArray(payload?.scenarios);
 }
 
 function resolveRuntimeScenarios(payload) {
-  if (Array.isArray(payload?.scenarios)) return payload.scenarios;
-  const methodFiles = payload?.methodFiles && typeof payload.methodFiles === "object" ? payload.methodFiles : {};
-  const scenarios = [];
-  for (const file of Object.values(methodFiles)) {
-    const parsed = parseScenarioBundle(file);
-    if (parsed?.invalidSource) throw new Error("Mock scenario file is invalid.");
-    if (Array.isArray(parsed?.scenarios)) scenarios.push(...parsed.scenarios);
-  }
-  return scenarios;
+  // Canonical v3 is compiled in the trusted repository before the runtime
+  // receives its snapshot. Do not parse renderer-supplied legacy methodFiles.
+  return Array.isArray(payload?.scenarios) ? payload.scenarios : [];
 }
 
 /**
@@ -500,17 +499,66 @@ function createRuntimeConfigSignature(payload, fallbackRuntime) {
   });
 }
 
+function resolveScenarioContentHash(payload, scenarios) {
+  const { createHash } = require("node:crypto");
+  const serialized = stableJson(scenarios || []);
+  if (payload?.canonicalScenarioPatch && Buffer.byteLength(serialized) > MAX_SNAPSHOT_BYTES)
+    throw new Error("Scenario data exceeds the 128 MiB runtime snapshot budget.");
+  return createHash("sha256").update(serialized).digest("hex");
+}
+
+function verifyScenarioContentHash(payload, actualHash) {
+  if (payload?.scenarioContentHash !== undefined && payload.scenarioContentHash !== actualHash) {
+    throw new Error("Mock scenario payload hash does not match the editor's expected content. Update rejected.");
+  }
+}
+
 /**
  * Replaces active runtime scenarios without restarting the bound gRPC server or open streams.
  */
-async function updateActiveMockServer(payload, source) {
+function updateActiveMockServer(payload, source) {
+  return queueMockServerLifecycle(() => updateActiveMockServerNow(payload, source));
+}
+
+async function updateActiveMockServerNow(payload, source) {
   if (!activeMockServer) throw new Error("Mock server is not running.");
+  assertNativeWorkspace(payload);
   const active = activeMockServer;
   const runtime = active.runtime;
+  if (source === "ui" && isStaleUiRuntimeUpdate(active, payload)) {
+    return createMockServerStatusPayload(active, {
+      scenarioCount: runtime.scenarioIndex.length,
+      activeScenarioIds: runtime.activeScenarioIds,
+      enabledMethods: runtime.enabledMethods,
+      methodCount: active.methodCount,
+      configVersion: runtime.configVersion,
+      updatedAt: runtime.updatedAt,
+      source: runtime.source,
+      ignoredStaleUpdate: true,
+      appliedRevision: active.lastUiRuntimeRevision,
+      scenarioContentHash: active.scenarioContentHash,
+      message: "Ignored stale mock runtime update.",
+    });
+  }
+
   const nextMethods = Array.isArray(payload.methods) ? payload.methods : active.methods || [];
   const nextProtoFiles = Array.isArray(payload.protoFiles) ? payload.protoFiles : active.protoFiles || [];
   const methodSignature = createMockMethodSignature(nextMethods);
   const protoSignature = createMockProtoSignature(nextProtoFiles);
+  const patch = payload.canonicalScenarioPatch;
+  const hasNewSource = Boolean(patch) || hasRuntimeScenarioSource(payload);
+  let preparedScenarios = hasNewSource ? resolveRuntimeScenarios(payload) : runtime.scenarioIndex;
+  if (patch) {
+    preparedScenarios = active.canonicalScenarios.slice();
+    const index = preparedScenarios.findIndex(scenario => scenario.id === patch.id &&
+      scenario.service === patch.service && scenario.method === patch.method);
+    if (index === -1) preparedScenarios.push(patch);
+    else preparedScenarios[index] = patch;
+  }
+  const nextScenarioContentHash = hasNewSource
+    ? resolveScenarioContentHash(payload, preparedScenarios)
+    : active.scenarioContentHash;
+  if (hasNewSource) verifyScenarioContentHash(payload, nextScenarioContentHash);
 
   const nextBindHost = normalizeMockBindHost(payload.bindHost || active.bindHost);
   const nextPort = normalizeMockServerPort(payload.port || active.port || 50055);
@@ -520,12 +568,15 @@ async function updateActiveMockServer(payload, source) {
     nextBindHost !== active.bindHost ||
     nextPort !== active.port
   ) {
-    const result = await startMockServer({
+    const result = await startMockServerNow({
       port: nextPort,
       bindHost: nextBindHost,
       protoFiles: nextProtoFiles,
       methods: nextMethods,
-      scenarios: hasRuntimeScenarioSource(payload) ? resolveRuntimeScenarios(payload) : runtime.scenarioIndex,
+      scenarios: preparedScenarios,
+      scenarioContentHash: hasNewSource ? nextScenarioContentHash : undefined,
+      uiRuntimeRevision: payload.uiRuntimeRevision,
+      mockServerUpdatedAt: payload.mockServerUpdatedAt,
       streamDefaults: payload.streamDefaults || runtime.streamDefaults,
       activeScenarioIds: payload.activeScenarioIds || payload.selectedScenarioIds || runtime.activeScenarioIds,
       enabledMethods: payload.enabledMethods || runtime.enabledMethods,
@@ -543,19 +594,6 @@ async function updateActiveMockServer(payload, source) {
     };
   }
 
-  if (source === "ui" && isStaleUiRuntimeUpdate(active, payload)) {
-    return createMockServerStatusPayload(active, {
-      scenarioCount: runtime.scenarioIndex.length,
-      activeScenarioIds: runtime.activeScenarioIds,
-      enabledMethods: runtime.enabledMethods,
-      methodCount: active.methodCount,
-      configVersion: runtime.configVersion,
-      updatedAt: runtime.updatedAt,
-      source: runtime.source,
-      ignoredStaleUpdate: true,
-      message: "Ignored stale mock runtime update.",
-    });
-  }
   if (source === "ui") markUiRuntimeUpdate(active, payload);
 
   const fileUpdateGuard = shouldIgnoreFileRuntimeUpdate(
@@ -590,8 +628,8 @@ async function updateActiveMockServer(payload, source) {
     source === "file" && active.hasUiStreamDefaultsOverride
       ? runtime.streamDefaults
       : payload.streamDefaults || runtime.streamDefaults;
-  const nextScenarios = hasRuntimeScenarioSource(payload) ? resolveRuntimeScenarios(payload) : runtime.scenarioIndex;
-  const nextActiveScenarioIds = hasRuntimeScenarioSource(payload)
+  const nextScenarios = preparedScenarios;
+  const nextActiveScenarioIds = hasNewSource
     ? resolveRuntimeActiveScenarioIds(nextScenarios, payload.activeScenarioIds || payload.selectedScenarioIds || runtime.activeScenarioIds)
     : (payload.activeScenarioIds || payload.selectedScenarioIds || runtime.activeScenarioIds);
   const nextEnabledMethods = payload.enabledMethods || runtime.enabledMethods;
@@ -605,6 +643,8 @@ async function updateActiveMockServer(payload, source) {
     runtime,
   );
   if (nextSignature === active.runtimeConfigSignature) {
+    active.scenarioContentHash = nextScenarioContentHash;
+    if (hasNewSource) active.canonicalScenarios = preparedScenarios;
     return createMockServerStatusPayload(active, {
       scenarioCount: runtime.scenarioIndex.length,
       activeScenarioIds: runtime.activeScenarioIds,
@@ -614,6 +654,8 @@ async function updateActiveMockServer(payload, source) {
       updatedAt: runtime.updatedAt,
       source: runtime.source,
       unchanged: true,
+      appliedRevision: active.lastUiRuntimeRevision,
+      scenarioContentHash: active.scenarioContentHash,
       message: "Mock runtime already uses the latest scenario config.",
     });
   }
@@ -633,6 +675,8 @@ async function updateActiveMockServer(payload, source) {
   runtime.source = next.source;
   rebuildRuntimeScenarioIndexes(runtime);
   active.runtimeConfigSignature = nextSignature;
+  active.scenarioContentHash = nextScenarioContentHash;
+  if (hasNewSource) active.canonicalScenarios = preparedScenarios;
   notifyRuntimeStreamReschedulers(runtime);
   return {
     running: true,
@@ -642,6 +686,8 @@ async function updateActiveMockServer(payload, source) {
     configVersion: runtime.configVersion,
     updatedAt: runtime.updatedAt,
     source: runtime.source,
+    appliedRevision: active.lastUiRuntimeRevision,
+    scenarioContentHash: active.scenarioContentHash,
   };
 }
 
@@ -655,226 +701,6 @@ function notifyRuntimeStreamReschedulers(runtime) {
       // Ignore stale stream callbacks; the stream cleanup path removes them.
     }
   }
-}
-
-/**
- * Loads split per-method mock scenario files for explicit/manual refresh flows.
- */
-async function _loadRuntimeScenariosFromWorkspace(workspaceDirectory, methods, port) {
-  if (fsSync.existsSync(path.join(workspaceDirectory, "layang.yml"))) {
-    return loadGitWorkspaceRuntimeScenarios(workspaceDirectory, methods, port);
-  }
-  const mocksDir = path.join(workspaceDirectory, "mocks");
-  let workspaceMtimeMs = 0;
-  let serverConfigMtimeMs = 0;
-  let scenarioFilesMtimeMs = 0;
-  const noteWorkspaceMtime = async (filePath, kind = "workspace") => {
-    try {
-      const stat = await fs.stat(filePath);
-      if (!Number.isFinite(stat.mtimeMs)) return;
-      workspaceMtimeMs = Math.max(workspaceMtimeMs, stat.mtimeMs);
-      if (kind === "server-config") serverConfigMtimeMs = Math.max(serverConfigMtimeMs, stat.mtimeMs);
-      if (kind === "scenario-file") scenarioFilesMtimeMs = Math.max(scenarioFilesMtimeMs, stat.mtimeMs);
-    } catch {
-      // Optional workspace files may not exist.
-    }
-  };
-  const serverConfigPath = path.join(mocksDir, "mock-server.json");
-  await noteWorkspaceMtime(serverConfigPath, "server-config");
-  const serverConfig = (await readJsonIfExists(serverConfigPath).catch(() => ({}))) || {};
-  const streamDefaults = normalizeRuntimeStreamSettings(
-    serverConfig.streamDefaults || serverConfig.stream_defaults || {},
-    { intervalMs: 1000, loop: false, maxLoops: 0 },
-  );
-  const enabledMethods = normalizeEnabledMethods(serverConfig.enabledMethods || serverConfig.enabled_methods || {});
-  const scenariosDir = path.join(mocksDir, "scenarios");
-  await noteWorkspaceMtime(path.join(scenariosDir, "manifest.json"), "scenario-file");
-  const manifest = (await readJsonIfExists(path.join(scenariosDir, "manifest.json")).catch(() => ({}))) || {};
-  const scenarios = [];
-  const activeScenarioIds = normalizeActiveScenarioIds(
-    serverConfig.selectedScenarioIds ||
-      serverConfig.selected_scenario_ids ||
-      serverConfig.activeScenarioIds ||
-      serverConfig.active_scenario_ids ||
-      {},
-  );
-  const loadScenarioFile = async (filePath, format) => {
-    await noteWorkspaceMtime(filePath, "scenario-file");
-    const text = await fs.readFile(filePath, "utf8");
-    const parsed = parseRuntimeScenarioText(text, format, port);
-    const methodScenarios = parsed.scenarios.filter((scenario) =>
-      methods.some((method) => method.serviceName === scenario.service && method.methodName === scenario.method),
-    );
-    scenarios.push(...methodScenarios);
-    const selection = parsed.activeScenarioIds || {};
-    for (const [key, id] of Object.entries(selection)) {
-      if (id && !activeScenarioIds[key]) activeScenarioIds[key] = id;
-    }
-  };
-
-  if (manifest && typeof manifest === "object" && manifest.layout === "scenario-files-v1") {
-    const manifestMethods = manifest.methods && typeof manifest.methods === "object" ? manifest.methods : {};
-    for (const [key, entry] of Object.entries(manifestMethods)) {
-      if (
-        entry &&
-        typeof entry === "object" &&
-        typeof entry.selectedScenarioId === "string" &&
-        entry.selectedScenarioId.trim()
-      ) {
-        if (!activeScenarioIds[key]) activeScenarioIds[key] = entry.selectedScenarioId.trim();
-      }
-      const listedScenarios =
-        entry && typeof entry === "object" && entry.scenarios && typeof entry.scenarios === "object"
-          ? entry.scenarios
-          : {};
-      for (const descriptor of Object.values(listedScenarios)) {
-        if (!descriptor || typeof descriptor !== "object" || !descriptor.file) continue;
-        const relativeFile = String(descriptor.file);
-        if (relativeFile.includes("..") || path.isAbsolute(relativeFile)) continue;
-        const format = descriptor.format === "yaml" || descriptor.format === "yml" ? "yaml" : "json";
-        await loadScenarioFile(path.join(scenariosDir, relativeFile), format);
-      }
-    }
-  } else {
-    await walkDirectory(scenariosDir, async (filePath) => {
-      const ext = path.extname(filePath).toLowerCase();
-      if (ext !== ".json" && ext !== ".yaml" && ext !== ".yml") return;
-      if (path.basename(filePath).toLowerCase() === "manifest.json") return;
-      const format = ext === ".json" ? "json" : "yaml";
-      await loadScenarioFile(filePath, format);
-    });
-    for (const [key, item] of Object.entries(manifest || {})) {
-      if (
-        item &&
-        typeof item === "object" &&
-        typeof item.selectedScenarioId === "string" &&
-        item.selectedScenarioId.trim()
-      ) {
-        if (!activeScenarioIds[key]) activeScenarioIds[key] = item.selectedScenarioId.trim();
-      }
-    }
-  }
-  for (const method of methods || []) {
-    const key = `${method.serviceName}/${method.methodName}`;
-    const methodScenarios = scenarios.filter(
-      (scenario) => scenario.service === method.serviceName && scenario.method === method.methodName,
-    );
-    if (enabledMethods[key] === true && methodScenarios.length === 0) {
-      throw new Error(`${key}: mocking is enabled in mock-server.json, but the method file has no matching scenario.`);
-    }
-    if (activeScenarioIds[key] && !methodScenarios.some((scenario) => scenario.id === activeScenarioIds[key])) {
-      throw new Error(
-        `${key}: mock-server.json selects scenario "${activeScenarioIds[key]}", but that id is not present in this method file.`,
-      );
-    }
-    const activeScenario = scenarios.find(
-      (scenario) =>
-        scenario.service === method.serviceName &&
-        scenario.method === method.methodName &&
-        isRuntimeScenarioActive(scenario),
-    );
-    if (activeScenario && !activeScenarioIds[key]) activeScenarioIds[key] = activeScenario.id;
-  }
-  const editorUpdatedAt =
-    typeof serverConfig.updatedAt === "string" && serverConfig.updatedAt.trim()
-      ? serverConfig.updatedAt
-      : serverConfig.updated_at;
-  const editorUpdatedAtMs = Date.parse(String(editorUpdatedAt || ""));
-  const workspaceSignature = stableJson({
-    workspaceMtimeMs,
-    serverConfigMtimeMs,
-    scenarioFilesMtimeMs,
-    editorUpdatedAt: Number.isFinite(editorUpdatedAtMs) ? editorUpdatedAt : "",
-    scenarios,
-    activeScenarioIds,
-    enabledMethods,
-    streamDefaults,
-  });
-  return {
-    scenarios,
-    activeScenarioIds,
-    enabledMethods,
-    streamDefaults,
-    workspaceMtimeMs,
-    serverConfigMtimeMs,
-    scenarioFilesMtimeMs,
-    editorUpdatedAt: Number.isFinite(editorUpdatedAtMs) ? editorUpdatedAt : "",
-    editorUpdatedAtMs: Number.isFinite(editorUpdatedAtMs) ? editorUpdatedAtMs : 0,
-    workspaceSignature,
-  };
-}
-
-async function loadGitWorkspaceRuntimeScenarios(workspaceDirectory, methods, _port) {
-  const workspace = await readGitWorkspace(workspaceDirectory);
-  if (!workspace) return null;
-  const serverConfig =
-    workspace.project?.mockServer && typeof workspace.project.mockServer === "object"
-      ? workspace.project.mockServer
-      : {};
-  const streamDefaults = normalizeRuntimeStreamSettings(serverConfig.streamDefaults || {}, {
-    intervalMs: 1000,
-    loop: false,
-    maxLoops: 0,
-  });
-  const enabledMethods = normalizeEnabledMethods(serverConfig.enabledMethods || {});
-  const activeScenarioIds = normalizeActiveScenarioIds(
-    serverConfig.selectedScenarioIds || serverConfig.activeScenarioIds || {},
-  );
-  const rawScenarios = Array.isArray(workspace.scenarios) ? workspace.scenarios : [];
-  const scenarios = rawScenarios
-    .map((scenario, index) =>
-      normalizeMockRuntimeScenario(applyRuntimeStreamDefaultsToRawScenario(scenario, streamDefaults), index),
-    )
-    .filter((scenario) =>
-      methods.some((method) => method.serviceName === scenario.service && method.methodName === scenario.method),
-    );
-
-  for (const method of methods || []) {
-    const key = `${method.serviceName}/${method.methodName}`;
-    const methodScenarios = scenarios.filter(
-      (scenario) => scenario.service === method.serviceName && scenario.method === method.methodName,
-    );
-    if (enabledMethods[key] === true && methodScenarios.length === 0) {
-      throw new Error(`${key}: mocking is enabled, but the Git workspace has no matching scenario.`);
-    }
-    if (activeScenarioIds[key] && !methodScenarios.some((scenario) => scenario.id === activeScenarioIds[key])) {
-      throw new Error(`${key}: selected scenario "${activeScenarioIds[key]}" is missing from the Git workspace.`);
-    }
-    const activeScenario = methodScenarios.find((scenario) => isRuntimeScenarioActive(scenario));
-    if (activeScenario && !activeScenarioIds[key]) activeScenarioIds[key] = activeScenario.id;
-  }
-
-  const mocksRoot = path.join(workspaceDirectory, "mocks", "grpc");
-  let workspaceMtimeMs = 0;
-  try {
-    await walkDirectory(mocksRoot, async (filePath) => {
-      const stat = await fs.stat(filePath);
-      if (Number.isFinite(stat.mtimeMs)) workspaceMtimeMs = Math.max(workspaceMtimeMs, stat.mtimeMs);
-    });
-  } catch {
-    // An empty mock directory is valid.
-  }
-  const editorUpdatedAt = typeof serverConfig.updatedAt === "string" ? serverConfig.updatedAt : "";
-  const editorUpdatedAtMs = Date.parse(editorUpdatedAt);
-  const workspaceSignature = stableJson({
-    workspaceMtimeMs,
-    scenarios,
-    activeScenarioIds,
-    enabledMethods,
-    streamDefaults,
-  });
-  return {
-    scenarios,
-    activeScenarioIds,
-    enabledMethods,
-    streamDefaults,
-    workspaceMtimeMs,
-    serverConfigMtimeMs: workspaceMtimeMs,
-    scenarioFilesMtimeMs: workspaceMtimeMs,
-    editorUpdatedAt,
-    editorUpdatedAtMs: Number.isFinite(editorUpdatedAtMs) ? editorUpdatedAtMs : 0,
-    workspaceSignature,
-  };
 }
 
 /**
@@ -1181,6 +1007,7 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
   let unregisterLivePush = null;
   let scheduledTimer = null;
   let scheduledResponseIndex = 0;
+  const drainGate = createGrpcMockDrainGate(call);
 
   const clearPendingTimer = () => {
     if (!pendingTimer) return;
@@ -1201,6 +1028,7 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
     closed = true;
     clearPendingTimer();
     clearScheduledTimer();
+    drainGate.close();
     activeCalls.delete(call);
     if (unregisterLivePush) {
       unregisterLivePush();
@@ -1380,23 +1208,31 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
       timers.delete(timer);
       if (scheduledTimer === timer) scheduledTimer = null;
       if (closed) return;
-      const live = getLiveSnapshot();
-      const responses = live?.responses || [];
-      if (responses.length) {
-        const item = responses[scheduledResponseIndex % responses.length] || {};
-        const code = normalizeGrpcStatus(item.code);
-        if (code !== grpc.status.OK) {
-          failStream(code, item.message || `Mock stream scenario ${live.scenario.id} returned status ${code}.`);
-          return;
-        }
-        call.write(item.data === undefined ? {} : item.data);
-        scheduledResponseIndex += 1;
-      }
-      scheduleScenarioTrigger();
+      sendScheduledResponse();
     }, Math.max(0, nextAt - Date.now()));
     scheduledTimer = timer;
     timers.add(timer);
   };
+
+  function sendScheduledResponse() {
+    if (closed) return;
+    if (drainGate.waitIfBlocked("scheduled", sendScheduledResponse)) return;
+    const live = getLiveSnapshot();
+    const responses = live?.responses || [];
+    if (responses.length) {
+      const item = responses[scheduledResponseIndex % responses.length] || {};
+      const code = normalizeGrpcStatus(item.code);
+      if (code !== grpc.status.OK) {
+        failStream(code, item.message || `Mock stream scenario ${live.scenario.id} returned status ${code}.`);
+        return;
+      }
+      const accepted = call.write(item.data === undefined ? {} : item.data);
+      scheduledResponseIndex += 1;
+      // Do not schedule another tick while the transport buffer is full.
+      if (drainGate.afterWrite(accepted, "scheduled", scheduleScenarioTrigger)) return;
+    }
+    scheduleScenarioTrigger();
+  }
 
   function rescheduleStreamTimers() {
     const snapshot = getLiveSnapshot();
@@ -1488,6 +1324,7 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
 
   function writeNext() {
     if (closed) return;
+    if (drainGate.waitIfBlocked("periodic", () => scheduleNext(0, false))) return;
     const snapshot = getLiveSnapshot();
     if (!snapshot?.scenario) {
       failStream(
@@ -1544,15 +1381,11 @@ function handleMockServerStream(call, method, runtime, timers, activeCalls, requ
     const responseDelay = Number(item.delayMs);
     const hasExplicitResponseDelay = Number.isFinite(responseDelay) && responseDelay > 0;
     const nextDelay = hasExplicitResponseDelay ? responseDelay : intervalMs;
-    if (wrote === false && typeof call.once === "function") {
-      call.once("drain", () => {
-        const delay = hasExplicitResponseDelay ? nextDelay : (getLiveTiming()?.intervalMs ?? nextDelay);
-        nextRuntimeCadenceAt = 0;
-        scheduleNext(delay, !hasExplicitResponseDelay);
-      });
-    } else {
-      scheduleNext(nextDelay, !hasExplicitResponseDelay);
-    }
+    if (!drainGate.afterWrite(wrote, "periodic", () => {
+      const delay = hasExplicitResponseDelay ? nextDelay : (getLiveTiming()?.intervalMs ?? nextDelay);
+      nextRuntimeCadenceAt = 0;
+      scheduleNext(delay, !hasExplicitResponseDelay);
+    })) scheduleNext(nextDelay, !hasExplicitResponseDelay);
   }
 
   const firstResponses = getRuntimeStreamResponses(initialScenario);
@@ -2182,17 +2015,6 @@ function normalizeDelayMs(value) {
 }
 
 /**
- * Advances a stream against an absolute cadence instead of chaining delays
- * from the end of each write. Late ticks therefore do not accumulate drift.
- */
-function calculateNextCadenceDeadline(previousDeadline, intervalMs, now) {
-  const interval = normalizeDelayMs(intervalMs);
-  const current = Number.isFinite(Number(now)) ? Number(now) : performance.now();
-  const previous = Number(previousDeadline);
-  return Number.isFinite(previous) && previous > 0 ? previous + interval : current + interval;
-}
-
-/**
  * Builds a grpc-js compatible Error with status metadata.
  */
 function grpcStatusError(code, message) {
@@ -2225,7 +2047,15 @@ function findManualPushScenario(runtime, serviceName, methodName, scenarioId) {
   return candidates.find((scenario) => scenario.id === scenarioId) || null;
 }
 
+function assertNativeWorkspace(payload) {
+  if (payload?.expectedWorkspaceDirectory !== undefined &&
+      (!activeMockServer?.watchedWorkspaceDir ||
+       path.resolve(payload.expectedWorkspaceDirectory) !== path.resolve(activeMockServer.watchedWorkspaceDir)))
+    throw new Error("NATIVE_WORKSPACE_MISMATCH: Native runtime belongs to a different workspace.");
+}
+
 function sendMockServerStreamMessage(payload = {}) {
+  assertNativeWorkspace(payload);
   if (!activeMockServer) throw new Error("Mock server is not running.");
   const serviceName = String(payload.serviceName || payload.service || "").trim();
   const methodName = String(payload.methodName || payload.method || "").trim();
@@ -2236,6 +2066,7 @@ function sendMockServerStreamMessage(payload = {}) {
   if (!serviceName || !methodName) throw new Error("serviceName and methodName are required for gRPC manual send.");
   if (!scenarioId) throw new Error("scenarioId is required for gRPC manual send.");
 
+  assertManualSendRevision(activeMockServer, payload);
   const runtime = activeMockServer.runtime;
   const scenario = findManualPushScenario(runtime, serviceName, methodName, scenarioId);
   if (!scenario) throw new Error(`Saved scenario ${scenarioId} was not found for ${serviceName}/${methodName}.`);
@@ -2281,6 +2112,11 @@ function sendMockServerStreamMessage(payload = {}) {
     matched,
     sent,
     backpressured,
+    scenarioId,
+    responseIndex,
+    appliedRevision: activeMockServer.lastUiRuntimeRevision,
+    scenarioContentHash: activeMockServer.scenarioContentHash,
+    configVersion: runtime.configVersion,
     ...getMockLivePushStatus(runtime),
     message:
       sent > 0
@@ -2298,6 +2134,9 @@ function getMockServerStatus() {
     enabledMethods: activeMockServer.runtime.enabledMethods,
     startedAt: activeMockServer.startedAt,
     configVersion: activeMockServer.runtime.configVersion,
+    appliedRevision: activeMockServer.lastUiRuntimeRevision,
+    scenarioContentHash: activeMockServer.scenarioContentHash,
+    source: activeMockServer.runtime.source,
     updatedAt: activeMockServer.runtime.updatedAt,
     requestLog: activeMockServer.requestLog || [],
     ...getMockLivePushStatus(activeMockServer.runtime),

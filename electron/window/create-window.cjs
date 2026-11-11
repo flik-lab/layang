@@ -30,10 +30,9 @@ function createWindow(options = {}) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      // Layang currently performs direct REST/browser transport requests from the renderer,
-      // so CORS enforcement remains disabled until those transports are fully moved to main-process IPC.
-      // Navigation is separately locked to the Layang renderer below.
-      webSecurity: false,
+      // Desktop REST requests use the capability-scoped main-process transport.
+      // Keep Chromium origin and CORS protections enabled in the renderer.
+      webSecurity: true,
       allowRunningInsecureContent: false,
       webviewTag: false,
     },
@@ -63,7 +62,7 @@ function attachRendererSecurity(win) {
   windowLogger.info("renderer navigation security enabled", {
     mode: location.isDev ? "development-origin" : "packaged-file",
     allowRunningInsecureContent: false,
-    corsCompatibilityMode: true,
+    corsCompatibilityMode: false,
   });
 }
 
@@ -92,7 +91,7 @@ function attachRendererDiagnostics(win) {
     windowLogger.info("renderer did-finish-load", { url: win.webContents.getURL() });
   });
   windowLogger.info("transport browser fetch enabled", {
-    cors: "compatibility mode for direct desktop API transport",
+    cors: "enforced in renderer; REST handled through main-process IPC",
     externalNavigation: "blocked from trusted renderer",
   });
 }
