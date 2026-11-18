@@ -25,7 +25,9 @@ Install for the current Windows user:
 powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
 ```
 
-The installer places the CLI under `%LOCALAPPDATA%\Layang\CLI` and adds that directory to the user PATH. Open a new terminal after installation.
+The installer places the CLI under `%LOCALAPPDATA%\Layang-CLI` (or `LAYANG_CLI_HOME`) and puts that directory first on the user PATH. Open a new terminal after installation.
+
+The CLI does not live under `%LOCALAPPDATA%\Layang`: that folder belongs to the desktop app's installer, which empties it when the desktop app is installed. Installing 1.2.0 or later removes a CLI left at the pre-1.2 location `%LOCALAPPDATA%\Layang\CLI` and its PATH entry. Arguments with spaces (for example `--collection "FE Main Display"`) reach the CLI unchanged; the release smoke check verifies this through the native launcher.
 
 ## Linux
 
