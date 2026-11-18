@@ -49,7 +49,7 @@ try {
     cachedWarm: warm.result.cached, indexBodyFree: !JSON.stringify(changed.result.items).includes("x".repeat(512)),
     heapUsedKiB: memory(), status: "MEASUREMENT_ONLY",
   };
-  if (output) { await fs.mkdir(path.dirname(output), { recursive: true }); await fs.writeFile(output, JSON.stringify(result, null, 2) + "\n"); }
+  if (output) { await fs.mkdir(path.dirname(output), { recursive: true }); await fs.writeFile(output, `${JSON.stringify(result, null, 2)}\n`); }
   console.log(JSON.stringify(result, null, 2));
 } finally { await fs.rm(root, { recursive: true, force: true }); }
 

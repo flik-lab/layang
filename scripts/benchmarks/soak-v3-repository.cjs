@@ -96,7 +96,7 @@ async function main() {
     await fs.rm(root, {recursive:true,force:true});
     if (outputFile) {
       await fs.mkdir(path.dirname(path.resolve(outputFile)),{recursive:true});
-      await fs.writeFile(outputFile,JSON.stringify(metrics,null,2)+"\n");
+      await fs.writeFile(outputFile,`${JSON.stringify(metrics,null,2)}\n`);
     }
     console.log(JSON.stringify(metrics,null,2));
   }

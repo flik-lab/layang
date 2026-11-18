@@ -26,5 +26,5 @@ for(const [count,kb] of configs){
   summary.runs.push(item);
   console.log(`${name}: ${item.exitCode===0?'PASS':'FAIL'} (${item.elapsedMs}ms)`);
 }
-fs.writeFileSync(path.join(outputDir,'suite-summary.json'),JSON.stringify(summary,null,2)+'\n');
+fs.writeFileSync(path.join(outputDir,'suite-summary.json'),`${JSON.stringify(summary,null,2)}\n`);
 if(summary.runs.some(x=>x.exitCode!==0)) process.exitCode=1;

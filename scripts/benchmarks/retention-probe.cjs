@@ -19,5 +19,5 @@ for(let i=0;i<cycles;i++){
 }
 const result={schema:'layang-pr06-retention-probe-v1',scope:'Node synthetic allocate/parse/release only; NOT Electron UI, gRPC stream or proof of leak freedom',node:process.version,cycles,scenarioCount,heapUsedAfterGcKiB:heap,firstToLastDeltaKiB:heap.at(-1)-heap[0],status:'OBSERVATION_ONLY'};
 const output=process.argv[2];
-if(output){fs.mkdirSync(path.dirname(output),{recursive:true});fs.writeFileSync(output,JSON.stringify(result,null,2)+'\n');}
+if(output){fs.mkdirSync(path.dirname(output),{recursive:true});fs.writeFileSync(output,`${JSON.stringify(result,null,2)}\n`);}
 console.log(JSON.stringify(result,null,2));
