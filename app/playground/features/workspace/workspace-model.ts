@@ -988,6 +988,16 @@ function normalizeSavedExamples(input: unknown): SavedExample[] {
     .map((example) => ({
       id: typeof example.id === "string" && example.id ? example.id : createId(),
       name: typeof example.name === "string" && example.name.trim() ? example.name : "Saved example",
+      // The link to the saved request decides where the example file lives (<request>.examples/);
+      // dropping it would move the example to examples/orphaned/ on the next save.
+      ...(typeof example.requestId === "string" && example.requestId ? { requestId: example.requestId } : {}),
+      ...(example.requestRef && typeof example.requestRef === "object" ? { requestRef: { ...example.requestRef } } : {}),
+      ...(typeof example.mockScenario === "string" && example.mockScenario
+        ? { mockScenario: example.mockScenario }
+        : {}),
+      ...(example.extensions && typeof example.extensions === "object" && Object.keys(example.extensions).length
+        ? { extensions: example.extensions }
+        : {}),
       serviceName: typeof example.serviceName === "string" ? example.serviceName : "",
       methodName: typeof example.methodName === "string" ? example.methodName : "",
       requestJson: normalizeEditableText(

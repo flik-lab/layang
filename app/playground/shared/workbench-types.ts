@@ -161,6 +161,8 @@ export type SavedExample = {
   expectedStatus?: string;
   expectedTrailers?: MetadataPair[];
   assertions?: string;
+  /** gRPC mock scenario id that answers this example (`example.mock.scenario`). */
+  mockScenario?: string;
   tags?: string[];
   enabled?: boolean;
   documentation?: SavedExampleDocumentation;
