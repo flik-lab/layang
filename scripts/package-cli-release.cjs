@@ -99,7 +99,12 @@ function smokeGrpcCommands(cli) {
       }
       return result.stdout || "";
     };
-    run(["schema:import", workspace, "--file", path.join(root, "samples", "greeter.proto"), "--name", "smoke"]);
+    // A name with spaces must reach the CLI as one argument through the native launcher.
+    run(["schema:import", workspace, "--file", path.join(root, "samples", "greeter.proto"), "--name", "smoke schema"]);
+    if (!/smoke schema/.test(run(["schemas", workspace]))) {
+      process.stderr.write("layang split an argument containing spaces (expected schema \"smoke schema\").\n");
+      process.exit(1);
+    }
     run(["mock:check", workspace]);
     if (!/smoke \[mock\]/.test(run(["gateway:list", workspace]))) {
       process.stderr.write("layang gateway:list did not list the smoke gateway profile.\n");

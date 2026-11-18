@@ -24,6 +24,7 @@
 ### Fixed
 
 * Standalone CLI: bundle the dependencies of nested packages (for example `@protobufjs/*` for the `protobufjs` that `@grpc/proto-loader` uses), so gateway and proto commands no longer fail with `Cannot find module '@protobufjs/aspromise'`. The release smoke check now verifies the bundled dependency closure and runs proto/gateway commands.
+* Standalone CLI on Windows: arguments with spaces reach the CLI unchanged (the launcher split `--collection "FE Main Display"` into three arguments and dropped empty ones).
 * Gateway (Web Access) mock streams honour `loop` and `maxLoops` like the native mock server instead of ending after one pass.
 * CLI gateway matches scenarios by the proto method name (`StreamItems`); scenarios written with the 1.1.x camelCase name keep matching.
 * `layang gateway:list` works for profiles without `upstreams`.
