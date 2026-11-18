@@ -232,7 +232,9 @@ test("Gateway mock stream resumes after drain and releases resources on completi
   });
   assert.equal(sends, 1);
   call.emit("drain");
-  await new Promise((resolve) => setTimeout(resolve, 15));
+  // Two zero-delay timer hops; on Windows each can take a full ~15 ms timer tick under load.
+  for (const started = Date.now(); done === 0 && Date.now() - started < 1000; )
+    await new Promise((resolve) => setTimeout(resolve, 5));
   assert.equal(sends, 2);
   assert.equal(done, 1);
   assert.equal(task.getState().closed, true);

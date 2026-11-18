@@ -329,7 +329,7 @@ function applyGatewaySnapshotNow(runtime, payload) {
   let nextSelections = runtime.activeScenarioIds;
   if (payload.serviceName || payload.methodName || payload.scenarioId) {
     const selected = scenarios.find(item => item.service === payload.serviceName &&
-      item.method === payload.methodName && item.id === payload.scenarioId);
+      sameGrpcMethodName(item.method, payload.methodName) && item.id === payload.scenarioId);
     if (!selected) throw new Error("Selected Gateway scenario is missing from the compiled snapshot.");
     const methodKey = `${payload.serviceName}/${payload.methodName}`;
     const behavior = resolveBehavior(runtime, methodKey);
@@ -352,7 +352,7 @@ function preflightGatewayManualSend(scenarios, payload) {
   const scenarioId = String(payload.scenarioId || "").trim();
   if (!serviceName || !methodName || !scenarioId) throw new Error("Method and scenario IDs are required.");
   const scenario = scenarios.find(item => item.service === serviceName &&
-    item.method === methodName && item.id === scenarioId && item.active !== false);
+    sameGrpcMethodName(item.method, methodName) && item.id === scenarioId && item.active !== false);
   if (!scenario || !executionAllows(scenario.stream?.execution, "manual"))
     throw new Error("No active, manual-enabled scenario with the requested identity.");
   const responses = selectGrpcMockManualResponses(scenario, {
@@ -416,6 +416,17 @@ function applyAndSendGatewaySnapshot(payload = {}) {
 function sendGatewayStreamMessage(payload = {}) {
   const profileId = String(payload.profileId || "default-gateway");
   return queueGatewayLifecycle(profileId, () => sendGatewayStreamMessageNow(requireGateway(profileId), payload));
+}
+
+/**
+ * gRPC method names in scenarios are written as in the proto (`StreamItems`), but the 1.1.x CLI
+ * gateway derived camelCase names (`streamItems`) from @grpc/proto-loader. Accept both so
+ * scenarios written for either keep matching. (Kept inside the Apply/Send block that
+ * tests/gateway-atomic-manual.test.cjs executes in isolation.)
+ */
+function sameGrpcMethodName(left, right) {
+  if (left === right) return true;
+  return String(left || "").toLowerCase() === String(right || "").toLowerCase();
 }
 
 function getGatewayProfileStatus(profileId) {
@@ -877,6 +888,9 @@ function respondMockServerStream(runtime, method, scenario, call, started) {
     call,
     responses,
     intervalMs: Math.max(0, Number(scenario.stream?.intervalMs || 0)),
+    // Same loop contract as the native mock server (was ignored, so streams ended after one pass).
+    loop: scenario.stream?.loop === true,
+    maxLoops: scenario.stream?.maxLoops ?? scenario.stream?.max_loops ?? 0,
     mapItem(item) {
       const code = normalizeGrpcStatus(item.code);
       if (code !== grpc.status.OK)
@@ -913,7 +927,9 @@ function findScenario(runtime, method, request, metadata) {
   const candidates = runtime.scenarios
     .filter(
       (item) =>
-        isGatewayIncomingScenario(item) && item.service === method.serviceName && item.method === method.methodName,
+        isGatewayIncomingScenario(item) &&
+        item.service === method.serviceName &&
+        sameGrpcMethodName(item.method, method.methodName),
     )
     .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0));
   const selectedId = runtime.activeScenarioIds[methodKey] || runtime.activeScenarioIds[methodKey.replace("/", ".")];
