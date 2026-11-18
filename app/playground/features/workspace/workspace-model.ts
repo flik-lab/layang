@@ -599,10 +599,30 @@ function normalizeApiCollectionRequests(
         headers: Array.isArray(request.headers) ? request.headers : [],
         restParams: Array.isArray(request.restParams) ? request.restParams : [],
         restPathParams: Array.isArray(request.restPathParams) ? request.restPathParams : [],
-        restAuth: normalizeRestAuth(request.restAuth),
-        restBodyType: normalizeRestBodyType(request.restBodyType),
+        // REST defaults are not written into gRPC/WebSocket requests that never set them.
+        restAuth: kind === "rest" || request.restAuth ? normalizeRestAuth(request.restAuth) : undefined,
+        restBodyType: kind === "rest" || request.restBodyType ? normalizeRestBodyType(request.restBodyType) : undefined,
         environmentKey:
           typeof request.environmentKey === "string" && request.environmentKey ? request.environmentKey : undefined,
+        // Fields the desktop editor does not edit are still part of the committed request: keep
+        // them, or opening a workspace would rewrite CLI-authored requests without them.
+        defaultEnvironmentKey:
+          typeof request.defaultEnvironmentKey === "string" && request.defaultEnvironmentKey
+            ? request.defaultEnvironmentKey
+            : undefined,
+        assertionJson:
+          typeof request.assertionJson === "string" && request.assertionJson.trim() ? request.assertionJson : undefined,
+        transportMode:
+          request.transportMode === "grpc-web" || request.transportMode === "native-grpc"
+            ? request.transportMode
+            : undefined,
+        nativeTargetRef:
+          typeof request.nativeTargetRef === "string" && request.nativeTargetRef ? request.nativeTargetRef : undefined,
+        formFields: Array.isArray(request.formFields) && request.formFields.length ? request.formFields : undefined,
+        extensions:
+          request.extensions && typeof request.extensions === "object" && Object.keys(request.extensions).length
+            ? request.extensions
+            : undefined,
         mockResponse:
           typeof request.mockResponse === "string" ? request.mockResponse : kind === "rest" ? "{}" : undefined,
         createdAt: typeof request.createdAt === "string" ? request.createdAt : now,

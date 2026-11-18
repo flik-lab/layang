@@ -206,6 +206,13 @@ export type ApiCollectionRequest = {
   environmentKey?: EnvironmentKey;
   /** Optional shared default committed with the request. */
   defaultEnvironmentKey?: EnvironmentKey;
+  /** Assertions committed with the request (`request.assertions`); run by the CLI and the desktop runner. */
+  assertionJson?: string;
+  /** Transport committed with the request (`request.transport.mode`). */
+  transportMode?: TransportMode;
+  /** Committed native target reference (`request.transport.nativeTargetRef`). */
+  nativeTargetRef?: string;
+  formFields?: unknown[];
   mockResponse?: string;
   extensions?: Record<string, unknown>;
   createdAt: string;
