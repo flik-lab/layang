@@ -144,11 +144,56 @@ contextBridge.exposeInMainWorld("electronGrpcWebTransport", {
   isAvailable: true,
 });
 
+contextBridge.exposeInMainWorld("electronProtoImport", {
+  readZip: (bytes) => ipcRenderer.invoke("proto:read-zip", bytes),
+});
+
+contextBridge.exposeInMainWorld("electronMockScenarioStore", {
+  isAvailable: true,
+  list: (directoryPath) => ipcRenderer.invoke("mock-scenario:list", { directoryPath }),
+  readCachedIndex: (directoryPath) => ipcRenderer.invoke("mock-scenario:cached-index", { directoryPath }),
+  reveal: (directoryPath, ref) => ipcRenderer.invoke("mock-scenario:reveal", { directoryPath, ref }),
+  saveExecution: (directoryPath, ref, settings, expectedRevision, expectedHash, includeSource) =>
+    ipcRenderer.invoke("mock-scenario:save-execution", { directoryPath, ref, settings, expectedRevision, expectedHash, includeSource }),
+  onIndexProgress: (callback) => {
+    const listener = (_event, directoryPath, items) => callback(directoryPath, items);
+    ipcRenderer.on("mock-scenario:index-progress", listener);
+    return () => ipcRenderer.removeListener("mock-scenario:index-progress", listener);
+  },
+  read: (directoryPath, ref) => ipcRenderer.invoke("mock-scenario:read", { directoryPath, ref }),
+  save: (directoryPath, ref, sourceText, expectedRevision, expectedHash) =>
+    ipcRenderer.invoke("mock-scenario:save", { directoryPath, ref, sourceText, expectedRevision, expectedHash }),
+  delete: (directoryPath, ref, expectedRevision, expectedHash) =>
+    ipcRenderer.invoke("mock-scenario:delete", { directoryPath, ref, expectedRevision, expectedHash }),
+  migrate: (directoryPath, confirm = false) => ipcRenderer.invoke("mock-scenario:migrate", { directoryPath, confirm }),
+  applyNative: (directoryPath, ref, expectedRevision, expectedHash) =>
+    ipcRenderer.invoke("mock-scenario:apply-native", { directoryPath, ref, expectedRevision, expectedHash }),
+  applyGateway: (directoryPath, profileId, ref, expectedRevision, expectedHash) =>
+    ipcRenderer.invoke("mock-scenario:apply-gateway", {
+      directoryPath, profileId, ref, expectedRevision, expectedHash,
+    }),
+  sendGateway: (directoryPath, profileId, ref, expectedSavedRevision, expectedSavedHash,
+    expectedRuntimeRevision, expectedRuntimeHash, expectedConfigVersion) =>
+    ipcRenderer.invoke("mock-scenario:send-gateway", {
+      directoryPath, profileId, ref, expectedSavedRevision, expectedSavedHash,
+      expectedRuntimeRevision, expectedRuntimeHash, expectedConfigVersion,
+    }),
+  applySendGateway: (directoryPath, profileId, ref, expectedRevision, expectedHash) =>
+    ipcRenderer.invoke("mock-scenario:apply-send-gateway", {
+      directoryPath, profileId, ref, expectedRevision, expectedHash,
+    }),
+  sendNative: (directoryPath, ref, expectedSavedRevision, expectedSavedHash, expectedRuntimeRevision, expectedRuntimeHash, expectedConfigVersion, options = {}) =>
+    ipcRenderer.invoke("mock-scenario:send-native", {
+      directoryPath, ref, expectedSavedRevision, expectedSavedHash,
+      expectedRuntimeRevision, expectedRuntimeHash, expectedConfigVersion,
+      responseIndex: options.responseIndex, sendAll: options.sendAll === true,
+    }),
+});
+
 contextBridge.exposeInMainWorld("electronWorkspace", {
   createFolder: (bundle, directoryPath) => ipcRenderer.invoke("workspace:create-folder", { bundle, directoryPath }),
   saveFolder: (bundle, directoryPath) => ipcRenderer.invoke("workspace:save-folder", { bundle, directoryPath }),
   openFolder: (directoryPath) => ipcRenderer.invoke("workspace:open-folder", { directoryPath }),
-  readMockServer: (directoryPath) => ipcRenderer.invoke("workspace:read-mock-server", { directoryPath }),
   getDefaultFolder: () => ipcRenderer.invoke("workspace:get-default-folder"),
   ensureDefaultFolder: (bundle) => ipcRenderer.invoke("workspace:ensure-default-folder", { bundle }),
   ensureFolder: (bundle, directoryPath) => ipcRenderer.invoke("workspace:ensure-folder", { bundle, directoryPath }),
@@ -338,6 +383,14 @@ contextBridge.exposeInMainWorld("electronDocs", {
   build: (payload) => ipcRenderer.invoke("docs:build", payload),
   check: (payload) => ipcRenderer.invoke("docs:check", payload),
   isAvailable: true,
+});
+
+// Desktop HTTP transport runs in the privileged process so the renderer can
+// retain normal browser security and CORS enforcement.
+contextBridge.exposeInMainWorld("electronHttp", {
+  isAvailable: true,
+  invoke: (payload) => ipcRenderer.invoke("rest-transport:invoke", payload),
+  cancel: (runId) => ipcRenderer.invoke("rest-transport:cancel", { runId }),
 });
 
 contextBridge.exposeInMainWorld("electronRuntime", {

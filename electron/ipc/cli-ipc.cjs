@@ -2,7 +2,8 @@
 
 const path = require("node:path");
 const { spawn } = require("node:child_process");
-const { app, ipcMain } = require("electron");
+const { app } = require("electron");
+const { ipcMain } = require("../utils/trusted-ipc-main.cjs");
 const { normalizeIntegratedCliCommand } = require("../../lib/cli-command-line.cjs");
 const { readMockStatus, stopMockRuntime } = require("../../lib/cli-mock.cjs");
 

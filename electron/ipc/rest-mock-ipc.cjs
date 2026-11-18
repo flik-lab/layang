@@ -1,6 +1,6 @@
 "use strict";
 
-const { ipcMain } = require("electron");
+const { ipcMain } = require("../utils/trusted-ipc-main.cjs");
 const {
   getRestMockServerStatus,
   startRestMockServer,

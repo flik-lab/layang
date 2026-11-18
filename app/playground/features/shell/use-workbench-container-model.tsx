@@ -160,63 +160,18 @@ import {
   WindowControls,
 } from "../shell/shell-components";
 import {
-  buildDefaultMockScenario,
-  buildMockMappingRows,
-  clearInheritedMockStreamOverridesForDefaultChange,
-  currentFileEmptyEditorText,
-  currentSingleScenarioEmptyEditorText,
-  ensureUniqueMockScenarioId,
-  formatMockScenarioBundle,
-  formatSingleMockScenarioForEditor,
-  generateRandomExampleFromType,
-  getActiveScenarioForMethod,
-  getMockMethodScenarioFile,
   mergeExternalScenarioScenariosIntoProject,
   normalizeMockBindHost,
   normalizeMockPort,
-  normalizeMockStreamSettings,
   normalizeMockServerProject,
-  parseAllMockScenarioFiles,
   parseExternalScenarioImportText,
   parseExternalScenarioImportValue,
-  parseMockScenarioText,
-  parseSingleMockScenarioText,
   parseSimpleYaml,
-  resolveMockActiveScenarioIds,
-  safeMockFileBaseName,
-  safeMockScenarioRelativePath,
-  updateMockMethodScenarioFile,
 } from "../mock-server/mock-scenario-model";
 import { ResponseToolbar, ResponseWorkbenchTabs } from "../response-viewer/response-toolbar";
 import { evaluateAssertions, eventToUiEvent, writeConsoleLog } from "../request-runner/request-result-utils";
 import { createRequestSession } from "../request-runner/request-session-model";
 import { downloadTextFile } from "../../shared/browser-utils";
-import {
-  clearLoggerFiles,
-  getLoggerInfo,
-  openLoggerFolder,
-  updateLoggerSettings,
-  type LayangLoggerInfo,
-  type LayangLoggerSettings,
-  type LayangLogLevel,
-} from "../../shared/logger";
-import {
-  clearCertificatePem,
-  defaultCertificateSettings,
-  getCertificateSettings,
-  importCertificateFile,
-  updateCertificateSettings,
-  type LayangCertificateSettings,
-  type LayangCertificateSettingsInfo,
-} from "../../shared/certificate-settings";
-import {
-  decreaseAppZoom,
-  getAppZoomInfo,
-  increaseAppZoom,
-  resetAppZoom,
-  subscribeAppZoomChanges,
-  type LayangAppZoomInfo,
-} from "../../shared/app-zoom";
 import { toErrorMessage } from "../../shared/error-utils";
 import { formatTimestampShort, timestampForFile } from "../../shared/formatters";
 import { normalizeEditableText, safeJsonParse } from "../../shared/json-utils";
@@ -228,7 +183,6 @@ import {
   defaultAssertion,
   defaultMetadata,
   defaultMockPort,
-  grpcMockOverviewMethodKey,
   iconButtonSx,
   layoutStorageKey,
   minResponseHeight,
@@ -247,12 +201,12 @@ import { useWorkspaceIoActions } from "../workspace/use-workspace-io-actions";
 import { useWorkspaceBundleActions } from "../workspace/use-workspace-bundle-actions";
 import { useWorkspaceLayoutPersistence } from "../workspace/use-workspace-layout-persistence";
 import { useGrpcMockController } from "../mock-server/use-grpc-mock-controller";
+import { useMockMethodSelection } from "../mock-server/use-mock-method-selection";
 import { useMockRuntimePolling } from "../mock-server/runtime/useMockRuntimePolling";
 import { useMockRuntimeEvents } from "../mock-server/runtime/useMockRuntimeEvents";
 import { mockRuntimeStore } from "../mock-server/runtime/mockRuntime.store";
 import { useGrpcMockEditorActions } from "../mock-server/use-grpc-mock-editor-actions";
 import { useWorkspaceFolderAutosave } from "../mock-server/use-mock-workspace-sync";
-import { syncRunningMockServerFromEditor, useMockRuntimeSync } from "../mock-server/use-mock-runtime-sync";
 import { useRequestSessionController } from "../request-editor/use-request-session-controller";
 import { useRequestSessionActions } from "../request-editor/use-request-session-actions";
 import { useSavedRequestActions } from "../saved-requests/use-saved-request-actions";
@@ -273,6 +227,7 @@ import { useDocsActions } from "../docs/use-docs-actions";
 import { useRequestRunnerActions } from "../request-runner/use-request-runner-actions";
 import { useLiveSessionEvents } from "../request-runner/use-live-session-events";
 import { useWorkbenchTheme } from "../shell/use-workbench-theme";
+import { useDesktopPreferences } from "../settings/use-desktop-preferences";
 import { useWorkbenchUiActions } from "../shell/use-workbench-ui-actions";
 import { useWorkbenchViewDerived } from "../shell/use-workbench-view-derived";
 import {
@@ -333,16 +288,6 @@ import {
 type RequestRunnerHandle = ReturnType<typeof useRequestRunner>;
 
 const WORKSPACE_AUTOSAVE_DELAY_MS = 1400;
-const MOCK_RUNTIME_SYNC_DELAY_MS = 280;
-const MOCK_LOCAL_DIRTY_FALLBACK_MS = 2200;
-const loggerLevelOptions: LayangLogLevel[] = ["debug", "info", "warn", "error"];
-const defaultLoggerSettings: LayangLoggerSettings = {
-  level: "info",
-  mirrorToConsole: false,
-  maxBytes: 5 * 1024 * 1024,
-  maxTotalBytes: 50 * 1024 * 1024,
-  retentionDays: 14,
-};
 export function useWorkbenchContainerModel() {
   const managedWindow = useManagedWindowContext();
   const prefersDark = useMediaQuery("(prefers-color-scheme: dark)");
@@ -540,13 +485,6 @@ export function useWorkbenchContainerModel() {
     message: string;
     severity: "info" | "success" | "warning" | "error";
   }>({ id: 0, open: false, message: "", severity: "info" });
-  const [loggerSettingsOpen, setLoggerSettingsOpen] = useState(false);
-  const [loggerInfo, setLoggerInfo] = useState<LayangLoggerInfo | null>(null);
-  const [loggerDraft, setLoggerDraft] = useState<LayangLoggerSettings>(defaultLoggerSettings);
-  const [certificateSettingsOpen, setCertificateSettingsOpen] = useState(false);
-  const [certificateInfo, setCertificateInfo] = useState<LayangCertificateSettingsInfo | null>(null);
-  const [certificateDraft, setCertificateDraft] = useState<LayangCertificateSettings>(defaultCertificateSettings);
-  const [appZoomInfo, setAppZoomInfo] = useState<LayangAppZoomInfo | null>(null);
   const collectionController = useCollectionController();
   const {
     collectionMenuAnchor,
@@ -604,7 +542,6 @@ export function useWorkbenchContainerModel() {
   const protoFolderInputRef = useRef<HTMLInputElement | null>(null);
   const projectInputRef = useRef<HTMLInputElement | null>(null);
   const exampleInputRef = useRef<HTMLInputElement | null>(null);
-  const mockScenarioInputRef = useRef<HTMLInputElement | null>(null);
   const workspaceBundleActions = useWorkspaceBundleActions({
     applyProject,
     applyWorkspaceLayout,
@@ -643,177 +580,36 @@ export function useWorkbenchContainerModel() {
     chooseCustomWorkspacePreference,
   } = workspace;
 
+  const {
+    loggerSettingsOpen,
+    setLoggerSettingsOpen,
+    loggerInfo,
+    loggerDraft,
+    setLoggerDraft,
+    loggerLevelOptions,
+    openLoggerSettings,
+    refreshLoggerSettings,
+    saveLoggerSettings,
+    openLogFolder,
+    clearLogFiles,
+    certificateSettingsOpen,
+    setCertificateSettingsOpen,
+    certificateInfo,
+    certificateDraft,
+    setCertificateDraft,
+    openCertificateSettings,
+    refreshCertificateSettings,
+    saveCertificateSettings,
+    importCertificateSettingsFile,
+    clearCertificateSettingsPem,
+    removeCertificateSettingsItem,
+    appZoomInfo,
+    zoomAppIn,
+    zoomAppOut,
+    resetAppZoomLevel,
+  } = useDesktopPreferences({ hydrated, showToast });
 
-
-  const refreshLoggerSettings = useCallback(async () => {
-    const info = await getLoggerInfo();
-    if (!info) return null;
-    setLoggerInfo(info);
-    if (info.settings) setLoggerDraft(info.settings);
-    return info;
-  }, []);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    void refreshLoggerSettings();
-  }, [hydrated, refreshLoggerSettings]);
-
-  const openLoggerSettings = useCallback(() => {
-    setLoggerSettingsOpen(true);
-    void refreshLoggerSettings();
-  }, [refreshLoggerSettings]);
-
-  const saveLoggerSettings = useCallback(async () => {
-    const info = await updateLoggerSettings(loggerDraft);
-    if (!info?.ok) {
-      showToast(info?.error || "Failed to update logger settings.", "error");
-      return;
-    }
-    setLoggerInfo(info);
-    setLoggerDraft(info.settings);
-    showToast("Logger settings updated.", "success");
-  }, [loggerDraft, showToast]);
-
-  const openLogFolder = useCallback(async () => {
-    const result = await openLoggerFolder();
-    if (!result.ok) showToast(result.error || "Failed to open log folder.", "error");
-  }, [showToast]);
-
-  const clearLogFiles = useCallback(async () => {
-    const info = await clearLoggerFiles();
-    if (!info?.ok) {
-      showToast(info?.error || "Failed to clear log files.", "error");
-      return;
-    }
-    setLoggerInfo(info);
-    showToast("Log files cleared.", "success");
-  }, [showToast]);
-
-  const refreshCertificateSettings = useCallback(async () => {
-    const info = await getCertificateSettings();
-    if (!info) return null;
-    setCertificateInfo(info);
-    if (info.settings) setCertificateDraft(info.settings);
-    return info;
-  }, []);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    void refreshCertificateSettings();
-  }, [hydrated, refreshCertificateSettings]);
-
-  const openCertificateSettings = useCallback(() => {
-    setCertificateSettingsOpen(true);
-    void refreshCertificateSettings();
-  }, [refreshCertificateSettings]);
-
-  const saveCertificateSettings = useCallback(async () => {
-    const info = await updateCertificateSettings(certificateDraft);
-    if (!info?.ok) {
-      showToast(info?.error || "Failed to update certificate settings.", "error");
-      return;
-    }
-    setCertificateInfo(info);
-    setCertificateDraft(info.settings);
-    showToast("Certificate settings updated.", "success");
-  }, [certificateDraft, showToast]);
-
-  const importCertificateSettingsFile = useCallback(async () => {
-    const info = await importCertificateFile();
-    if (!info) {
-      showToast("Certificate import is only available in the desktop app.", "warning");
-      return;
-    }
-    if (info.cancelled) return;
-    if (!info.ok) {
-      showToast(info.error || "Failed to import certificate file.", "error");
-      return;
-    }
-    setCertificateInfo(info);
-    setCertificateDraft(info.settings);
-    showToast("Certificate trusted by Layang. New requests use it immediately.", "success");
-  }, [showToast]);
-
-  const clearCertificateSettingsPem = useCallback(async () => {
-    const info = await clearCertificatePem();
-    if (!info?.ok) {
-      showToast(info?.error || "Failed to clear certificates.", "error");
-      return;
-    }
-    setCertificateInfo(info);
-    setCertificateDraft(info.settings);
-    showToast("Certificates cleared.", "success");
-  }, [showToast]);
-
-  const removeCertificateSettingsItem = useCallback(
-    async (certificateId: string) => {
-      const nextCertificates = certificateDraft.caCertificates.filter(
-        (certificate) => certificate.id !== certificateId,
-      );
-      const info = await updateCertificateSettings({
-        ...certificateDraft,
-        caCertificates: nextCertificates,
-        caCertificatePem: nextCertificates.map((certificate) => certificate.pem).join(""),
-      });
-      if (!info?.ok) {
-        showToast(info?.error || "Failed to remove certificate.", "error");
-        return;
-      }
-      setCertificateInfo(info);
-      setCertificateDraft(info.settings);
-      showToast("Certificate removed.", "success");
-    },
-    [certificateDraft, showToast],
-  );
-
-  const refreshAppZoomInfo = useCallback(async () => {
-    const info = await getAppZoomInfo();
-    if (!info) return null;
-    setAppZoomInfo(info);
-    return info;
-  }, []);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    void refreshAppZoomInfo();
-    return subscribeAppZoomChanges(setAppZoomInfo);
-  }, [hydrated, refreshAppZoomInfo]);
-
-  const applyAppZoomAction = useCallback(
-    async (action: () => Promise<LayangAppZoomInfo | null>, successMessage: string) => {
-      const info = await action();
-      if (!info) {
-        showToast("Zoom is only available in the desktop app.", "warning");
-        return;
-      }
-      if (!info.ok) {
-        showToast(info.error || "Failed to update zoom.", "error");
-        return;
-      }
-      setAppZoomInfo(info);
-      showToast(successMessage, "success");
-    },
-    [showToast],
-  );
-
-  const zoomAppIn = useCallback(() => applyAppZoomAction(increaseAppZoom, "App zoom increased."), [applyAppZoomAction]);
-
-  const zoomAppOut = useCallback(
-    () => applyAppZoomAction(decreaseAppZoom, "App zoom decreased."),
-    [applyAppZoomAction],
-  );
-
-  const resetAppZoomLevel = useCallback(
-    () => applyAppZoomAction(resetAppZoom, "App zoom reset to 100%."),
-    [applyAppZoomAction],
-  );
-
-  const grpcMock = useGrpcMockController({
-    hydrated,
-    workspaceFolderPath,
-    localDirtyFallbackMs: MOCK_LOCAL_DIRTY_FALLBACK_MS,
-    showToast,
-  });
+  const grpcMock = useGrpcMockController();
   const {
     mockServer,
     setMockServer,
@@ -821,32 +617,12 @@ export function useWorkbenchContainerModel() {
     setMockServerStatus,
     webAccessStatus,
     setWebAccessStatus,
-    mockSettingsOpen,
-    setMockSettingsOpen,
-    mockScenarioEditorDraft,
-    setMockScenarioEditorDraft,
-    mockScenarioEditorDirty,
-    setMockScenarioEditorDirty,
-    mockScenarioEditorError,
-    setMockScenarioEditorError,
-    mockScenarioDialogOpen,
-    setMockScenarioDialogOpen,
-    mockScenarioEditing,
-    setMockScenarioEditing,
-    mockScenarioDraftId,
-    setMockScenarioDraftId,
+
     mockRuntimeUpdateSeqRef,
     mockRuntimeAppliedSeqRef,
-    mockRuntimeLastSyncSignatureRef,
+
     mockServerRef,
-    markMockServerLocalDirty,
-    clearMockServerLocalDirty,
-    refreshGrpcMockServerFromWorkspace,
   } = grpcMock;
-  const [pendingMockScenarioNavigation, setPendingMockScenarioNavigation] = useState<{
-    methodKey: string;
-    scenarioId: string;
-  } | null>(null);
   useMockRuntimeEvents();
   useMockRuntimePolling({ mockServer, enabled: managedWindow.context.kind !== "performance" });
 
@@ -914,7 +690,6 @@ export function useWorkbenchContainerModel() {
     workspaceFolderPath,
     workspaceAutosaveRef,
     getWorkspaceExportBundle,
-    clearMockServerLocalDirty,
     dependencies: [
       transportMode,
       baseUrl,
@@ -950,48 +725,14 @@ export function useWorkbenchContainerModel() {
     ],
   });
 
-  useMockRuntimeSync({
-    delayMs: MOCK_RUNTIME_SYNC_DELAY_MS,
-    mockServer,
-    mockServerStatus,
-    setMockServerStatus,
-    loaded,
-    protoFiles,
-    protoLibraries,
-    protoRuntimeRegistry,
-    workspaceFolderPath,
-    activeProtoLibraryId,
-    activeProtoVersionId,
-    updateSeqRef: mockRuntimeUpdateSeqRef,
-    appliedSeqRef: mockRuntimeAppliedSeqRef,
-    lastSyncSignatureRef: mockRuntimeLastSyncSignatureRef,
-  });
-
   const flushRunningMockServersBeforeRequest = useCallback(async () => {
     const tasks: Array<Promise<unknown>> = [];
-    const currentGrpcStatus = mockRuntimeStore.getGrpc();
     const currentRestStatus = mockRuntimeStore.getRest();
     const currentWebSocketStatus = mockRuntimeStore.getWebSocket();
 
-    if (currentGrpcStatus.running && currentGrpcStatus.runtimeSource !== "cli") {
-      tasks.push(
-        syncRunningMockServerFromEditor({
-          mockServer: mockServerRef.current,
-          mockServerStatus: currentGrpcStatus,
-          setMockServerStatus,
-          loaded,
-          protoFiles,
-          protoLibraries,
-          protoRuntimeRegistry,
-          workspaceFolderPath,
-          activeProtoLibraryId,
-          activeProtoVersionId,
-          updateSeqRef: mockRuntimeUpdateSeqRef,
-          appliedSeqRef: mockRuntimeAppliedSeqRef,
-          lastSyncSignatureRef: mockRuntimeLastSyncSignatureRef,
-        }),
-      );
-    }
+    // Canonical v3 scenarios are saved and explicitly applied via the
+    // repository. A REST/WS request must never silently re-apply an old gRPC
+    // editor draft or overwrite the active gRPC snapshot.
 
     if (currentRestStatus.running && window.electronRestMock?.update) {
       tasks.push(
@@ -1017,14 +758,6 @@ export function useWorkbenchContainerModel() {
 
     if (tasks.length) await Promise.allSettled(tasks);
   }, [
-    setMockServerStatus,
-    loaded,
-    protoFiles,
-    protoLibraries,
-    protoRuntimeRegistry,
-    workspaceFolderPath,
-    activeProtoLibraryId,
-    activeProtoVersionId,
     buildRestMockPayloadSnapshot,
     setRestMockStatus,
     buildWebSocketMockPayloadSnapshot,
@@ -1206,64 +939,16 @@ export function useWorkbenchContainerModel() {
     return loaded.methods.find((method) => methodKey(method) === selectedMethodKey) ?? null;
   }, [activeSession?.grpc, loaded, protoRuntimeRegistry, selectedMethodKey]);
 
-  const mockSelectedMethod = useMemo(() => {
-    const explicitKey = mockSelectedMethodKey.trim();
-    if (explicitKey === grpcMockOverviewMethodKey) return null;
-
-    const activeCompiled =
-      activeProtoLibraryId && activeProtoVersionId
-        ? protoRuntimeRegistry.resolveVersion(activeProtoLibraryId, activeProtoVersionId)
-        : null;
-
-    if (explicitKey) {
-      const activeRevisionMatch = activeCompiled?.loaded.methods.find((method) => methodKey(method) === explicitKey);
-      if (activeRevisionMatch) return activeRevisionMatch;
-
-      const binding = mockServer.methodBindings?.[explicitKey];
-      if (binding) {
-        const boundCompiled = protoRuntimeRegistry.resolveVersion(binding.libraryId, binding.versionId);
-        const boundMatch = boundCompiled?.loaded.methods.find((method) => methodKey(method) === explicitKey);
-        if (boundMatch) return boundMatch;
-      }
-
-      for (const source of mockServer.protoSources ?? []) {
-        const compiled = protoRuntimeRegistry.resolveVersion(source.libraryId, source.versionId);
-        const attachedMatch = compiled?.loaded.methods.find((method) => methodKey(method) === explicitKey);
-        if (attachedMatch) return attachedMatch;
-      }
-
-      const loadedMatch = loaded?.methods.find((method) => methodKey(method) === explicitKey);
-      if (loadedMatch) return loadedMatch;
-    }
-
-    const selectedMatch = activeCompiled?.loaded.methods.find((method) => methodKey(method) === selectedMethodKey);
-    if (selectedMatch) return selectedMatch;
-    if (activeCompiled?.loaded.methods[0]) return activeCompiled.loaded.methods[0];
-
-    const loadedSelectedMatch = loaded?.methods.find((method) => methodKey(method) === selectedMethodKey);
-    if (loadedSelectedMatch) return loadedSelectedMatch;
-    if (loaded?.methods[0]) return loaded.methods[0];
-
-    for (const source of mockServer.protoSources ?? []) {
-      const compiled = protoRuntimeRegistry.resolveVersion(source.libraryId, source.versionId);
-      if (compiled?.loaded.methods[0]) return compiled.loaded.methods[0];
-    }
-    return null;
-  }, [
+  const mockSelectedMethod = useMockMethodSelection({
     activeProtoLibraryId,
     activeProtoVersionId,
     loaded,
     mockSelectedMethodKey,
     selectedMethodKey,
-    mockServer.methodBindings,
-    mockServer.protoSources,
+    mockServer,
     protoRuntimeRegistry,
-  ]);
-
-  useEffect(() => {
-    if (mockSelectedMethodKey || !mockSelectedMethod) return;
-    setMockSelectedMethodKey(methodKey(mockSelectedMethod));
-  }, [mockSelectedMethod, mockSelectedMethodKey]);
+    setMockSelectedMethodKey,
+  });
 
   const activeCollectionRequest = useMemo(() => {
     if (!activeCollectionRequestId) return null;
@@ -1281,10 +966,17 @@ export function useWorkbenchContainerModel() {
   const activeDocKey =
     activeMethodKey || webSocketDocKey(activeCollectionRequest) || restDocKey(activeCollectionRequest);
   const activeExampleKey = activeMethodKey || activeCollectionKey;
-  const currentExamples = useMemo(
-    () => (activeExampleKey ? examples.filter((example) => savedExampleKey(example) === activeExampleKey) : []),
-    [examples, activeExampleKey],
-  );
+  const exampleOwnerRequestId = activeCollectionRequest?.id ?? "";
+  const currentExamples = useMemo(() => {
+    if (!activeExampleKey) return [];
+    // A saved request shows its own examples (<request>.examples/); unlinked examples of the same
+    // RPC still show so older workspaces keep working.
+    return examples.filter((example) =>
+      exampleOwnerRequestId && example.requestId
+        ? example.requestId === exampleOwnerRequestId
+        : savedExampleKey(example) === activeExampleKey,
+    );
+  }, [examples, activeExampleKey, exampleOwnerRequestId]);
   const currentHistory = useMemo(
     () => (activeExampleKey ? history.filter((item) => item.method === activeExampleKey) : []),
     [history, activeExampleKey],
@@ -1449,7 +1141,6 @@ export function useWorkbenchContainerModel() {
     }
   }, [activeWebSocketMockScenarios, wsMockScenarioId]);
 
-
   const activeDocsResult = activeMethodKey
     ? ([...docResults]
         .sort((a, b) => b.savedAt.localeCompare(a.savedAt))
@@ -1462,9 +1153,13 @@ export function useWorkbenchContainerModel() {
       latestResultByMethod.get(activeMethodKey) ??
       null)
     : null;
+  // gRPC scenario payloads live exclusively in the v3 repository. The shell
+  // deliberately owns no parsed scenario bodies; docs/CLI/runtime hydrate on
+  // demand inside the privileged process. Keep the compatibility result shape
+  // until the old editor controller is completely detached.
   const parsedMockConfig = useMemo(
-    () => parseAllMockScenarioFiles(mockServer, loaded?.methods ?? []),
-    [mockServer, loaded],
+    () => ({ ok: true as const, bundle: { version: 1 as const, scenarios: [] } }),
+    [],
   );
   const allMockScenarios = parsedMockConfig.ok ? parsedMockConfig.bundle.scenarios : [];
   const documentationPages = useMemo<UnifiedDocsPage[]>(
@@ -1697,13 +1392,6 @@ export function useWorkbenchContainerModel() {
           .sort((a, b) => b.savedAt.localeCompare(a.savedAt))
           .find((item) => grpcBindingIdentity(item.grpc, item.methodKey) === identity)?.result;
         const session = requestSessions.find((item) => grpcBindingIdentity(item.grpc, item.methodKey) === identity);
-        const mockBinding = mockServer.methodBindings?.[key];
-        const includeMockScenarios = !doc.grpc || !mockBinding || grpcBindingIdentity(mockBinding, key) === identity;
-        const methodMocks = includeMockScenarios
-          ? allMockScenarios.filter(
-              (scenario) => scenario.service === method.serviceName && scenario.method === method.methodName,
-            )
-          : [];
         return {
           ...doc,
           serviceName: method.serviceName,
@@ -1713,7 +1401,7 @@ export function useWorkbenchContainerModel() {
             examples: methodExamples,
             protoFiles: compiled?.version.files ?? protoFiles,
             latestResult: savedResult ?? null,
-            mockScenarios: methodMocks,
+            mockScenarios: allMockScenarios,
             currentRequestJson: session?.requestJson,
             currentMetadata: session?.metadata,
           }),
@@ -1773,109 +1461,6 @@ export function useWorkbenchContainerModel() {
     protoRuntimeRegistry,
     mockServer.methodBindings,
   ]);
-  const currentMockFile = useMemo(
-    () => getMockMethodScenarioFile(mockServer, mockSelectedMethod),
-    [mockServer, mockSelectedMethod],
-  );
-  const currentMockParse = useMemo(
-    () => parseMockScenarioText(currentMockFile.scenarioText, currentMockFile.format, mockServer.port),
-    [currentMockFile.scenarioText, currentMockFile.format, mockServer.port],
-  );
-  const currentMockScenarios = useMemo(() => {
-    if (!mockSelectedMethod || !currentMockParse.ok) return [];
-    return currentMockParse.bundle.scenarios.filter(
-      (scenario) =>
-        scenario.service === mockSelectedMethod.serviceName && scenario.method === mockSelectedMethod.methodName,
-    );
-  }, [mockSelectedMethod, currentMockParse]);
-  const currentMockActiveScenario = useMemo(
-    () =>
-      getActiveScenarioForMethod(
-        currentMockParse.ok ? currentMockParse.bundle.scenarios : [],
-        mockSelectedMethod,
-        mockServer.selectedScenarioIds,
-      ),
-    [currentMockParse, mockSelectedMethod, mockServer.selectedScenarioIds],
-  );
-  const currentMockSelectedScenarioId = currentMockActiveScenario?.id ?? currentMockScenarios[0]?.id ?? "";
-
-  useEffect(() => {
-    if (!hydrated || !mockSelectedMethod || currentMockScenarios.length === 0) return;
-    const key = methodKey(mockSelectedMethod);
-    const selectedId = mockServer.selectedScenarioIds[key];
-    if (selectedId && currentMockScenarios.some((scenario) => scenario.id === selectedId)) return;
-    const nextId = currentMockActiveScenario?.id ?? currentMockScenarios[0]?.id ?? "";
-    if (!nextId) return;
-    setMockServer((current) => {
-      const currentSelectedId = current.selectedScenarioIds[key];
-      if (currentSelectedId && currentMockScenarios.some((scenario) => scenario.id === currentSelectedId))
-        return current;
-      return {
-        ...current,
-        selectedScenarioIds: { ...current.selectedScenarioIds, [key]: nextId },
-        updatedAt: new Date().toISOString(),
-      };
-    });
-  }, [
-    hydrated,
-    mockSelectedMethod,
-    currentMockScenarios,
-    currentMockActiveScenario,
-    mockServer.selectedScenarioIds,
-    setMockServer,
-  ]);
-
-  const currentMockEditorKey = mockSelectedMethod
-    ? `${methodKey(mockSelectedMethod)}:${currentMockSelectedScenarioId || "new"}:${currentMockFile.format}`
-    : "";
-  const currentMockEditorText = useMemo(() => {
-    if (!mockSelectedMethod) return currentFileEmptyEditorText(currentMockFile.format);
-    if (
-      mockScenarioEditorDraft &&
-      mockScenarioEditorDraft.methodKey === methodKey(mockSelectedMethod) &&
-      mockScenarioEditorDraft.scenarioId === currentMockSelectedScenarioId &&
-      mockScenarioEditorDraft.format === currentMockFile.format
-    ) {
-      return mockScenarioEditorDraft.text;
-    }
-    const scenario = currentMockActiveScenario ?? currentMockScenarios[0] ?? null;
-    return scenario
-      ? formatSingleMockScenarioForEditor(scenario, currentMockFile.format)
-      : currentSingleScenarioEmptyEditorText(mockSelectedMethod, currentMockFile.format);
-  }, [
-    mockSelectedMethod,
-    currentMockFile.format,
-    mockScenarioEditorDraft,
-    currentMockSelectedScenarioId,
-    currentMockActiveScenario,
-    currentMockScenarios,
-  ]);
-  const currentMockEditorParse = useMemo(() => {
-    if (!mockSelectedMethod) {
-      return parseSingleMockScenarioText(
-        currentSingleScenarioEmptyEditorText(null, currentMockFile.format),
-        currentMockFile.format,
-        mockServer.port,
-        null,
-      );
-    }
-    const scenario = currentMockActiveScenario ?? currentMockScenarios[0] ?? null;
-    const savedText = scenario
-      ? formatSingleMockScenarioForEditor(scenario, currentMockFile.format)
-      : currentSingleScenarioEmptyEditorText(mockSelectedMethod, currentMockFile.format);
-    return parseSingleMockScenarioText(savedText, currentMockFile.format, mockServer.port, mockSelectedMethod);
-  }, [currentMockActiveScenario, currentMockFile.format, currentMockScenarios, mockServer.port, mockSelectedMethod]);
-  const mockMappingRows = useMemo(
-    () =>
-      buildMockMappingRows(
-        loaded?.methods ?? [],
-        parsedMockConfig.ok ? parsedMockConfig.bundle.scenarios : [],
-        mockServer.selectedScenarioIds,
-        mockServer.enabledMethods,
-      ),
-    [loaded, parsedMockConfig, mockServer.selectedScenarioIds, mockServer.enabledMethods],
-  );
-
   const rawActiveTransportMode = activeSession?.transportMode ?? transportMode;
   const activeIsWebSocket = activeCollectionRequest?.kind === "websocket" || activeSession?.requestKind === "websocket";
   const activeIsRest = activeCollectionRequest?.kind === "rest" || activeSession?.requestKind === "rest";
@@ -1945,12 +1530,6 @@ export function useWorkbenchContainerModel() {
     return () => window.clearTimeout(timer);
   }, [collections, restMockServer]);
 
-  useEffect(() => {
-    setMockScenarioEditorDraft(null);
-    setMockScenarioEditorDirty(false);
-    setMockScenarioEditorError("");
-  }, [currentMockEditorKey]);
-
   const activeRunning = Boolean(activeSession?.running);
   const benchmark = useBenchmarkRunner({
     loaded,
@@ -1985,8 +1564,7 @@ export function useWorkbenchContainerModel() {
     baseUrl,
     closeManualWebSocketClient: closeManualWebSocketClientProxy,
     collections,
-    currentMockActiveScenario,
-    currentMockScenarios,
+
     environmentKey,
     getResponseEvents,
     findCollectionRequestById,
@@ -2046,7 +1624,7 @@ export function useWorkbenchContainerModel() {
     closeOtherRequestSessions,
     closeRequestSession,
     generateRandomRequestJson,
-    generateRequestJsonFromSelectedScenario,
+
     handleRequestJsonChange,
     patchActiveCollectionRequest,
     persistProjectSnapshotNow,
@@ -2218,7 +1796,6 @@ export function useWorkbenchContainerModel() {
     sidebarOpenBeforeNarrowRef.current = null;
     if (shouldRestore && !sidebarOpen) setSidebarOpen(true);
   }, [narrowViewport, sidebarOpen, setSidebarOpen]);
-
 
   // Navigation section changes live in a tiny external store so switching the
   // activity rail does not invalidate this giant model. This value only depends
@@ -2938,90 +2515,37 @@ export function useWorkbenchContainerModel() {
   const { handleResponseBodyScroll, scrollMessagesToTop, toggleTheme } = uiActions;
 
   const grpcMockEditorActions = useGrpcMockEditorActions({
-    activeMethodKey: mockSelectedMethod ? methodKey(mockSelectedMethod) : "",
-    applyProject,
-    buildDefaultMockScenario,
+    selectedMethod: mockSelectedMethod,
     clamp,
-    clearInheritedMockStreamOverridesForDefaultChange,
-    clearMockServerLocalDirty,
-    currentMockActiveScenario,
-    currentMockEditorText,
-    currentMockFile,
-    currentMockScenarios,
-    allMockScenarios,
-    currentMockSelectedScenarioId,
-    currentSingleScenarioEmptyEditorText,
     defaultMockPort,
-    downloadTextFile,
-    ensureUniqueMockScenarioId,
-    formatMockScenarioBundle,
-    formatSingleMockScenarioForEditor,
-    generateRandomExampleFromType,
-    getMockMethodScenarioFile,
     getProjectSnapshot,
     getWorkspaceExportBundle,
     loaded,
-    markMockServerLocalDirty,
-    mergeExternalScenarioScenariosIntoProject,
     methodKey,
     mockRuntimeAppliedSeqRef,
-    mockRuntimeLastSyncSignatureRef,
     mockRuntimeUpdateSeqRef,
-    mockScenarioDialogOpen,
-    mockScenarioDraftId,
-    mockScenarioEditing,
-    mockScenarioEditorDraft,
-    mockScenarioEditorDirty,
-    mockScenarioInputRef,
     mockServer,
     mockServerRef,
     mockServerStatus,
     normalizeMockBindHost,
     normalizeMockPort,
-    normalizeMockStreamSettings,
-    parseAllMockScenarioFiles,
-    parseExternalScenarioImportText,
-    parseMockScenarioText,
-    parseSingleMockScenarioText,
     persistProjectSnapshotNow,
     protoFiles,
     protoLibraries,
     protoRuntimeRegistry,
-    setProtoLibraries,
     activeProtoLibraryId,
     activeProtoVersionId,
-    refreshGrpcMockServerFromWorkspace,
-    requestJson,
-    resolveMockActiveScenarioIds,
-    safeMockFileBaseName,
-    safeMockScenarioRelativePath,
-    selectMethod,
-    selectedMethod: mockSelectedMethod,
-    setMockScenarioDialogOpen,
-    setMockScenarioDraftId,
-    setMockScenarioEditing,
-    setMockScenarioEditorDraft,
-    setMockScenarioEditorDirty,
-    setMockScenarioEditorError,
-    setPendingMockScenarioNavigation,
     setMockServer,
     setMockServerStatus,
     setWebAccessStatus,
-    setMockSettingsOpen,
-    setRequestTab,
-    setSidebarOpen,
-    setSideSection,
     setWorkspaceFolderPath,
     showToast,
     toErrorMessage,
-    updateMockMethodScenarioFile,
     workspaceFolderPath,
     workspaceFolderStorageKey,
   });
   const {
-    handleMockScenarioTextChange,
-    saveMockScenarioEditorDraft,
-    discardMockScenarioEditorDraft,
+
     handleMockPortChange,
     handleMockBindHostChange,
     handleGatewayModeChange,
@@ -3047,53 +2571,13 @@ export function useWorkbenchContainerModel() {
     deleteGatewayProfile,
     handleGatewayMethodBehaviorChange,
     saveGatewayCaptureAsMock,
-    handleMockFormatChange,
-    formatMockScenarioEditor,
-    addMockScenarioFromCurrent,
-    addMockScenarioForMethod,
-    handleMockScenarioSelectChange,
-    forceMockScenarioSelectChange,
-    openMockScenarioManager,
-    confirmRenameMockScenario,
-    deleteEditingMockScenario,
-    handleMockMethodEnabledChange,
-    handleMockScenarioStreamSettingsChange,
-    handleMockGlobalStreamBaseChange,
-    importMockScenarioFile,
-    exportMockScenarioFile,
-    fetchMockScenarioFilesFromWorkspace,
+
     openMockScenarioFolder,
     startMockServer,
-    handleGrpcMockLivePushSend,
     stopMockServer,
     startWebAccess,
     stopWebAccess,
   } = grpcMockEditorActions;
-
-  const resolvePendingMockScenarioNavigation = useCallback(
-    (decision: "save" | "discard" | "cancel") => {
-      const pending = pendingMockScenarioNavigation;
-      if (!pending) return;
-      if (decision === "cancel") {
-        setPendingMockScenarioNavigation(null);
-        return;
-      }
-      if (decision === "save") {
-        const saved = saveMockScenarioEditorDraft();
-        if (!saved) return;
-      } else {
-        discardMockScenarioEditorDraft();
-      }
-      setPendingMockScenarioNavigation(null);
-      forceMockScenarioSelectChange(pending.methodKey, pending.scenarioId);
-    },
-    [
-      discardMockScenarioEditorDraft,
-      forceMockScenarioSelectChange,
-      pendingMockScenarioNavigation,
-      saveMockScenarioEditorDraft,
-    ],
-  );
 
   const handleResponseTabChange = useCallback(
     (value: ResponseTab) => {
@@ -3161,7 +2645,7 @@ export function useWorkbenchContainerModel() {
     createRestMockPresetScenario,
     createWebSocketMockScenarioForRequest,
     currentExamples,
-    currentMockScenarios,
+
     currentRestDoc,
     currentWebSocketDoc,
     defaultRestMockResponse,
@@ -3470,8 +2954,6 @@ export function useWorkbenchContainerModel() {
     closeAllRequestSessions,
     activeRunning,
     runActiveRequest: runActiveRequestFromCommand,
-    saveActiveMockDraft: saveMockScenarioEditorDraft,
-    mockDraftDirty: mockScenarioEditorDirty,
     getActiveSection: getWorkbenchSideSection,
     windowKind: managedWindow.context.kind,
   });
@@ -3731,8 +3213,7 @@ export function useWorkbenchContainerModel() {
     activeWebSocketMockScenario,
     activeWebSocketMockScenarios,
     addMetadataRow,
-    addMockScenarioForMethod,
-    addMockScenarioFromCurrent,
+
     addRestMockScenario,
     createRestMockFromActiveRequest,
     addRestMockScenarioPair,
@@ -3768,7 +3249,7 @@ export function useWorkbenchContainerModel() {
     commitTargetDraft,
     confirmAddCollection,
     confirmAddCollectionRequest,
-    confirmRenameMockScenario,
+
     confirmSaveCurrentEnvironment,
     copyActiveWebSocketMockResponse,
     copyPreviewUrl,
@@ -3776,18 +3257,13 @@ export function useWorkbenchContainerModel() {
     examples,
     currentHistory,
     currentMethodDoc,
-    currentMockActiveScenario,
-    currentMockEditorKey,
-    currentMockEditorParse,
-    currentMockEditorText,
-    currentMockFile,
-    currentMockScenarios,
+
     currentRestDoc,
     currentWebSocketDoc,
     documentation,
     documentationPages,
     deleteCurrentMethodDoc,
-    deleteEditingMockScenario,
+
     designSystem,
     docsPreview,
     downloadTextFile,
@@ -3806,8 +3282,7 @@ export function useWorkbenchContainerModel() {
     exportCurrentMethodExamples,
     exportGeneratedProtoDocsHtml,
     exportGeneratedProtoDocsMarkdown,
-    exportMockScenarioFile,
-    fetchMockScenarioFilesFromWorkspace,
+
     exportProject,
     exportPublicDocs,
     exportResponseStable,
@@ -3815,9 +3290,9 @@ export function useWorkbenchContainerModel() {
     featureEnvironmentLabel,
     featureEnvironmentShortLabel,
     featureGetEnvironmentTransportTarget,
-    formatMockScenarioEditor,
+
     generateRandomRequestJson,
-    generateRequestJsonFromSelectedScenario,
+
     handleMockBindHostChange,
     handleGatewayModeChange,
     handleGatewayUpstreamChange,
@@ -3842,15 +3317,9 @@ export function useWorkbenchContainerModel() {
     deleteGatewayProfile,
     handleGatewayMethodBehaviorChange,
     saveGatewayCaptureAsMock,
-    handleMockFormatChange,
-    handleMockGlobalStreamBaseChange,
-    handleMockMethodEnabledChange,
+
     handleMockPortChange,
-    handleMockScenarioSelectChange,
-    handleMockScenarioStreamSettingsChange,
-    handleMockScenarioTextChange,
-    saveMockScenarioEditorDraft,
-    discardMockScenarioEditorDraft,
+
     handleProtoFiles,
     hydrated,
     handleRequestJsonChange,
@@ -3871,7 +3340,7 @@ export function useWorkbenchContainerModel() {
     openGrpcMethodRequestDialog,
     openGrpcMethodsRequestDialog,
     addGrpcMethodsToCollection,
-    importMockScenarioFile,
+
     importWorkspaceFiles,
     isNativeBridgeAvailable,
     lastResult,
@@ -3883,23 +3352,16 @@ export function useWorkbenchContainerModel() {
     methodTypeLabel,
     minResponseHeight,
     minResponseWidth,
-    mockMappingRows,
+
     mockSelectedMethod,
     mockSelectedMethodKey,
     setMockSelectedMethodKey,
-    mockScenarioDialogOpen,
-    mockScenarioDraftId,
-    mockScenarioEditing,
-    mockScenarioEditorDirty,
-    mockScenarioEditorError,
-    pendingMockScenarioNavigation,
-    resolvePendingMockScenarioNavigation,
-    mockScenarioInputRef,
+
     mockServer,
     setMockServer,
     mockServerStatus,
     webAccessStatus,
-    mockSettingsOpen,
+
     openAddCollectionDialog,
     openAddCollectionRequestDialog,
     openDocFromSidebar,
@@ -3910,7 +3372,7 @@ export function useWorkbenchContainerModel() {
     openEnvironmentManager,
     bulkAddEnvironments,
     openMockScenarioFolder,
-    openMockScenarioManager,
+
     openProtoFolderImporter,
     openWebSocketMockScenarioFromSidebar,
     createNewWorkspaceFolder,
@@ -4038,11 +3500,7 @@ export function useWorkbenchContainerModel() {
     setEnvMenuAnchor,
     setEnvironmentKey,
     setExamples,
-    setMockScenarioDialogOpen,
-    setMockScenarioDraftId,
-    setMockScenarioEditorDirty,
-    setMockScenarioEditorError,
-    setMockSettingsOpen,
+
     setNativeTarget,
     setProtoPreview,
     setCollectionFilter,
@@ -4080,7 +3538,6 @@ export function useWorkbenchContainerModel() {
     sidebarWidthPx,
     slugify,
     startMockServer,
-    handleGrpcMockLivePushSend,
     startWebAccess,
     startRestMockServer,
     startWebSocketMockServer,

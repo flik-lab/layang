@@ -75,7 +75,7 @@ workspace:
 format:
   collections: yaml-entity-v2
   protos: revision-snapshot-v1
-  mocks: native-yaml-v2
+  mocks: grpc-file-per-scenario-v3
   examples: request-ref-v2
   localState: .layang/
 ```
@@ -244,12 +244,17 @@ Tracked YAML may contain a portable reference such as `certificateRef` or `local
 The writer maintains this ignore block:
 
 ```gitignore
-# BEGIN Layang local state
+# BEGIN Layang managed ignores
 .layang/
+mocks/grpc/.cache/
 environments/*.local.yml
 *.secret.yml
 *.local.yml
-# END Layang local state
+docs/build-manifest.yml
+docs/site/
+docs/published/
+docs/wiki-export/
+# END Layang managed ignores
 ```
 
 ## Documentation and external editing

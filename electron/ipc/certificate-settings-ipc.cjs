@@ -2,7 +2,8 @@
 
 const fs = require("node:fs/promises");
 const path = require("node:path");
-const { ipcMain, dialog, session } = require("electron");
+const { dialog, session } = require("electron");
+const { ipcMain } = require("../utils/trusted-ipc-main.cjs");
 const {
   getHttpsEnvironment,
   openHttpsCertificateFolder,

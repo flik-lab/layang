@@ -161,6 +161,8 @@ export type SavedExample = {
   expectedStatus?: string;
   expectedTrailers?: MetadataPair[];
   assertions?: string;
+  /** gRPC mock scenario id that answers this example (`example.mock.scenario`). */
+  mockScenario?: string;
   tags?: string[];
   enabled?: boolean;
   documentation?: SavedExampleDocumentation;
@@ -206,6 +208,13 @@ export type ApiCollectionRequest = {
   environmentKey?: EnvironmentKey;
   /** Optional shared default committed with the request. */
   defaultEnvironmentKey?: EnvironmentKey;
+  /** Assertions committed with the request (`request.assertions`); run by the CLI and the desktop runner. */
+  assertionJson?: string;
+  /** Transport committed with the request (`request.transport.mode`). */
+  transportMode?: TransportMode;
+  /** Committed native target reference (`request.transport.nativeTargetRef`). */
+  nativeTargetRef?: string;
+  formFields?: unknown[];
   mockResponse?: string;
   extensions?: Record<string, unknown>;
   createdAt: string;
@@ -447,6 +456,11 @@ export type GrpcGatewayLog = {
 
 export type GrpcGatewayStatus = {
   running: boolean;
+  workspaceDirectory?: string;
+  configVersion?: number;
+  appliedRevision?: number;
+  scenarioContentHash?: string;
+  activeManualStreamCount?: number;
   profileId?: string;
   name?: string;
   mode?: GrpcGatewayMode;
@@ -536,6 +550,9 @@ export type MockServerStatus = {
   startedAt?: string;
   updatedAt?: string;
   configVersion?: number;
+  appliedRevision?: number;
+  scenarioContentHash?: string;
+  source?: string;
   activeCallCount?: number;
   pendingTimerCount?: number;
   activeLivePushStreamCount?: number;

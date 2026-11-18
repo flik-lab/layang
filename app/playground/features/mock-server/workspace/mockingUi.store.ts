@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 
 export type MockingMethodFilter = "all" | "live" | "ready" | "setup";
+type ScenarioNavigation = { methodKey: string; create: boolean };
 
 export type MockingUiSnapshot = {
   query: string;
@@ -10,6 +11,7 @@ export type MockingUiSnapshot = {
   selectedMethodId: string;
   collapsedProtoIds: ReadonlySet<string>;
   collapsedServiceIds: ReadonlySet<string>;
+  scenarioNavigation: ScenarioNavigation | null;
 };
 
 export type MockingUiStore = {
@@ -20,6 +22,8 @@ export type MockingUiStore = {
   selectMethod(id: string): void;
   toggleProto(id: string): void;
   toggleService(id: string): void;
+  openScenarios(methodKey: string, create?: boolean): void;
+  consumeScenarioNavigation(request: ScenarioNavigation): void;
 };
 
 const initialSnapshot: MockingUiSnapshot = {
@@ -28,6 +32,7 @@ const initialSnapshot: MockingUiSnapshot = {
   selectedMethodId: "",
   collapsedProtoIds: new Set<string>(),
   collapsedServiceIds: new Set<string>(),
+  scenarioNavigation: null,
 };
 
 export function createMockingUiStore(): MockingUiStore {
@@ -67,6 +72,10 @@ export function createMockingUiStore(): MockingUiStore {
     },
     toggleProto: (id) => publish({ ...snapshot, collapsedProtoIds: toggleSet(snapshot.collapsedProtoIds, id) }),
     toggleService: (id) => publish({ ...snapshot, collapsedServiceIds: toggleSet(snapshot.collapsedServiceIds, id) }),
+    openScenarios: (methodKey, create = false) => publish({ ...snapshot, scenarioNavigation: { methodKey, create } }),
+    consumeScenarioNavigation: (request) => {
+      if (snapshot.scenarioNavigation === request) publish({ ...snapshot, scenarioNavigation: null });
+    },
   };
 }
 
@@ -74,4 +83,9 @@ export const mockingUiStore = createMockingUiStore();
 
 export function useMockingUiSnapshot(): MockingUiSnapshot {
   return useSyncExternalStore(mockingUiStore.subscribe, mockingUiStore.getSnapshot, mockingUiStore.getSnapshot);
+}
+
+const getScenarioNavigation = () => mockingUiStore.getSnapshot().scenarioNavigation;
+export function useScenarioNavigation() {
+  return useSyncExternalStore(mockingUiStore.subscribe, getScenarioNavigation, () => null);
 }

@@ -32,7 +32,6 @@ type ActionContext = Record<string, any> & {
   loaded: LoadedProto | null;
   protoFiles: ProtoSourceFile[];
   allMockScenarios: MockScenario[];
-  currentMockScenarios: MockScenario[];
   metadata: MetadataPair[];
   environments: EnvironmentConfig[];
   selectedMethod: RpcMethodInfo | null;
@@ -64,7 +63,7 @@ export function useDocsActions(ctx: ActionContext) {
     createId,
     createRequestSession,
     currentExamples,
-    currentMockScenarios,
+
     docResults,
     downloadTextFile,
     environments,
@@ -130,6 +129,10 @@ export function useDocsActions(ctx: ActionContext) {
     const methodName = selectedMethod?.methodName ?? activeCollectionRequest?.name ?? "WebSocket Request";
     const example: SavedExample = {
       id: createId(),
+      // Stored next to the open saved request (<request>.examples/), not just under its RPC.
+      ...(activeCollectionRequest?.id
+        ? { requestId: activeCollectionRequest.id, requestRef: { id: activeCollectionRequest.id } }
+        : {}),
       name: `${methodName} example ${currentExamples.length + 1}`,
       serviceName,
       methodName,
@@ -370,7 +373,7 @@ export function useDocsActions(ctx: ActionContext) {
         examples: currentExamples,
         protoFiles,
         latestResult: activeDocsResult,
-        mockScenarios: currentMockScenarios,
+        mockScenarios: [],
         currentRequestJson: requestJson,
         currentMetadata: metadata,
       }),
@@ -516,7 +519,38 @@ export function useDocsActions(ctx: ActionContext) {
     showToast("Method docs unpublished.", "success");
   }
 
+  /** Loads an example into the tab of the saved request it belongs to (<request>.examples/). */
+  function loadLinkedExample(example: SavedExample): boolean {
+    if (!example.requestId) return false;
+    for (const collection of collections) {
+      const request = collection.requests.find((item) => item.id === example.requestId);
+      if (!request) continue;
+      const existing = requestSessions.find(
+        (session) => session.sourceRequestId === request.id || session.methodKey === request.id,
+      );
+      if (existing?.running) {
+        showToast(`${request.name} is running in ${existing.title}. Stop it before loading another example.`, "warning");
+        return true;
+      }
+      const base = existing ?? createCollectionRequestSession(collection, request);
+      const session: RequestSession = {
+        ...base,
+        requestJson: example.requestJson,
+        metadata: example.metadata.map((item) => ({ ...item })),
+        assertionJson: savedExampleAssertionJson(example) || base.assertionJson,
+        savedRequestId: example.id,
+        updatedAt: new Date().toISOString(),
+      };
+      upsertRequestSessionPreservingOrder(session);
+      activateRequestSession(session);
+      setRequestTab("body");
+      return true;
+    }
+    return false;
+  }
+
   function loadExample(example: SavedExample) {
+    if (loadLinkedExample(example)) return;
     const found = loaded?.methods.find(
       (method) => method.serviceName === example.serviceName && method.methodName === example.methodName,
     );

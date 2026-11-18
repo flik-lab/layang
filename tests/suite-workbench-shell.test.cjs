@@ -280,28 +280,7 @@ const __suiteBaseDir = __dirname;
     const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
     
     // Phase 1 guard. Response legacy paths are intentionally migrated in the next phase.
-    test("Mocking data-plane no longer relies on hidden heavy DOM or render-time scenario parsing", () => {
-      const mainPanel = read("app/playground/features/shell/workbench-main-panel.tsx");
-      const sidebar = read("app/playground/features/shell/workbench-sidebar.tsx");
-      const services = read("app/playground/features/services/services-workspace.tsx");
     
-      assert.doesNotMatch(mainPanel, /mountedSections/);
-      assert.doesNotMatch(mainPanel, /keepSectionMounted/);
-      assert.doesNotMatch(sidebar, /mountedSidebarSections/);
-      assert.doesNotMatch(sidebar, /keepSidebarSectionMounted/);
-      assert.match(services, /MockCatalogPanel/);
-      assert.doesNotMatch(services, /const allScenarioRows = useMemo/);
-      assert.doesNotMatch(services, /const allScenarioProtoGroups = useMemo/);
-    });
-    
-    test("Mocking shell imports the worker-backed catalog modules", () => {
-      const services = read("app/playground/features/services/services-workspace.tsx");
-      const sidebar = read("app/playground/features/shell/workbench-sidebar.tsx");
-      assert.match(services, /mock-server\/workspace\/MockCatalogList/);
-      assert.match(sidebar, /mock-server\/sidebar\/MockingSidebar/);
-      assert.ok(fs.existsSync(path.join(root, "app/playground/features/mock-server/catalog/mockCatalogWorkerSource.ts")));
-      assert.ok(fs.existsSync(path.join(root, "app/playground/features/mock-server/catalog/mockCatalog.store.ts")));
-    });
     
     test("Response phase removes pinned snapshots, Latest polling, and main-thread gRPC-Web fallback", () => {
       const panel = read("app/playground/features/response-viewer/response-workbench-panel.tsx");
@@ -313,11 +292,12 @@ const __suiteBaseDir = __dirname;
       assert.ok(fs.existsSync(path.join(root, "app/playground/features/response-viewer/payload-document/payloadDocumentWorkerSource.ts")));
     });
     
-    test("Mock catalog source snapshot reads split method files directly without legacy parse fallback", () => {
+    test("Mock catalog source snapshot uses worker proto metadata without legacy files", () => {
       const runtime = read("app/playground/features/mock-server/catalog/mockCatalogRuntime.ts");
       assert.doesNotMatch(runtime, /getMockMethodScenarioFile/);
       assert.doesNotMatch(runtime, /parseMockScenarioText/);
-      assert.match(runtime, /mockServer\.methodFiles\?\.\[key\]/);
+      assert.doesNotMatch(runtime, /mockServer\.methodFiles|resolveVersion\(/);
+      assert.match(runtime, /await readProtoCatalog/);
     });
     
     test("Mock catalog source sync is separate from lightweight runtime updates", () => {
@@ -328,7 +308,9 @@ const __suiteBaseDir = __dirname;
       assert.match(hook, /mockCatalogStore\.syncSource/);
       assert.match(hook, /mockCatalogStore\.updateRuntime/);
       assert.match(hook, /mockServer\.protoSources/);
-      assert.match(hook, /mockServer\.methodFiles/);
+      assert.doesNotMatch(hook, /mockServer\.methodFiles/);
+      assert.match(hook, /useScenarioIndex\(/);
+      assert.doesNotMatch(hook, /store\.list\(/);
     });
     
   });
@@ -370,16 +352,6 @@ const __suiteBaseDir = __dirname;
       assert.match(requestRunnerScopeBlock, /\.\.\.collectionActions/, "request runner must inherit collection actions");
     });
     
-    test("mock scenario files use explicit manual refresh instead of overwriting a local draft", () => {
-      const controller = read("app/playground/features/mock-server/use-grpc-mock-controller.ts");
-      const actions = read("app/playground/features/mock-server/use-grpc-mock-editor-actions.ts");
-      const services = read("app/playground/features/services/services-workspace.tsx");
-      assert.match(controller, /respectLocalDirty\?: boolean/);
-      assert.match(actions, /fetchMockScenarioFilesFromWorkspace/);
-      assert.match(actions, /respectLocalDirty: false/);
-      assert.match(services, /uiCopy\.actions\.syncFile/);
-      assert.match(actions, /applyToState: false/);
-    });
     
     test("deleted collection request and proto sources are handled through request-session domain cleanup", () => {
       const model = read("app/playground/features/shell/use-workbench-container-model.tsx");
@@ -417,22 +389,6 @@ const __suiteBaseDir = __dirname;
       assert.doesNotMatch(responseViewer, /renderBoldMatches|HighlightedCodeText|HighlightedInlineText/);
     });
     
-    test("request mock delegates to Global Mocking without changing the request target", () => {
-      const mainPanel = read("app/playground/features/shell/workbench-main-panel.tsx");
-      const settings = read("app/playground/features/mock-server/mock-server-panels.tsx");
-      const services = read("app/playground/features/services/services-workspace.tsx");
-    
-      assert.match(mainPanel, /Global Mocking/);
-      assert.match(mainPanel, /Open Global Mocking/);
-      assert.match(mainPanel, /Create Mock From This Request/);
-      assert.match(mainPanel, /Open this gRPC method/);
-      assert.doesNotMatch(mainPanel, /requestMockEditorDraft/);
-      assert.doesNotMatch(mainPanel, /startActiveRequestMock/);
-      assert.doesNotMatch(mainPanel, /setTargetDraft\(localTarget\)/);
-      assert.doesNotMatch(mainPanel, /setNativeTarget\(localTarget\)/);
-      assert.match(settings, /GrpcMockScenarioControls/);
-      assert.match(services, /<MockExecutionControls/);
-    });
     
     test("response-to-docs action explains the outcome and opens request docs", () => {
       const toolbar = read("app/playground/features/response-viewer/response-toolbar.tsx");

@@ -1,6 +1,6 @@
 "use strict";
 
-const { ipcMain } = require("electron");
+const { ipcMain } = require("../utils/trusted-ipc-main.cjs");
 
 function registerGrpcWebTransportIpc({ getTransportRuntimeManager }) {
   if (typeof getTransportRuntimeManager !== "function") throw new TypeError("getTransportRuntimeManager is required.");

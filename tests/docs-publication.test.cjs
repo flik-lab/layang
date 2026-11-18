@@ -1,0 +1,62 @@
+"use strict";
+
+const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs/promises");
+const os = require("node:os");
+const path = require("node:path");
+const { buildDocumentation, checkDocumentation } = require("../lib/docs-workspace.cjs");
+const { parseYaml, stringifyYaml } = require("../lib/workspace-yaml.cjs");
+const { createDocsExample } = require("./fixtures/docs-publication-workspace.cjs");
+
+test("publishes readable and unique paths, linked gRPC references and REST OpenAPI", async t => {
+  const temporary = await fs.realpath(os.tmpdir());
+  const root = await fs.mkdtemp(path.join(temporary, "layang-docs-publication-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await createDocsExample(root, 100);
+  const options = { sourceBaseUrl: "https://github.com/example/tacnav/blob/main" };
+  const report = await buildDocumentation(root, options);
+  assert.deepEqual(report.brokenLinks, []);
+  assert.equal(report.ok, true);
+  const read = relative => fs.readFile(path.join(root, "docs", relative), "utf8");
+  assert.match(await read("published/tactical-navigation/watch-operations/watch-tracks.md"), /Watch Tracks/);
+  assert.match(await read("published/tactical-navigation-2/index.md"), /Tactical Navigation/);
+  assert.match(await read("wiki-export/tactical-navigation/watch-operations/watch-tracks.md"), /Watch Tracks/);
+  const service = await read("published/grpc/tactical-navigation/index.md");
+  assert.match(service, /WatchTracks.*WatchRequest.*TrackBatch.*Server.*103/);
+  assert.match(service, /tactical%20navigation\.proto/);
+  assert.match(service, /standby/);
+  assert.match(service, /periodic/);
+  assert.match(service, /\.scenario\.yml/);
+  assert.doesNotMatch(service, /private-array-payload/);
+  const catalog = "grpc/tactical-navigation/watch-tracks/scenarios/";
+  assert.match(await read(`published/${catalog}index.md`), /page-2\.md/);
+  assert.match(await read(`published/${catalog}page-2.md`), /Page 2 of 2/);
+  const html = await read("site/grpc/tactical-navigation/index.html");
+  assert.match(html, /github\.com\/example\/tacnav\/blob\/main\/protos\//);
+  assert.match(await read("site/index.html"), /grpc\/index\.html/);
+  const raw = await read("published/rest/openapi.yaml");
+  assert.doesNotMatch(raw, /sample-private-token|x-grpc/);
+  const spec = parseYaml(raw);
+  const operation = spec.paths["/tracks/{id}"].post;
+  assert.equal(spec.openapi, "3.1.0");
+  assert.equal(operation.operationId, "create-track");
+  assert.deepEqual(operation.parameters.find(item => item.in === "path"),
+    { name: "id", in: "path", required: true, schema: { type: "string" } });
+  assert.equal(operation.requestBody.content["application/json"].schema.properties.history.items.type, "integer");
+  assert.equal(operation.responses["201"].content["application/json"].schema.properties.id.type, "string");
+  assert.equal(operation.responses["400"].content["application/json"].schema.properties.error.type, "string");
+  assert.equal(await read("site/rest/openapi.yaml"), raw);
+  assert.equal((await checkDocumentation(root, options)).ok, true);
+
+  const manifestFile = path.join(root, "docs", "build-manifest.yml");
+  const manifest = parseYaml(await fs.readFile(manifestFile, "utf8"));
+  const oldPath = "docs/published/tactical-navigation--12345678/index.md";
+  manifest.publications.find(item => item.pageId === "collection:collection-a").outputPath = oldPath;
+  await fs.mkdir(path.dirname(path.join(root, oldPath)), { recursive: true });
+  await fs.writeFile(path.join(root, oldPath), "# Old generated page\n");
+  await fs.writeFile(manifestFile, stringifyYaml(manifest));
+  assert.equal((await buildDocumentation(root, { ...options, request: "create" })).ok, true);
+  await assert.rejects(fs.stat(path.join(root, oldPath)), { code: "ENOENT" });
+  assert.equal((await checkDocumentation(root, options)).ok, true);
+});

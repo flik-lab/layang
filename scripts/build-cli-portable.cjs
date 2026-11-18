@@ -73,29 +73,58 @@ async function copyFilePreservingRoot(source) {
   await fsp.copyFile(source, target);
 }
 
+/**
+ * Finds the directory Node would load `packageName` from when required by code in `fromDir`
+ * (walks up the node_modules folders, so nested and hoisted installs both resolve correctly).
+ */
+function resolvePackageDirectory(packageName, fromDir) {
+  let current = fromDir;
+  for (;;) {
+    const candidate = path.join(current, "node_modules", ...packageName.split("/"));
+    if (fs.existsSync(path.join(candidate, "package.json"))) return fs.realpathSync(candidate);
+    const parent = path.dirname(current);
+    if (parent === current) return "";
+    current = parent;
+  }
+}
+
+/**
+ * Copies the runtime dependency closure. Every dependency is resolved from the directory of the
+ * package that requires it, so a nested version (for example @grpc/proto-loader's own protobufjs 7
+ * next to the root protobufjs 8) brings its own dependencies (@protobufjs/*) instead of being
+ * looked up by name at the root. Each package keeps its position under node_modules.
+ */
 async function copyPackageTree(packageNames) {
+  const rootModules = fs.realpathSync(path.join(root, "node_modules"));
   const visited = new Set();
-  const queue = [...packageNames];
+  const queue = [...packageNames].map((name) => ({ name, from: root, requiredBy: "bin/layang.cjs" }));
   while (queue.length) {
-    const packageName = queue.shift();
-    if (!packageName || visited.has(packageName)) continue;
-    visited.add(packageName);
-    const source = path.join(root, "node_modules", ...packageName.split("/"));
-    const packageJsonPath = path.join(source, "package.json");
-    if (!fs.existsSync(packageJsonPath)) {
+    const { name, from, requiredBy, optional } = queue.shift();
+    const source = resolvePackageDirectory(name, from);
+    if (!source) {
+      if (optional) continue;
       if (skipDependencies) {
-        process.stderr.write(`warning: skipping missing runtime dependency ${packageName}\n`);
+        process.stderr.write(`warning: skipping missing runtime dependency ${name} (required by ${requiredBy})\n`);
         continue;
       }
-      throw new Error(`Missing runtime dependency ${packageName}. Run pnpm install before packaging.`);
+      throw new Error(`Missing runtime dependency ${name} (required by ${requiredBy}). Run pnpm install before packaging.`);
     }
-    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-    const target = path.join(appRoot, "node_modules", ...packageName.split("/"));
-    await fsp.mkdir(path.dirname(target), { recursive: true });
-    await fsp.cp(source, target, { recursive: true, dereference: true });
-    for (const dependency of Object.keys({ ...(packageJson.dependencies || {}), ...(packageJson.optionalDependencies || {}) })) {
-      queue.push(dependency);
+    if (visited.has(source)) continue;
+    visited.add(source);
+    const relative = path.relative(rootModules, source);
+    if (relative.startsWith("..") || path.isAbsolute(relative))
+      throw new Error(`Runtime dependency ${name} resolves outside node_modules: ${source}`);
+    const target = path.join(appRoot, "node_modules", relative);
+    if (!fs.existsSync(path.join(target, "package.json"))) {
+      await fsp.mkdir(path.dirname(target), { recursive: true });
+      // A nested node_modules folder is copied with its parent; its dependencies are queued below.
+      await fsp.cp(source, target, { recursive: true, dereference: true });
     }
+    const packageJson = JSON.parse(fs.readFileSync(path.join(source, "package.json"), "utf8"));
+    for (const dependency of Object.keys(packageJson.dependencies || {}))
+      queue.push({ name: dependency, from: source, requiredBy: name });
+    for (const dependency of Object.keys(packageJson.optionalDependencies || {}))
+      queue.push({ name: dependency, from: source, requiredBy: name, optional: true });
   }
 }
 

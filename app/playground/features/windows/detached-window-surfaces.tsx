@@ -69,7 +69,13 @@ export function DetachedRequestWindow({ ctx }: { ctx: WorkbenchViewContext }) {
 
 export function DetachedMockingWindow({ ctx }: { ctx: WorkbenchViewContext }) {
   const latestCtxRef = useRef(ctx);
+  const scenarioDraftHandle = useRef<(() => Promise<boolean>) | null>(null);
   latestCtxRef.current = ctx;
+  const closeMocking = async (mode: "close" | "reattach") => {
+    const saveScenario = scenarioDraftHandle.current;
+    if (saveScenario && !(await saveScenario())) return;
+    await closeDetachedAfterHandoff(latestCtxRef.current, mode);
+  };
   const {
     activeRestMockScenario,
     activeRestMockScenarios,
@@ -94,14 +100,8 @@ export function DetachedMockingWindow({ ctx }: { ctx: WorkbenchViewContext }) {
         context={ctx.managedWindow.context}
         title="Mocking"
         returnLabel="Back to Main"
-        onReturn={() => {
-          if (ctx.mockScenarioEditorDirty && !ctx.saveMockScenarioEditorDraft()) return;
-          window.requestAnimationFrame(() => void closeDetachedAfterHandoff(latestCtxRef.current, "reattach"));
-        }}
-        onClose={() => {
-          if (ctx.mockScenarioEditorDirty && !ctx.saveMockScenarioEditorDraft()) return;
-          window.requestAnimationFrame(() => void closeDetachedAfterHandoff(latestCtxRef.current, "close"));
-        }}
+        onReturn={() => void closeMocking("reattach")}
+        onClose={() => void closeMocking("close")}
       />
       <Box
         sx={{
@@ -131,6 +131,10 @@ export function DetachedMockingWindow({ ctx }: { ctx: WorkbenchViewContext }) {
           }}
         >
           <MockingSidebar
+                  mockServer={ctx.mockServer}
+                  protoRuntimeRegistry={ctx.protoRuntimeRegistry}
+                  protoLibraries={ctx.protoLibraries}
+                  workspaceKey={ctx.workspaceFolderPath || "unsaved"}
             running={Boolean(mockServerStatus?.running)}
             selectedMethodKey={mockSelectedMethodKey}
             serviceProtocol={serviceProtocol}
@@ -167,7 +171,7 @@ export function DetachedMockingWindow({ ctx }: { ctx: WorkbenchViewContext }) {
           />
         </Box>
         <Box sx={{ minWidth: 0, minHeight: 0, flex: 1, overflow: "hidden" }}>
-          <ServicesWorkspace ctx={ctx} />
+          <ServicesWorkspace ctx={ctx} draftHandle={scenarioDraftHandle} />
         </Box>
       </Box>
     </>

@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.2.0
+
+### Added
+
+* Import multi-file proto ZIP archives and preserve their import paths.
+* Publish readable gRPC service and scenario references, REST OpenAPI 3.1, and static documentation.
+* Publish `docs/published/grpc/openapi.yaml`: OpenAPI 3.1 for gRPC requests (`POST /<package.Service>/<Method>`, schemas from the proto messages, `x-grpc` details), with every saved example as a named request/response example pair.
+* Link an example to the gRPC mock scenario that answers it (`example.mock.scenario`); docs show it next to the example.
+* `layang example:run --all` accepts `--collection`, and `--request` matches the name of the request an example is stored with.
+* Desktop app: on a collection request, the Saved requests menu saves, loads, renames and deletes that request's examples (`<request>.examples/`), so one request per RPC holds every scenario and the CLI runs them. Loose tabs keep the workspace-wide `saved-requests/`. The Examples tab lists the open request's own examples, and loading one fills that request's tab.
+* gRPC request docs read as an API reference: request and response field tables (type, enum values, comments), named examples with status and mock scenario, a status-code table, `layang` commands to run them, and a proto excerpt with only the RPC and the types it uses. Descriptions come from proto comments (AIP-192 leading comments, `/** */` blocks and trailing comments). The desktop Docs preview and `layang docs:build` render the same page.
+
+### Changed
+
+* Store each gRPC mock scenario in its own canonical YAML file and migrate legacy bundles with a backup.
+* Edit scenarios and configure stream delivery in the per-method Mocking panel.
+* Index large scenario catalogs progressively and apply the selected Native scenario while clients stay connected.
+* Harden Electron IPC and run REST requests through the main process.
+* Apply and send Gateway scenario revisions atomically, with cancellation and stream backpressure.
+* Name workspace files and folders after their entities (`mocks/grpc/scenarios/<package.Service>/<Method>/<scenario-id>.scenario.yml`, `collections/<collection>/<folder>/<request>.grpc.yml`, `gateways/<name>.gateway.yml`, `protos/<library>/revisions/<label>`); an id suffix is added only when siblings share a name. Workspaces written by earlier builds are renamed on the next save or `workspace:format`.
+
+### Fixed
+
+* Standalone CLI: bundle the dependencies of nested packages (for example `@protobufjs/*` for the `protobufjs` that `@grpc/proto-loader` uses), so gateway and proto commands no longer fail with `Cannot find module '@protobufjs/aspromise'`. The release smoke check now verifies the bundled dependency closure and runs proto/gateway commands.
+* Standalone CLI on Windows: arguments with spaces reach the CLI unchanged (the launcher split `--collection "FE Main Display"` into three arguments and dropped empty ones).
+* Standalone CLI on Windows installs to `%LOCALAPPDATA%\Layang-CLI`. Under `%LOCALAPPDATA%\Layang` it was deleted whenever the desktop app was installed, because that folder belongs to the desktop installer. The installer moves a pre-1.2 CLI (files and PATH entry) and replaces the previous version's files instead of copying over them.
+* Gateway (Web Access) mock streams honour `loop` and `maxLoops` like the native mock server instead of ending after one pass.
+* CLI gateway matches scenarios by the proto method name (`StreamItems`); scenarios written with the 1.1.x camelCase name keep matching.
+* `layang gateway:list` works for profiles without `upstreams`.
+* YAML: a colon only separates key and value when followed by whitespace, so unquoted URLs (for example CORS origins) and times stay plain values.
+* Desktop app: opening or saving a workspace no longer drops request fields the editor does not show (`assertions`, `defaults.environment`, `transport`) or an example's link to its request and mock scenario, and no longer writes REST defaults or empty example documentation into gRPC files.
+* `layang run` uses a saved request's `timeoutMs` and `transport.mode` unless `--timeout` or `--transport` is given.
+* CLI gRPC-Web: server streams use grpc-web-text and are read frame by frame, so streams through Layang's own gateway work and an endless stream ends at the deadline with the messages received.
+* Examples stored next to a request run with that request and appear in its documentation.
+* `layang docs:build` applies the same documentation settings rules as the desktop app.
+* Docs and OpenAPI resolve proto types per package: when two packages declare a message with the same name (e.g. `SetMessageRequest`), an RPC now shows its own message instead of the one parsed last.
+* Docs no longer fill gaps with placeholder text: a gRPC request without a proto comment has no summary (instead of "Call <method>."), the collection index labels server/client streams correctly instead of `Unary`, and saving a workspace no longer creates `<request>.<kind>.md` placeholder files (untouched ones from earlier builds are removed; edited ones are kept).
+* Desktop app: an autosave no longer overwrites workspace files changed outside the app (CLI, Git, an editor) since it last read them; the save is refused and the workspace reloads. Previously a file created by `layang example:create` while the app was open could be deleted.
+* CLI: desktop request tabs opened from a saved request are no longer extra run items, so `layang run --collection` and `layang example:create --request` see each saved request once. `example:create` stores the example with the selected request and accepts `--set mock=<scenario>`.
+
 ## 1.1.6
 
 ### Added

@@ -1,0 +1,19 @@
+{
+  "schema": "layang-pr06-retention-probe-v1",
+  "scope": "Node synthetic allocate/parse/release only; NOT Electron UI, gRPC stream or proof of leak freedom",
+  "node": "v22.16.0",
+  "cycles": 8,
+  "scenarioCount": 1000,
+  "heapUsedAfterGcKiB": [
+    5065,
+    5065,
+    5066,
+    5070,
+    5070,
+    5087,
+    5085,
+    5085
+  ],
+  "firstToLastDeltaKiB": 20,
+  "status": "OBSERVATION_ONLY"
+}

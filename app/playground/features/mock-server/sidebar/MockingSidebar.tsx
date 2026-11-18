@@ -1,9 +1,12 @@
 "use client";
 
-import { useRef } from "react";
+import { useMemo, useRef } from "react";
 import { Box, Button, Chip, IconButton, InputAdornment, Stack, TextField, Tooltip, Typography } from "@/components/shadcn/compat";
-import { KeyboardArrowDown, KeyboardArrowRight, Search, Settings } from "@/components/shadcn/icons";
-import { useMockCatalog, useMockCatalogQuery } from "../catalog/useMockCatalog";
+import { Add, KeyboardArrowDown, KeyboardArrowRight, Search, Settings } from "@/components/shadcn/icons";
+import { useMockCatalog, useMockCatalogQuery, useMockCatalogSourceSync } from "../catalog/useMockCatalog";
+import type { ProtoRuntimeRegistry } from "@/lib/proto-runtime-registry";
+import type { MockServerProject } from "../../../shared/workbench-types";
+import { resolveEffectiveMockProtoSources } from "../mock-proto-sources";
 import type { MockCatalogMethodRow } from "../catalog/mockCatalog.types";
 import { mockingUiStore, useMockingUiSnapshot } from "../workspace/mockingUi.store";
 import type { RestMockScenario, ServiceProtocol, WebSocketMockScenario } from "../../../shared/workbench-types";
@@ -13,6 +16,10 @@ const rowHeight = 30;
 
 export function MockingSidebar(props: {
   running: boolean;
+  mockServer: MockServerProject;
+  protoRuntimeRegistry: ProtoRuntimeRegistry;
+  protoLibraries: any[];
+  workspaceKey: string;
   selectedMethodKey: string;
   serviceProtocol: ServiceProtocol;
   onSelectGrpcMethod(row: MockCatalogMethodRow): void;
@@ -27,6 +34,22 @@ export function MockingSidebar(props: {
   onSelectWebSocketScenario(id: string): void;
   onAddWebSocketScenario(): void;
 }) {
+  // The sidebar's Proto method list is a metadata-only worker index. This
+  // does not read v3 scenario bodies or resurrect the legacy editor/catalog.
+  const grpcActive = props.serviceProtocol === "grpc-mock" || props.serviceProtocol === "web-access";
+  const effectiveSources = useMemo(() =>
+    resolveEffectiveMockProtoSources(props.mockServer.protoSources, props.protoLibraries),
+    [props.mockServer.protoSources, props.protoLibraries],
+  );
+  const indexedServer = useMemo(() => ({ ...props.mockServer, protoSources: effectiveSources }),
+    [props.mockServer, effectiveSources]);
+  useMockCatalogSourceSync({
+    mockServer: indexedServer,
+    mockServerStatus: { running: props.running } as any,
+    protoRuntimeRegistry: props.protoRuntimeRegistry,
+    workspaceKey: props.workspaceKey,
+    enabled: grpcActive,
+  });
   const catalog = useMockCatalog();
   const ui = useMockingUiSnapshot();
   useMockCatalogQuery(props.running);
@@ -37,8 +60,10 @@ export function MockingSidebar(props: {
     overscan: 12,
     scrollRef,
   });
-
-  const grpcActive = props.serviceProtocol === "grpc-mock" || props.serviceProtocol === "web-access";
+  const openMethod = (row: MockCatalogMethodRow, create = false) => {
+    props.onSelectGrpcMethod(row);
+    mockingUiStore.openScenarios(row.methodKey, create);
+  };
 
   return (
     <Stack spacing={0.45} sx={{ minHeight: 0, height: "100%" }}>
@@ -55,7 +80,10 @@ export function MockingSidebar(props: {
       </Box>
 
       <Stack direction="row" spacing={0.35} alignItems="center" sx={{ px: 0.6 }}>
-        <Button size="small" variant={grpcActive ? "contained" : "text"} onClick={() => props.onSelectProtocol("grpc-mock")}>gRPC</Button>
+        <Button size="small" variant={grpcActive ? "contained" : "text"} onClick={() => {
+          props.onSelectProtocol("grpc-mock");
+          mockingUiStore.openScenarios("");
+        }}>gRPC</Button>
         <Button size="small" variant={props.serviceProtocol === "rest" ? "contained" : "text"} onClick={() => props.onSelectProtocol("rest")}>REST</Button>
         <Button size="small" variant={props.serviceProtocol === "websocket" ? "contained" : "text"} onClick={() => props.onSelectProtocol("websocket")}>WS</Button>
         <Box sx={{ flex: 1 }} />
@@ -63,7 +91,10 @@ export function MockingSidebar(props: {
           <IconButton
             size="small"
             aria-label="gRPC Home / Settings"
-            onClick={props.onOpenGrpcHome}
+            onClick={() => {
+              props.onOpenGrpcHome();
+              mockingUiStore.openScenarios("");
+            }}
             sx={{ width: 28, height: 28 }}
           >
             <Settings sx={{ fontSize: 16 }} />
@@ -111,12 +142,14 @@ export function MockingSidebar(props: {
                       <Typography variant="body2" noWrap sx={{ ml: 0.2, minWidth: 0, flex: 1, textAlign: "left" }}>{row.serviceName}</Typography>
                     </Button>
                   ) : (
+                    <Stack direction="row" alignItems="center" sx={{ "&:hover .add-method-scenario, &:focus-within .add-method-scenario": { opacity: 1 } }}>
                     <Button
                       size="small"
                       variant="text"
-                      onClick={() => props.onSelectGrpcMethod(row)}
+                      onClick={() => openMethod(row)}
                       sx={{
-                        width: "100%",
+                        flex: 1,
+                        minWidth: 0,
                         height: rowHeight,
                         justifyContent: "flex-start",
                         pl: 4.2,
@@ -134,6 +167,17 @@ export function MockingSidebar(props: {
                         sx={{ height: 18, "& .MuiChip-label": { px: 0.45, fontSize: 9.5 } }}
                       />
                     </Button>
+                    {!row.requestStream && (
+                      <Tooltip title={`New scenario for ${row.methodName}`}>
+                        <IconButton className="add-method-scenario" size="small"
+                          aria-label={`New scenario for ${row.methodName}`}
+                          onClick={() => openMethod(row, true)}
+                          sx={{ width: 25, height: 25, flexShrink: 0, opacity: selected ? 1 : 0.55 }}>
+                          <Add sx={{ fontSize: 15 }} />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                    </Stack>
                   )}
                 </Box>
               );

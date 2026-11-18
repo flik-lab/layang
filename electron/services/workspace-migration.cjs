@@ -127,7 +127,7 @@ async function migrateLegacyWorkspaceTransaction(directoryPath, bundle) {
 
   try {
     await fs.mkdir(stageRoot, { recursive: true });
-    await writeGitWorkspace(stageRoot, bundle);
+    await writeGitWorkspace(stageRoot, { ...bundle, importLegacyGrpc: true });
     const staged = await readGitWorkspace(stageRoot);
     if (!staged) throw new Error("Legacy workspace staging did not produce a readable layang.yml workspace.");
 

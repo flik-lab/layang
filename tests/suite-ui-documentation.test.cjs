@@ -144,14 +144,14 @@ const __suiteBaseDir = __dirname;
       return { docs, page, markdown: docs.renderDocumentationMarkdown(page, project.documentation.settings) };
     }
     
-    test("gRPC automatic docs embed the pinned proto file without detailed generated sections", async () => {
+    test("gRPC automatic docs read like an API reference: fields, then run, then the proto excerpt", async () => {
       const { page, markdown } = await render("before");
-      assert.match(markdown, /## Proto Reference/);
+      const order = ["## Request", "## Response", "## Run it", "## Proto Reference"].map((heading) => markdown.indexOf(heading));
+      assert.ok(order.every((index, position) => index >= 0 && (position === 0 || index > order[position - 1])), markdown);
       assert.match(markdown, /`greeter\.proto`/);
       assert.match(markdown, /service Greeter/);
       assert.equal(page.contract.sourceFile, "greeter.proto");
-      assert.doesNotMatch(markdown, /Request Schema/);
-      assert.doesNotMatch(markdown, /Response Schema/);
+      assert.doesNotMatch(markdown, /Call demo\.Greeter/, "no filler summary");
       assert.doesNotMatch(markdown, /Mock Scenarios/);
       assert.doesNotMatch(markdown, /Latest Saved Response/);
     });

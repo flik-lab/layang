@@ -70,7 +70,7 @@ const __suiteBaseDir = __dirname;
       __bundleDescribe("grpc-mock-cadence-regression.test.cjs", () => {
         const assert = require("node:assert/strict");
         const test = require("node:test");
-        const { calculateNextCadenceDeadline } = require("../electron/services/grpc-mock-server.cjs");
+        const { calculateNextCadenceDeadline } = require("../lib/grpc-stream-cadence.cjs");
         
         test("mock stream cadence compensates for a late tick instead of accumulating drift", () => {
           const firstDeadline = calculateNextCadenceDeadline(0, 1000, 100);
@@ -375,19 +375,6 @@ const __suiteBaseDir = __dirname;
     const root = path.resolve(__dirname, "..");
     const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
     
-    test("gRPC server-streaming defaults to periodic and hides incoming/scheduled controls", () => {
-      const core = read("app/playground/features/mock-server/mock-scenario-core.ts");
-      const controls = read("app/playground/features/mock-server/workspace/MockExecutionControls.tsx");
-      const services = read("app/playground/features/services/services-workspace.tsx");
-    
-      assert.match(core, /fallback\.mode \?\? \(isPlainRecord\(value\) \? "scheduled" : undefined\)/);
-      assert.match(services, /variant="grpc-stream"/);
-      assert.match(controls, /grpcStream && \(normalized\.mode === "incoming" \|\| normalized\.mode === "scheduled"\)/);
-      assert.match(controls, /grpcStream \? null : <MenuItem value="incoming">Incoming<\/MenuItem>/);
-      assert.match(controls, /grpcStream \? null : <MenuItem value="scheduled">Scheduled<\/MenuItem>/);
-      assert.match(controls, /title=\{executionSummary\}/);
-      assert.doesNotMatch(controls, /Hybrid keeps the periodic stream running and also allows Send Now/);
-    });
     
     test("main window can request a graceful reattach instead of force-closing detached resources", () => {
       const manager = read("electron/window/window-manager.cjs");

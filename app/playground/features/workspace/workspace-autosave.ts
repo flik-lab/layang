@@ -1,7 +1,11 @@
 import type { WorkspaceExportBundle } from "../../shared/workbench-types";
 
+/** Dispatched on window when a save was refused because the folder changed outside the app. */
+export const WORKSPACE_CONFLICT_EVENT = "layang:workspace-save-conflict";
+
 export type WorkspaceAutosaveState = {
   lastPayload: string;
+  lastPath: string;
   saving: boolean;
   pendingPayload: string;
   pendingBundle: WorkspaceExportBundle | null;
@@ -12,6 +16,7 @@ export type WorkspaceAutosaveState = {
 export function createWorkspaceAutosaveState(): WorkspaceAutosaveState {
   return {
     lastPayload: "",
+    lastPath: "",
     saving: false,
     pendingPayload: "",
     pendingBundle: null,
@@ -41,10 +46,33 @@ async function flushWorkspaceAutosaveQueue(state: WorkspaceAutosaveState): Promi
         state.pendingBundle = null;
 
         const result = await window.electronWorkspace?.saveFolder?.(pendingBundle, pendingPath);
-        if (!result || result.ok !== false) state.lastPayload = pendingPayload;
+        if (result && !result.ok && (result as { conflict?: boolean }).conflict) {
+          // Files changed outside the app (CLI, Git, an editor). This snapshot predates them, so
+          // it is dropped instead of retried; the workspace controller reloads the folder.
+          state.pendingBundle = null;
+          state.pendingPayload = "";
+          state.lastPayload = "";
+          window.dispatchEvent(new CustomEvent(WORKSPACE_CONFLICT_EVENT, { detail: { directoryPath: pendingPath } }));
+          return;
+        }
+        if (!result?.ok) {
+          // A failed or cancelled IPC write must never be acknowledged as durable.
+          // Keep the newest unsaved snapshot for a later retry.
+          if (!state.pendingBundle) {
+            state.pendingBundle = pendingBundle;
+            state.pendingPayload = pendingPayload;
+            state.pendingPath = pendingPath;
+          }
+          throw new Error(result?.error || "Workspace save was not acknowledged.");
+        }
+        state.lastPayload = pendingPayload;
+        state.lastPath = pendingPath;
       }
     } catch (error) {
-      console.warn("Workspace autosave failed.", error);
+      // Propagate the failure. Swallowing it made enqueueWorkspaceAutosave spin
+      // indefinitely over the same pending bundle when the disk/IPC failed.
+      console.warn("Workspace autosave failed; retaining pending changes.", error);
+      throw error;
     } finally {
       state.saving = false;
       state.flushPromise = null;
@@ -62,7 +90,7 @@ export async function enqueueWorkspaceAutosave(
   if (!workspaceFolderPath || !window.electronWorkspace?.saveFolder) return;
 
   const payload = workspaceBundlePayload(bundle);
-  if (payload === state.lastPayload && !state.pendingBundle && !state.saving) return;
+  if (payload === state.lastPayload && workspaceFolderPath === state.lastPath && !state.pendingBundle && !state.saving) return;
 
   state.pendingPayload = payload;
   state.pendingBundle = bundle;

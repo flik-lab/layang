@@ -1,6 +1,6 @@
 "use strict";
 
-const { ipcMain } = require("electron");
+const { ipcMain } = require("../utils/trusted-ipc-main.cjs");
 const {
   startGatewayProfile,
   stopGatewayProfile,
@@ -48,7 +48,7 @@ function registerGrpcGatewayIpc() {
   ipcMain.handle("grpc-gateway:capture-save", async (_event, payload) => {
     try {
       return okResponse(
-        await saveGatewayCaptureAsScenario(payload?.profileId, payload?.captureId, payload?.destination),
+        await saveGatewayCaptureAsScenario(payload?.profileId, payload?.captureId),
       );
     } catch (error) {
       return errorResponse(error);

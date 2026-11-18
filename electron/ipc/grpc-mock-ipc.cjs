@@ -1,6 +1,6 @@
 "use strict";
 
-const { ipcMain } = require("electron");
+const { ipcMain } = require("../utils/trusted-ipc-main.cjs");
 const {
   getMockServerStatus,
   startMockServer,
@@ -9,6 +9,7 @@ const {
   sendMockServerStreamMessage,
 } = require("../services/grpc-mock-server.cjs");
 const { errorResponse, okResponse } = require("../utils/ipc-utils.cjs");
+const { prepareCanonicalGrpcPayload } = require("../../lib/grpc-canonical-runtime.cjs");
 
 function registerGrpcMockIpc(options = {}) {
   const getRuntimeHost = typeof options.getRuntimeHost === "function" ? options.getRuntimeHost : () => null;
@@ -21,9 +22,10 @@ function registerGrpcMockIpc(options = {}) {
 
   ipcMain.handle("mock-server:start", async (_event, payload) => {
     try {
+      const config = await prepareCanonicalGrpcPayload(payload);
       const result = runtimeMode === "utility"
-        ? await invokeUtility("mock.grpc.start", payload || {})
-        : await startMockServer(payload || {});
+        ? await invokeUtility("mock.grpc.start", config)
+        : await startMockServer(config);
       return okResponse(result);
     } catch (error) {
       return errorResponse(error);
@@ -44,9 +46,10 @@ function registerGrpcMockIpc(options = {}) {
 
   ipcMain.handle("mock-server:update", async (_event, payload) => {
     try {
+      const config = await prepareCanonicalGrpcPayload(payload);
       const result = runtimeMode === "utility"
-        ? await invokeUtility("mock.grpc.update", payload || {})
-        : await updateActiveMockServer(payload || {}, "ui");
+        ? await invokeUtility("mock.grpc.update", config)
+        : await updateActiveMockServer(config, "ui");
       return okResponse(result);
     } catch (error) {
       return errorResponse(error);

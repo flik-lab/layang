@@ -17,11 +17,11 @@ This folder is the public landing-site source for Layang.
 
 ## Local checks
 
-GitHub Pages deploys this directory directly from `.github/workflows/pages.yaml`. For local preview, serve `github-pages/` with any static HTTP server.
+The Pages workflow builds a synthetic API reference into `reference/` before uploading this directory. For a local reference preview, follow the [workspace publishing guide](../docs/WORKSPACE_DOCUMENTATION.md).
 
 ## Publish
 
-The repository workflow at `.github/workflows/pages.yaml` publishes this folder directly to GitHub Pages. You can also copy the folder contents into a `gh-pages` branch manually.
+The repository workflow at `.github/workflows/pages.yaml` publishes this folder and the generated example reference to GitHub Pages.
 
 ## Custom domain
 

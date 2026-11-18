@@ -25,6 +25,7 @@ const emptySummary = {
 const initialSnapshot: MockCatalogStoreSnapshot = {
   generation: 0,
   rows: [],
+  methods: [],
   summary: emptySummary,
   loading: false,
   syncing: false,
@@ -39,6 +40,7 @@ export type MockCatalogStore = {
   syncSource(inputs: {
     methods: MockCatalogMethodInput[];
     scenarioFiles: MockCatalogScenarioFileInput[];
+    sourceId?: string;
   }): Promise<void>;
   updateRuntime(input: MockCatalogRuntimeInput): Promise<void>;
   query(input: MockCatalogQuery): Promise<void>;
@@ -55,7 +57,20 @@ export function createMockCatalogStore(): MockCatalogStore {
   let querySequence = 0;
   let lastQueryInput: MockCatalogQuery | null = null;
   let scenarioCacheGeneration = -1;
+  // Keep the catalog metadata cache bounded even if a workspace has 10k methods.
+  // Large per-method result sets are returned to the caller but never retained.
+  const maxCachedMethods = 64;
+  const maxCachedScenarioSummaries = 5_000;
+  let cachedScenarioCount = 0;
+  let sourceSequence = 0;
+  let runtimeSequence = 0;
+  let sourceQueue: Promise<void> = Promise.resolve();
   const scenarioCache = new Map<string, MockScenarioSummary[]>();
+  const clearScenarioCache = (): void => {
+    scenarioCache.clear();
+    cachedScenarioCount = 0;
+    scenarioCacheGeneration = -1;
+  };
   const listeners = new Set<Listener>();
 
   const now = (): number => typeof performance !== "undefined" ? performance.now() : Date.now();
@@ -70,33 +85,50 @@ export function createMockCatalogStore(): MockCatalogStore {
     return client;
   };
 
-  const syncSource = async (inputs: {
+  const syncSource = (inputs: {
     methods: MockCatalogMethodInput[];
     scenarioFiles: MockCatalogScenarioFileInput[];
+    sourceId?: string;
   }): Promise<void> => {
     const fingerprint = [
-      inputs.methods.map((item) => item.methodId).join("|"),
+      inputs.sourceId || "",
+      inputs.methods.map((item) => [item.methodId,item.libraryName,item.versionLabel,
+        item.requestType,item.responseType,item.requestStream,item.responseStream].join("#")).join("|"),
       inputs.scenarioFiles.map((item) => `${item.methodId}@${item.revision}`).join("|"),
     ].join("::");
-    if (fingerprint === sourceFingerprint) return;
+    if (fingerprint === sourceFingerprint) return sourceQueue;
     sourceFingerprint = fingerprint;
+    const sequence = ++sourceSequence;
+    // Results from an older query must not populate the new workspace.
+    querySequence += 1;
+    clearScenarioCache();
     publish({ syncing: true, error: "" });
-    const startedAt = now();
-    try {
-      const worker = getClient();
-      await worker.syncMethods(inputs.methods);
-      await worker.syncScenarioFiles(inputs.scenarioFiles);
-      scenarioCache.clear();
-      scenarioCacheGeneration = -1;
-      queryFingerprint = "";
-      publish({ syncing: false });
-      performanceStats.recordMockDuration("source-sync", now() - startedAt);
-      if (lastQueryInput) await query(lastQueryInput);
-    } catch (error) {
-      sourceFingerprint = "";
-      publish({ syncing: false, error: error instanceof Error ? error.message : String(error) });
-      throw error;
-    }
+    const performSync = async (): Promise<void> => {
+      if (sequence !== sourceSequence) return;
+      const startedAt = now();
+      try {
+        const worker = getClient();
+        await worker.syncMethods(inputs.methods);
+        // Coalesce rapid workspace updates before transferring all scenario metadata.
+        if (sequence !== sourceSequence) return;
+        await worker.syncScenarioFiles(inputs.scenarioFiles);
+        if (sequence !== sourceSequence) return;
+        queryFingerprint = "";
+        publish({ syncing: false, methods: inputs.methods });
+        performanceStats.recordMockDuration("source-sync", now() - startedAt);
+        if (lastQueryInput) await query(lastQueryInput);
+      } catch (error) {
+        if (sequence !== sourceSequence) return;
+        sourceFingerprint = "";
+        publish({ syncing: false, error: error instanceof Error ? error.message : String(error) });
+        throw error;
+      }
+    };
+    // Each worker sync must atomically finish its methods/files pair before
+    // the next version starts. Never interleave the two messages.
+    const current = sourceQueue.then(performSync, performSync);
+    sourceQueue = current.catch(() => undefined);
+    return current;
   };
 
   const updateRuntime = async (input: MockCatalogRuntimeInput): Promise<void> => {
@@ -107,13 +139,16 @@ export function createMockCatalogStore(): MockCatalogStore {
     ].join("::");
     if (fingerprint === runtimeFingerprint) return;
     runtimeFingerprint = fingerprint;
+    const sequence = ++runtimeSequence;
     const startedAt = now();
     try {
       await getClient().updateRuntime(input);
+      if (sequence !== runtimeSequence) return;
       performanceStats.recordMockDuration("runtime-update", now() - startedAt);
       queryFingerprint = "";
       if (lastQueryInput) await query(lastQueryInput);
     } catch (error) {
+      if (sequence !== runtimeSequence) return;
       runtimeFingerprint = "";
       publish({ error: error instanceof Error ? error.message : String(error) });
       throw error;
@@ -132,7 +167,7 @@ export function createMockCatalogStore(): MockCatalogStore {
       const result = await getClient().query(input);
       if (sequence !== querySequence) return;
       if (scenarioCacheGeneration !== result.generation) {
-        scenarioCache.clear();
+        clearScenarioCache();
         scenarioCacheGeneration = result.generation;
       }
       publish({ ...result, loading: false });
@@ -156,12 +191,27 @@ export function createMockCatalogStore(): MockCatalogStore {
     query,
     getScenarios: async (methodId) => {
       const cached = scenarioCache.get(methodId);
-      if (cached) return cached;
+      if (cached) {
+        scenarioCache.delete(methodId);
+        scenarioCache.set(methodId, cached); // LRU promotion
+        return cached;
+      }
+      const requestSourceSequence = sourceSequence;
       const startedAt = now();
       try {
         const scenarios = await getClient().getScenarios(methodId);
+        if (requestSourceSequence !== sourceSequence) return [];
         performanceStats.recordMockDuration("get-scenarios", now() - startedAt);
-        scenarioCache.set(methodId, scenarios);
+        if (requestSourceSequence === sourceSequence && scenarios.length <= maxCachedScenarioSummaries) {
+          scenarioCache.set(methodId, scenarios);
+          cachedScenarioCount += scenarios.length;
+          while (scenarioCache.size > maxCachedMethods || cachedScenarioCount > maxCachedScenarioSummaries) {
+            const oldestKey = scenarioCache.keys().next().value;
+            if (oldestKey === undefined) break;
+            cachedScenarioCount -= scenarioCache.get(oldestKey)?.length ?? 0;
+            scenarioCache.delete(oldestKey);
+          }
+        }
         return scenarios;
       } catch (error) {
         publish({ error: error instanceof Error ? error.message : String(error) });
@@ -169,14 +219,17 @@ export function createMockCatalogStore(): MockCatalogStore {
       }
     },
     dispose: () => {
+      sourceSequence += 1;
+      runtimeSequence += 1;
+      querySequence += 1;
       client?.dispose();
       client = null;
       sourceFingerprint = "";
       runtimeFingerprint = "";
       queryFingerprint = "";
       lastQueryInput = null;
-      scenarioCache.clear();
-      snapshot = initialSnapshot;
+      clearScenarioCache();
+      publish(initialSnapshot);
     },
   };
 }

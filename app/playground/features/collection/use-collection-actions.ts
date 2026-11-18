@@ -949,7 +949,13 @@ export function useCollectionActions(ctx: ActionContext) {
     const now = new Date().toISOString();
     const id = createId();
     const mode: TransportMode =
-      request.kind === "websocket" ? "websocket" : request.kind === "rest" ? "rest" : "grpc-web";
+      request.kind === "websocket"
+        ? "websocket"
+        : request.kind === "rest"
+          ? "rest"
+          : request.transportMode === "native-grpc"
+            ? "native-grpc"
+            : "grpc-web";
     return {
       id,
       responseSessionId: id,
@@ -968,8 +974,8 @@ export function useCollectionActions(ctx: ActionContext) {
       httpMethod: request.method,
       baseUrl: request.url,
       nativeTarget: activeNativeTarget,
-      environmentKey: request.environmentKey ?? activeEnvironmentKey,
-      assertionJson,
+      environmentKey: request.environmentKey ?? request.defaultEnvironmentKey ?? activeEnvironmentKey,
+      assertionJson: request.assertionJson ?? assertionJson,
       responseTab: "messages",
       running: false,
       status: "idle",

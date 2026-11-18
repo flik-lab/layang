@@ -25,7 +25,9 @@ Install for the current Windows user:
 powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
 ```
 
-The installer places the CLI under `%LOCALAPPDATA%\Layang\CLI` and adds that directory to the user PATH. Open a new terminal after installation.
+The installer places the CLI under `%LOCALAPPDATA%\Layang-CLI` (or `LAYANG_CLI_HOME`) and puts that directory first on the user PATH. Open a new terminal after installation.
+
+The CLI does not live under `%LOCALAPPDATA%\Layang`: that folder belongs to the desktop app's installer, which empties it when the desktop app is installed. Installing 1.2.0 or later removes a CLI left at the pre-1.2 location `%LOCALAPPDATA%\Layang\CLI` and its PATH entry. Arguments with spaces (for example `--collection "FE Main Display"`) reach the CLI unchanged; the release smoke check verifies this through the native launcher.
 
 ## Linux
 
@@ -80,3 +82,11 @@ The release workflow packages desktop and CLI in separate jobs. A release is not
 - `layang-cli-linux-<arch>.tar.gz` plus its `.sha256` checksum
 
 This keeps the CLI as a first-class GitHub Release asset instead of making it an incidental output of the desktop packaging job.
+
+The portable smoke check runs, with the packaged executable:
+
+1. `layang --help`;
+2. a dependency-closure check: every dependency of every bundled package must be found the way Node finds it (its own `node_modules`, or one above it inside the bundle);
+3. `schema:import` of `samples/greeter.proto`, `mock:check` and `gateway:list` in a temporary workspace, which load `@grpc/proto-loader`.
+
+Bundled packages keep their position under `node_modules`, and each dependency is resolved from the package that requires it. A nested version (for example the `protobufjs` 7 inside `@grpc/proto-loader`, next to the root `protobufjs` 8) therefore brings its own dependencies.

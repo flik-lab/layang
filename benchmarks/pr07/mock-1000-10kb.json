@@ -1,0 +1,134 @@
+{
+  "schema": "layang-pr00-benchmark-v1",
+  "measuredAt": "2026-11-05T23:19:42.514Z",
+  "scope": "Node.js synthetic process only; not an Electron renderer, UI frame, real gRPC stream, or memory-leak test",
+  "environment": {
+    "node": "v22.16.0",
+    "platform": "linux",
+    "arch": "x64",
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "cpuCount": 5,
+    "totalMemoryMiB": 5948,
+    "gcExposed": true
+  },
+  "config": {
+    "scenarioCount": 1000,
+    "payloadKb": 10,
+    "seed": 42,
+    "samples": 12,
+    "warmup": 3,
+    "actualMethodFiles": 1000,
+    "actualBodyBytes": 10227324
+  },
+  "fixtureBuildMs": 50.453,
+  "memoryKiB": {
+    "before": {
+      "rss": 24952,
+      "heapTotal": 5440,
+      "heapUsed": 4555,
+      "external": 1535,
+      "arrayBuffers": 16
+    },
+    "afterGenerate": {
+      "rss": 54136,
+      "heapTotal": 37952,
+      "heapUsed": 28420,
+      "external": 1535,
+      "arrayBuffers": 16
+    },
+    "afterWorkload": {
+      "rss": 117084,
+      "heapTotal": 60992,
+      "heapUsed": 15966,
+      "external": 1535,
+      "arrayBuffers": 16
+    }
+  },
+  "observedGcEvents": 0,
+  "phases": {
+    "parseAllBundles": {
+      "samplesMs": [
+        10.404,
+        7.957,
+        8.338,
+        6.885,
+        7.02,
+        6.232,
+        7.139,
+        7.851,
+        7.104,
+        7.163,
+        6.755,
+        6.568
+      ],
+      "p50Ms": 7.104,
+      "p95Ms": 10.404,
+      "p99Ms": 10.404,
+      "cpuUserMs": 101.344,
+      "cpuSystemMs": 0.594
+    },
+    "sha256MethodFiles": {
+      "samplesMs": [
+        10.709,
+        9.848,
+        10.367,
+        12.561,
+        10.818,
+        9.503,
+        12.565,
+        11.411,
+        9.975,
+        10.846,
+        9.843,
+        10.843
+      ],
+      "p50Ms": 10.709,
+      "p95Ms": 12.565,
+      "p99Ms": 12.565,
+      "cpuUserMs": 139.109,
+      "cpuSystemMs": 3.451
+    },
+    "serializeMethodFiles": {
+      "samplesMs": [
+        12.88,
+        14.216,
+        14.163,
+        13.182,
+        12.977,
+        12.941,
+        12.384,
+        13.262,
+        13.221,
+        14.393,
+        13.128,
+        14.736
+      ],
+      "p50Ms": 13.182,
+      "p95Ms": 14.736,
+      "p99Ms": 14.736,
+      "cpuUserMs": 130.593,
+      "cpuSystemMs": 31.145
+    },
+    "catalogMetadataSearch": {
+      "samplesMs": [
+        0.243,
+        0.083,
+        0.08,
+        0.082,
+        0.081,
+        0.082,
+        0.091,
+        0.128,
+        0.065,
+        0.065,
+        0.068,
+        0.065
+      ],
+      "p50Ms": 0.081,
+      "p95Ms": 0.243,
+      "p99Ms": 0.243,
+      "cpuUserMs": 1.565,
+      "cpuSystemMs": 0.224
+    }
+  }
+}

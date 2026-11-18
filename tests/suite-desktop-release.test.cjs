@@ -162,6 +162,9 @@ const __suiteBaseDir = __dirname;
     const workflow = fs.readFileSync(path.join(root, ".github/workflows/release.yaml"), "utf8");
     
     const expectedScripts = [
+      "prepare:proto-worker",
+      "predev",
+      "prebuild",
       "dev",
       "build",
       "start",
@@ -175,6 +178,9 @@ const __suiteBaseDir = __dirname;
       "lint:fix",
       "typecheck",
       "test",
+      "test:electron:smoke",
+      "test:soak:v3",
+      "benchmark:v3",
     ];
     
     test("package scripts stay intentionally small for releases", () => {
@@ -194,7 +200,7 @@ const __suiteBaseDir = __dirname;
     
     test("only essential release helper scripts remain", () => {
       const scripts = fs.readdirSync(path.join(root, "scripts")).filter((name) => name.endsWith(".cjs")).sort();
-      assert.deepEqual(scripts, ["build-cli-portable.cjs", "electron-runtime.cjs", "package-cli-release.cjs"]);
+      assert.deepEqual(scripts, ["build-cli-portable.cjs", "build-proto-catalog-worker.cjs", "electron-runtime.cjs", "electron-window-smoke.cjs", "package-cli-release.cjs"]);
     });
     
   });

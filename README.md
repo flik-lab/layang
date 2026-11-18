@@ -5,7 +5,7 @@
 # Layang
 
 [![Website](https://img.shields.io/badge/website-layang.mff.web.id-blue)](https://layang.mff.web.id/)
-[![Version](https://img.shields.io/badge/version-1.1.6-blue)](https://github.com/flik-lab/layang/releases)
+[![Source version](https://img.shields.io/badge/source%20version-1.2.0-blue)](./package.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Layang is a desktop API workbench for REST, WebSocket, gRPC, and gRPC-Web. It uses workspace folders as the source of truth, so the same requests, schemas, mocks, environments, and documentation can be used from both the desktop app and CLI.
@@ -46,15 +46,12 @@ The gRPC service workspace groups:
 
 Request-specific examples and documentation stay with the request instead of being managed from a separate global screen.
 
-## Release 1.1.6
+## What's new in 1.2.0
 
-Version `1.1.6` focuses on responsive daily workflows, global Mocking 2.0, and detachable multi-window workspaces.
-
-* Added per-request Request/Response split state with responsive small-window behavior.
-* Added keyboard-first navigation and actions, including Quick Open, Send, Save, close, focus, and request-tab navigation shortcuts.
-* Added global REST, WebSocket, and gRPC mock scenarios with Incoming, Standby, Periodic, Scheduled, and Hybrid execution triggers.
-* Added detachable Mocking, Request, and Response windows with Back to Main / Back to Request reattachment and persisted multi-monitor layout.
-* Hardened dirty-state guards, cross-window persistence, response mirroring, pending REST mock limits, and release/runtime regression coverage.
+* File-based gRPC mock scenarios with focused per-method editing, periodic delivery, and manual sends.
+* Progressive scenario indexing and revision-checked updates to a running Native gRPC mock.
+* Proto ZIP import, hardened Electron IPC, and main-process REST requests.
+* gRPC service and scenario references, REST OpenAPI 3.1, and static documentation.
 
 See [CHANGELOG.md](./CHANGELOG.md) for the full release history.
 
@@ -130,7 +127,7 @@ Server-streaming scenarios support:
 
 Manual Send can publish a saved scenario response to an active Live Push stream without closing the connection.
 
-If a scenario file is changed outside Layang, use **Update from file** to reload it into the editor and running mock server.
+For gRPC, select a scenario under **Services → gRPC → Scenarios**, save its revision, and explicitly **Apply Native** or **Apply Gateway** to activate it. Manual Send requires an acknowledged active revision. External file changes are detected through the revision/content-hash check. Historical `mocks/grpc/methods/*.mock.yml` files are converted once, with verified backups, into independent file-based v3 documents. See [Canonical gRPC Scenarios](./docs/FILE_BASED_GRPC_SCENARIOS.md).
 
 ## Web Access
 
@@ -207,7 +204,7 @@ layang docs:check ./workspace
 layang docs:build ./workspace --check
 ```
 
-Generated wiki output is written to `docs/wiki-export/`.
+Generated Markdown and REST OpenAPI are written to `docs/published/`. The static site is written to `docs/site/`, and the wiki bundle to `docs/wiki-export/`. See the [workspace publishing guide](docs/WORKSPACE_DOCUMENTATION.md) for the output layout, source links, and scenario catalog.
 
 ## CLI
 

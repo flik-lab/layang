@@ -1,19 +1,29 @@
 "use strict";
 
+const { loadGrpcProtoWorkspace } = require("../../lib/load-grpc-proto-workspace.cjs");
+
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const grpc = require("@grpc/grpc-js");
-const protoLoader = require("@grpc/proto-loader");
-const { stringifyYaml } = require("../../lib/workspace-yaml.cjs");
+
+const { stringifyYaml, parseYaml } = require("../../lib/workspace-yaml.cjs");
 const { mockMatcherMatches } = require("./grpc-mock-server.cjs");
+const { isGatewayIncomingScenario, findBlockedSelectedGatewayStreamScenario } = require("../../lib/gateway-execution-policy.cjs");
+const { createBoundedGatewayLog } = require("../../lib/bounded-gateway-log.cjs");
+const { createGatewayMockStreamScheduler } = require("../../lib/gateway-mock-stream-scheduler.cjs");
+const { createGrpcMockLivePushRegistry, selectGrpcMockManualResponses } = require("../../lib/grpc-mock-live-push.cjs");
+const { executionAllows } = require("../../lib/mock-execution-engine.cjs");
+const { verifyGatewaySendRevision, fingerprintGatewayScenarios } = require("../../lib/gateway-version-contract.cjs");
 const { normalizeGrpcWebConfig, startGrpcWebProxy, stopGrpcWebProxy } = require("./grpc-web-proxy-server.cjs");
 
 const gatewayRuntimes = new Map();
 const gatewayLifecycleQueues = new Map();
-const maxLogEntries = 2000;
+const maxLogEntries = 1000;
+const maxInMemoryCaptures = 40;
+const maxInMemoryCaptureBytes = 24 * 1024 * 1024;
 const defaultRedactedMetadata = ["authorization", "cookie", "set-cookie", "x-api-key", "proxy-authorization"];
 
 function normalizeProfile(input = {}) {
@@ -125,16 +135,13 @@ async function startGatewayProfileNow(payload, profile) {
   const methods = Array.isArray(payload.methods) ? payload.methods : [];
   if (!protoFiles.length) throw new Error("At least one proto file is required to start the gateway.");
   if (!methods.length) throw new Error("No RPC methods were provided for the gateway.");
+  // Reject oversized or malformed snapshots before creating any temporary proto workspace.
+  const initialScenarios = Array.isArray(payload.scenarios) ? payload.scenarios : [];
+  if (initialScenarios.length > 50_000) throw new Error("Gateway snapshot exceeds scenario count limit.");
+  const initialScenarioHash = fingerprintGatewayScenarios(initialScenarios);
   const workspaceDir = await writeProtoWorkspace(protoFiles);
   const roots = protoFiles.map((file) => safeRelative(file.name));
-  const packageDefinition = protoLoader.loadSync(roots, {
-    includeDirs: [workspaceDir],
-    keepCase: false,
-    longs: String,
-    enums: String,
-    defaults: true,
-    oneofs: true,
-  });
+  const packageDefinition = loadGrpcProtoWorkspace(workspaceDir, roots);
   const loadedPackage = grpc.loadPackageDefinition(packageDefinition);
   const server = new grpc.Server({
     "grpc.max_receive_message_length": profile.limits.maxReceiveBytes,
@@ -151,11 +158,18 @@ async function startGatewayProfileNow(payload, profile) {
     loadedPackage,
     packageDefinition,
     methods,
-    scenarios: Array.isArray(payload.scenarios) ? payload.scenarios : [],
+    scenarios: initialScenarios,
+    configVersion: 1,
+    appliedRevision: 0,
+    scenarioContentHash: initialScenarioHash,
+    manualRegistry: createGrpcMockLivePushRegistry(),
     activeScenarioIds: isRecord(payload.activeScenarioIds) ? payload.activeScenarioIds : {},
     enabledMethods: isRecord(payload.enabledMethods) ? payload.enabledMethods : {},
     logs: [],
+    logBuffer: null,
     captures: [],
+    captureSizes: [],
+    captureBytes: 0,
     activeCalls: new Set(),
     clients: new Set(),
     roundRobinCursor: 0,
@@ -167,6 +181,9 @@ async function startGatewayProfileNow(payload, profile) {
     internalBridgePort: 0,
     webRoutes: new Map(),
   };
+
+  runtime.logBuffer = createBoundedGatewayLog({ maxEntries: maxLogEntries });
+  runtime.logs = runtime.logBuffer.entries;
 
   const byService = new Map();
   for (const method of methods) {
@@ -242,6 +259,7 @@ async function stopGatewayProfileNow(profileId) {
   const runtime = gatewayRuntimes.get(id);
   if (!runtime) return { running: false, profileId: id };
   gatewayRuntimes.delete(id);
+  runtime.manualRegistry.clear();
   for (const call of runtime.activeCalls) {
     try {
       call.cancel?.();
@@ -273,6 +291,144 @@ async function stopAllGatewayProfiles() {
   await Promise.all([...gatewayRuntimes.keys()].map((id) => stopGatewayProfile(id)));
 }
 
+/**
+ * Apply a compiled file-backed snapshot without restarting the listener.
+ * The per-profile queue also serializes starts, stops and Manual Send. Existing
+ * Standby connections stay open and subsequent sends use the new snapshot.
+ */
+function requireGateway(profileId) {
+  const runtime = gatewayRuntimes.get(profileId);
+  if (!runtime) throw new Error("Gateway profile is not running.");
+  return runtime;
+}
+
+function applyGatewaySnapshotNow(runtime, payload) {
+  if (!Number.isSafeInteger(payload.expectedConfigVersion) ||
+      payload.expectedConfigVersion !== runtime.configVersion)
+    throw new Error("STALE_GATEWAY_CONFIG: Gateway configuration changed; refresh status and retry Apply.");
+  if (!Number.isSafeInteger(payload.uiRuntimeRevision) ||
+      payload.uiRuntimeRevision !== runtime.appliedRevision + 1)
+    throw new Error("STALE_GATEWAY_REVISION: Gateway revision does not follow the active revision.");
+  const methodScenarios = payload.scenarios;
+  if (!Array.isArray(methodScenarios) || methodScenarios.length > 50_000)
+    throw new Error("Gateway snapshot contains an invalid scenario count.");
+  // A method-scoped Apply preserves other methods' already-active snapshots.
+  // It does not hydrate unrelated v3 bodies in the editor or main process.
+  const scope = payload.patchMethodKey;
+  if (scope !== undefined &&
+      (typeof scope !== "string" || !scope.includes("/") ||
+       methodScenarios.some(item => `${item?.service}/${item?.method}` !== scope) ||
+       (payload.serviceName && `${payload.serviceName}/${payload.methodName}` !== scope)))
+    throw new Error("Gateway method patch contains an unrelated scenario.");
+  const scenarios = scope
+    ? [...runtime.scenarios.filter(item => `${item.service}/${item.method}` !== scope), ...methodScenarios]
+    : methodScenarios;
+  if (scenarios.length > 50_000) throw new Error("Gateway snapshot contains too many active scenarios.");
+  // Hash and validate the final merged snapshot before swapping references.
+  const hash = fingerprintGatewayScenarios(scenarios);
+  let nextSelections = runtime.activeScenarioIds;
+  if (payload.serviceName || payload.methodName || payload.scenarioId) {
+    const selected = scenarios.find(item => item.service === payload.serviceName &&
+      sameGrpcMethodName(item.method, payload.methodName) && item.id === payload.scenarioId);
+    if (!selected) throw new Error("Selected Gateway scenario is missing from the compiled snapshot.");
+    const methodKey = `${payload.serviceName}/${payload.methodName}`;
+    const behavior = resolveBehavior(runtime, methodKey);
+    if (behavior === "proxy" || behavior === "disabled")
+      throw new Error("Gateway method routes to proxy/disabled. Choose Mock or Hybrid before Apply.");
+    nextSelections = { ...runtime.activeScenarioIds, [methodKey]: payload.scenarioId };
+  }
+  runtime.activeScenarioIds = nextSelections;
+  runtime.scenarios = scenarios;
+  runtime.configVersion += 1;
+  runtime.appliedRevision = payload.uiRuntimeRevision;
+  runtime.scenarioContentHash = hash;
+  return { ...gatewayStatus(runtime), scenarioCount: scenarios.length,
+    methodScenarioCount: methodScenarios.length };
+}
+
+function preflightGatewayManualSend(scenarios, payload) {
+  const serviceName = String(payload.serviceName || "").trim();
+  const methodName = String(payload.methodName || "").trim();
+  const scenarioId = String(payload.scenarioId || "").trim();
+  if (!serviceName || !methodName || !scenarioId) throw new Error("Method and scenario IDs are required.");
+  const scenario = scenarios.find(item => item.service === serviceName &&
+    sameGrpcMethodName(item.method, methodName) && item.id === scenarioId && item.active !== false);
+  if (!scenario || !executionAllows(scenario.stream?.execution, "manual"))
+    throw new Error("No active, manual-enabled scenario with the requested identity.");
+  const responses = selectGrpcMockManualResponses(scenario, {
+    responseIndex: payload.responseIndex, sendAll: payload.sendAll === true,
+  });
+  if (!responses.length) throw new Error("Selected scenario has no matching stream response.");
+  for (const item of responses) {
+    if (normalizeGrpcStatus(item.code) !== grpc.status.OK)
+      throw new Error("Gateway Manual Send only publishes OK responses to persistent streams.");
+  }
+  return { serviceName, methodName, scenarioId, responses };
+}
+
+function sendGatewayStreamMessageNow(runtime, payload) {
+  verifyGatewaySendRevision(runtime, payload);
+  const { serviceName, methodName, scenarioId, responses } = preflightGatewayManualSend(runtime.scenarios, payload);
+  let matched = 0, sent = 0, backpressured = 0, skipped = 0;
+  for (const item of responses) {
+    const result = runtime.manualRegistry.send({ serviceName, methodName, scenarioId,
+      resolveOutput: () => ({ data: item.data === undefined ? {} : item.data }),
+    });
+    matched = Math.max(matched, result.matched);
+    sent += result.sent;
+    backpressured += result.backpressured;
+    skipped += result.skipped;
+    runtime.metrics.streamMessages += result.sent;
+    runtime.metrics.bytesOut += result.sent * estimateBytes(item.data);
+  }
+  return { running: true, profileId: runtime.id, scenarioId, matched, sent, backpressured,
+    skipped, appliedRevision: runtime.appliedRevision,
+    scenarioContentHash: runtime.scenarioContentHash,
+    configVersion: runtime.configVersion,
+    message: sent ? `Sent ${sent} Gateway response(s) to ${matched} Standby stream(s).` :
+      "No writable Standby stream available; retry after the client connects or drains." };
+}
+
+function applyGatewayRuntimeSnapshot(payload = {}) {
+  const profileId = String(payload.profileId || "default-gateway");
+  return queueGatewayLifecycle(profileId, () => applyGatewaySnapshotNow(requireGateway(profileId), payload));
+}
+
+/** A single queued operation: no other Apply/Start/Stop/Send can interleave. */
+function applyAndSendGatewaySnapshot(payload = {}) {
+  const profileId = String(payload.profileId || "default-gateway");
+  return queueGatewayLifecycle(profileId, () => {
+    const runtime = requireGateway(profileId);
+    // Full preflight prevents a malformed/non-manual response from committing a new snapshot.
+    preflightGatewayManualSend(payload.scenarios, payload);
+    const applied = applyGatewaySnapshotNow(runtime, payload);
+    const delivery = sendGatewayStreamMessageNow(runtime, {
+      ...payload,
+      expectedRuntimeRevision: applied.appliedRevision,
+      expectedRuntimeHash: applied.scenarioContentHash,
+      expectedConfigVersion: applied.configVersion,
+    });
+    return { applied, delivery };
+  });
+}
+
+/** Manual Send never falls back to the upstream and never trusts draft payloads. */
+function sendGatewayStreamMessage(payload = {}) {
+  const profileId = String(payload.profileId || "default-gateway");
+  return queueGatewayLifecycle(profileId, () => sendGatewayStreamMessageNow(requireGateway(profileId), payload));
+}
+
+/**
+ * gRPC method names in scenarios are written as in the proto (`StreamItems`), but the 1.1.x CLI
+ * gateway derived camelCase names (`streamItems`) from @grpc/proto-loader. Accept both so
+ * scenarios written for either keep matching. (Kept inside the Apply/Send block that
+ * tests/gateway-atomic-manual.test.cjs executes in isolation.)
+ */
+function sameGrpcMethodName(left, right) {
+  if (left === right) return true;
+  return String(left || "").toLowerCase() === String(right || "").toLowerCase();
+}
+
 function getGatewayProfileStatus(profileId) {
   const runtime = gatewayRuntimes.get(String(profileId || "default-gateway"));
   return runtime ? gatewayStatus(runtime) : { running: false, profileId: String(profileId || "default-gateway") };
@@ -296,23 +452,40 @@ function getGatewayLogs(profileId, options = {}) {
 
 function clearGatewayLogs(profileId) {
   const runtime = gatewayRuntimes.get(String(profileId || "default-gateway"));
-  if (runtime) runtime.logs = [];
+  if (runtime) runtime.logBuffer.clear();
   return { ok: true };
 }
 
-async function saveGatewayCaptureAsScenario(profileId, captureId, destination) {
+async function saveGatewayCaptureAsScenario(profileId, captureId) {
   const runtime = gatewayRuntimes.get(String(profileId || "default-gateway"));
   if (!runtime) throw new Error("Gateway profile is not running.");
-  const capture = runtime.captures.find((item) => item.id === captureId);
-  if (!capture) throw new Error("Gateway capture was not found.");
+  const capture = runtime.captures.find((item) => item.id === captureId) ||
+    await readCaptureFromDisk(runtime, captureId);
+  if (!capture) throw new Error("Gateway capture was not found in memory or workspace storage.");
   const scenario = captureToScenario(capture);
-  if (destination) {
-    const file = path.resolve(destination);
-    await fsp.mkdir(path.dirname(file), { recursive: true });
-    await fsp.writeFile(file, stringifyYaml({ version: 1, scenarios: [scenario] }), "utf8");
-    return { ok: true, file, scenario };
-  }
+  // Capture export is an editor operation. Never accept an arbitrary file path
+  // from renderer IPC as a privileged filesystem write target.
   return { ok: true, scenario };
+}
+
+async function readCaptureFromDisk(runtime, captureId) {
+  if (!runtime.workspaceDirectory || typeof captureId !== "string" || !/^[a-f0-9-]{36}$/i.test(captureId)) return null;
+  const root = path.join(runtime.workspaceDirectory, ".layang", "proxy-captures", safeSegment(runtime.id));
+  const suffix = `${captureId.slice(0, 8)}.yml`;
+  const methods = await fsp.readdir(root, { withFileTypes: true }).catch(() => []);
+  for (const method of methods) {
+    if (!method.isDirectory()) continue;
+    const directory = path.join(root, method.name);
+    const files = await fsp.readdir(directory).catch(() => []);
+    for (const filename of files) {
+      if (!filename.endsWith(suffix)) continue;
+      try {
+        const parsed = parseYaml(await fsp.readFile(path.join(directory, filename), "utf8"));
+        if (parsed?.capture?.id === captureId) return parsed.capture;
+      } catch { /* Ignore a partial or corrupt capture file. */ }
+    }
+  }
+  return null;
 }
 
 function createGatewayHandler(runtime, method, handlerName, definition, GenericClient) {
@@ -448,6 +621,25 @@ function handleServerStream(runtime, method, handlerName, _definition, GenericCl
   if (behavior === "disabled") return endServerCall(call, grpc.status.UNIMPLEMENTED, `${methodKey} is disabled.`);
   const scenario = behavior !== "proxy" ? findScenario(runtime, method, call.request, call.metadata) : null;
   if (scenario) return respondMockServerStream(runtime, method, scenario, call, started);
+  if (behavior !== "proxy") {
+    const blocked = findBlockedSelectedGatewayStreamScenario(runtime, method, {
+      data: call.request || {}, headers: metadataToObject(call.metadata),
+    }, mockMatcherMatches);
+    if (blocked) {
+      // Standby-only streams remain open until the caller cancels. Manual data
+      // is drawn exclusively from the ACKed active runtime snapshot.
+      if (executionAllows(blocked.stream?.execution, "manual")) {
+        runtime.manualRegistry.register({ call, serviceName: method.serviceName,
+          methodName: method.methodName, scenarioId: blocked.id });
+        appendCallLog(runtime, method, "mock", "STANDBY", Date.now() - started,
+          call.request, undefined, "mock", "Awaiting Gateway Manual Send.");
+        return;
+      }
+      runtime.metrics.callsFailed += 1;
+      return endServerCall(call, grpc.status.FAILED_PRECONDITION,
+        `Scenario ${blocked.id} does not allow incoming execution.`);
+    }
+  }
   if (behavior === "mock" || (runtime.profile.mode === "hybrid" && runtime.profile.noMatchBehavior === "not-found")) {
     runtime.metrics.callsFailed += 1;
     return endServerCall(call, grpc.status.NOT_FOUND, `No matching mock scenario for ${methodKey}.`);
@@ -692,27 +884,32 @@ function respondMockUnary(runtime, method, scenario, call, callback, started) {
 
 function respondMockServerStream(runtime, method, scenario, call, started) {
   const responses = Array.isArray(scenario.stream?.responses) ? scenario.stream.responses : [];
-  const intervalMs = Math.max(0, Number(scenario.stream?.intervalMs || 0));
-  let index = 0;
-  const send = () => {
-    if (index >= responses.length) {
+  return createGatewayMockStreamScheduler({
+    call,
+    responses,
+    intervalMs: Math.max(0, Number(scenario.stream?.intervalMs || 0)),
+    // Same loop contract as the native mock server (was ignored, so streams ended after one pass).
+    loop: scenario.stream?.loop === true,
+    maxLoops: scenario.stream?.maxLoops ?? scenario.stream?.max_loops ?? 0,
+    mapItem(item) {
+      const code = normalizeGrpcStatus(item.code);
+      if (code !== grpc.status.OK)
+        return { error: grpcStatusError(code, item.message || "Mock stream error") };
+      return { data: item.data === undefined ? {} : item.data };
+    },
+    onMessage(item) {
+      runtime.metrics.streamMessages += 1;
+      appendCallLog(runtime, method, "mock", "MESSAGE", Date.now() - started, call.request, item.data, "mock");
+    },
+    onComplete() {
       runtime.metrics.callsCompleted += 1;
       call.end();
-      return;
-    }
-    const item = responses[index++];
-    const code = normalizeGrpcStatus(item.code);
-    if (code !== grpc.status.OK) {
+    },
+    onError(error) {
       runtime.metrics.callsFailed += 1;
-      endServerCall(call, code, item.message || "Mock stream error");
-      return;
-    }
-    runtime.metrics.streamMessages += 1;
-    appendCallLog(runtime, method, "mock", "MESSAGE", Date.now() - started, call.request, item.data, "mock");
-    call.write(item.data === undefined ? {} : item.data);
-    setTimeout(send, Math.max(0, Number(item.delayMs ?? intervalMs)));
-  };
-  send();
+      endServerCall(call, error.code ?? grpc.status.INTERNAL, error.message || "Mock stream failed");
+    },
+  });
 }
 
 function resolveBehavior(runtime, methodKey) {
@@ -730,7 +927,9 @@ function findScenario(runtime, method, request, metadata) {
   const candidates = runtime.scenarios
     .filter(
       (item) =>
-        item && item.active !== false && item.service === method.serviceName && item.method === method.methodName,
+        isGatewayIncomingScenario(item) &&
+        item.service === method.serviceName &&
+        sameGrpcMethodName(item.method, method.methodName),
     )
     .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0));
   const selectedId = runtime.activeScenarioIds[methodKey] || runtime.activeScenarioIds[methodKey.replace("/", ".")];
@@ -829,14 +1028,26 @@ function appendCallLog(runtime, method, behavior, status, durationMs, request, r
 }
 
 function appendLog(runtime, entry) {
-  runtime.logs.push({
+  runtime.logBuffer.add({
     id: crypto.randomUUID(),
     traceId: entry.traceId || crypto.randomUUID().replace(/-/g, ""),
     timestamp: new Date().toISOString(),
     ...entry,
   });
-  if (runtime.logs.length > maxLogEntries) runtime.logs.splice(0, runtime.logs.length - maxLogEntries);
   scheduleRuntimeStatusWrite(runtime);
+}
+
+function retainCapture(runtime, capture) {
+  // Large captures are persisted to disk, not kept in the Electron runtime heap.
+  const bytes = estimateBytes(capture);
+  if (bytes > maxInMemoryCaptureBytes) return;
+  runtime.captures.push(capture);
+  runtime.captureSizes.push(bytes);
+  runtime.captureBytes += bytes;
+  while (runtime.captures.length > maxInMemoryCaptures || runtime.captureBytes > maxInMemoryCaptureBytes) {
+    runtime.captures.shift();
+    runtime.captureBytes -= runtime.captureSizes.shift() ?? 0;
+  }
 }
 
 function scheduleRuntimeStatusWrite(runtime) {
@@ -844,7 +1055,7 @@ function scheduleRuntimeStatusWrite(runtime) {
   runtime.statusWriteTimer = setTimeout(() => {
     runtime.statusWriteTimer = null;
     persistRuntimeStatus(runtime).catch(() => undefined);
-  }, 100);
+  }, 1_000); // Coalesce high-frequency streaming logs into one status write per second.
 }
 
 async function persistRuntimeStatus(runtime) {
@@ -890,7 +1101,7 @@ function recordUnaryCapture(runtime, method, request, response, metadata, upstre
     status: "OK",
     capturedAt: new Date().toISOString(),
   };
-  runtime.captures.push(capture);
+  retainCapture(runtime, capture);
   appendLog(runtime, {
     kind: "capture",
     behavior: "capture",
@@ -899,7 +1110,9 @@ function recordUnaryCapture(runtime, method, request, response, metadata, upstre
     captureId: capture.id,
     message: "Captured upstream response. Save it as a mock scenario when ready.",
   });
-  persistCapture(runtime, capture);
+  void persistCapture(runtime, capture).catch((error) => {
+    appendLog(runtime, { kind: "capture", behavior: "capture", status: "ERROR", message: `Capture persistence failed: ${error.message}` });
+  });
 }
 
 function createStreamCapture(runtime, method, request, metadata, upstream) {
@@ -939,7 +1152,7 @@ function finalizeStreamCapture(runtime, capture, status, message) {
   capture.message = message;
   capture.durationMs = Date.now() - capture.startedAt;
   delete capture.startedAt;
-  runtime.captures.push(capture);
+  retainCapture(runtime, capture);
   appendLog(runtime, {
     kind: "capture",
     behavior: "capture",
@@ -948,7 +1161,9 @@ function finalizeStreamCapture(runtime, capture, status, message) {
     captureId: capture.id,
     message: `Captured ${capture.responses?.length ?? 0} streamed response message(s).`,
   });
-  persistCapture(runtime, capture);
+  void persistCapture(runtime, capture).catch((error) => {
+    appendLog(runtime, { kind: "capture", behavior: "capture", status: "ERROR", message: `Capture persistence failed: ${error.message}` });
+  });
 }
 
 async function persistCapture(runtime, capture) {
@@ -962,7 +1177,7 @@ async function persistCapture(runtime, capture) {
   );
   const file = path.join(dir, `${capture.capturedAt.replace(/[:.]/g, "-")}-${capture.id.slice(0, 8)}.yml`);
   await fsp.mkdir(dir, { recursive: true });
-  await fsp.writeFile(file, stringifyYaml({ version: 1, capture }), "utf8").catch(() => undefined);
+  await fsp.writeFile(file, stringifyYaml({ version: 1, capture }), "utf8");
 }
 
 function captureToScenario(capture) {
@@ -982,6 +1197,7 @@ function gatewayStatus(runtime) {
   return {
     running: true,
     profileId: runtime.id,
+    workspaceDirectory: runtime.workspaceDirectory,
     name: runtime.profile.name,
     mode: runtime.profile.mode,
     listenHost: runtime.profile.listenHost,
@@ -999,6 +1215,11 @@ function gatewayStatus(runtime) {
     upstreams: runtime.profile.upstreams.map((item) => item.target),
     methodCount: runtime.methodCount,
     activeCallCount: runtime.activeCalls.size,
+    activeManualStreamCount: runtime.manualRegistry.count(),
+    configVersion: runtime.configVersion,
+    appliedRevision: runtime.appliedRevision,
+    scenarioContentHash: runtime.scenarioContentHash,
+    scenarioCount: runtime.scenarios.length,
     logCount: runtime.logs.length,
     captureCount: runtime.captures.length,
     startedAt: runtime.startedAt,
@@ -1340,6 +1561,9 @@ module.exports = {
   stopAllGatewayProfiles,
   getGatewayProfileStatus,
   listGatewayProfilesStatus,
+  applyGatewayRuntimeSnapshot,
+  applyAndSendGatewaySnapshot,
+  sendGatewayStreamMessage,
   getGatewayLogs,
   clearGatewayLogs,
   saveGatewayCaptureAsScenario,

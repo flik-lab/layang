@@ -41,10 +41,10 @@ const __suiteBaseDir = __dirname;
       assert.doesNotMatch(root, /electronWsMock\?\.status[\s\S]{0,500}?setInterval/);
     });
     
-    test("gRPC live reload reads current runtime state from external store", () => {
-      const sync = read("app/playground/features/mock-server/use-mock-runtime-sync.ts");
-      assert.match(sync, /mockRuntimeStore\.getGrpc\(\)/);
-      assert.doesNotMatch(sync, /mockServerStatus\.running[\s\S]{0,160}?useEffect/);
+    test("legacy runtime synchronization effect is retired for canonical v3", () => {
+      const shell = read("app/playground/features/shell/use-workbench-container-model.tsx");
+      assert.doesNotMatch(shell, /useMockRuntimeSync\(/);
+      assert.match(shell, /useMockRuntimePolling\(/);
     });
     
   });

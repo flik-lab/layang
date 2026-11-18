@@ -1,0 +1,32 @@
+name: Canonical v3 Sustained Repository Soak
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 1 * * 0"
+
+permissions:
+  contents: read
+
+jobs:
+  node-repository-soak:
+    name: 10k file-backed scenarios / 30-minute heap plateau
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Execute 30-minute sustained repository soak
+        run: node --expose-gc scripts/benchmarks/soak-v3-repository.cjs 10000 1800 artifacts/v3-soak.json
+      - name: Upload raw soak telemetry even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: layang-v3-repository-soak
+          path: artifacts/v3-soak.json
+          if-no-files-found: warn
+          retention-days: 30

@@ -7,7 +7,7 @@ import { createRequestSession } from "../request-runner/request-session-model";
 import { reorderRequestSessionList, upsertRequestSessionPreservingOrderList } from "./request-session-domain";
 import { compactRequestSessionForStorage, normalizeVisibleResponseTab, runWhenIdle } from "../workspace/workspace-model";
 import { enqueueWorkspaceAutosave } from "../workspace/workspace-autosave";
-import { extractRequestBodyFromMockScenario, generateRandomExampleFromType } from "../mock-server/mock-scenario-model";
+import { generateRandomExampleFromType } from "../mock-server/mock-scenario-model";
 import { defaultMetadata, projectStorageKey } from "../../shared/workbench-constants";
 import { responseSessionRegistry } from "../response-viewer/model/responseSessionRegistry";
 import { toErrorMessage } from "../../shared/error-utils";
@@ -40,8 +40,8 @@ export function useRequestSessionActions(scope: any) {
     baseUrl,
     closeManualWebSocketClient,
     collections,
-    currentMockActiveScenario,
-    currentMockScenarios,
+
+
     environmentKey,
     findCollectionRequestById,
     getProjectSnapshot,
@@ -464,25 +464,6 @@ export function useRequestSessionActions(scope: any) {
     }
   }
 
-  function generateRequestJsonFromSelectedScenario() {
-    if (!selectedMethod) {
-      showToast("Select a method before generating a body from a scenario.", "warning");
-      return;
-    }
-    const scenario = currentMockActiveScenario ?? currentMockScenarios[0];
-    if (!scenario) {
-      showToast("No scenario is available for the selected method.", "warning");
-      return;
-    }
-    const body = extractRequestBodyFromMockScenario(scenario);
-    if (body === undefined) {
-      showToast("Selected scenario has no input equals/contains data.", "warning");
-      return;
-    }
-    handleRequestJsonChange(JSON.stringify(body, null, 2));
-    showToast(`Body generated from scenario ${scenario.id}.`, "success");
-  }
-
   function addMetadataRow() {
     setMetadata((current: MetadataPair[]) => {
       const next = [...current, { key: "", value: "" }];
@@ -538,7 +519,7 @@ export function useRequestSessionActions(scope: any) {
     closeOtherRequestSessions,
     closeRequestSession,
     generateRandomRequestJson,
-    generateRequestJsonFromSelectedScenario,
+
     handleRequestJsonChange,
     patchActiveCollectionRequest,
     persistProjectSnapshotNow,

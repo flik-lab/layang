@@ -1,7 +1,6 @@
 #define UNICODE
 #define _UNICODE
 #include <windows.h>
-#include <process.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <wchar.h>
@@ -13,6 +12,70 @@ static int executable_dir(wchar_t *buffer, size_t size) {
   if (!slash) return -1;
   *slash = L'\0';
   return 0;
+}
+
+/* Growable wide string for the child command line. */
+typedef struct {
+  wchar_t *data;
+  size_t length;
+  size_t capacity;
+} wbuffer;
+
+static int append_char(wbuffer *buffer, wchar_t character) {
+  if (buffer->length + 2 > buffer->capacity) {
+    size_t capacity = buffer->capacity ? buffer->capacity * 2 : 1024;
+    wchar_t *data = realloc(buffer->data, capacity * sizeof(wchar_t));
+    if (!data) return -1;
+    buffer->data = data;
+    buffer->capacity = capacity;
+  }
+  buffer->data[buffer->length++] = character;
+  buffer->data[buffer->length] = L'\0';
+  return 0;
+}
+
+static int append_repeat(wbuffer *buffer, wchar_t character, size_t count) {
+  for (size_t i = 0; i < count; ++i)
+    if (append_char(buffer, character) != 0) return -1;
+  return 0;
+}
+
+/*
+ * Appends one argument so that CommandLineToArgvW / the MSVC runtime in the child parses it back
+ * unchanged: arguments with spaces, tabs or quotes are quoted, and backslashes before a quote are
+ * doubled. (_wspawnv joins arguments with spaces without quoting, which split "FE Main Display".)
+ */
+static int append_argument(wbuffer *buffer, const wchar_t *argument) {
+  if (buffer->length && append_char(buffer, L' ') != 0) return -1;
+  if (*argument && !wcspbrk(argument, L" \t\n\v\"")) {
+    for (const wchar_t *cursor = argument; *cursor; ++cursor)
+      if (append_char(buffer, *cursor) != 0) return -1;
+    return 0;
+  }
+  if (append_char(buffer, L'"') != 0) return -1;
+  for (const wchar_t *cursor = argument;; ++cursor) {
+    size_t backslashes = 0;
+    while (*cursor == L'\\') {
+      ++backslashes;
+      ++cursor;
+    }
+    if (*cursor == L'\0') {
+      if (append_repeat(buffer, L'\\', backslashes * 2) != 0) return -1;
+      break;
+    }
+    if (*cursor == L'"') {
+      if (append_repeat(buffer, L'\\', backslashes * 2 + 1) != 0 || append_char(buffer, L'"') != 0) return -1;
+    } else {
+      if (append_repeat(buffer, L'\\', backslashes) != 0 || append_char(buffer, *cursor) != 0) return -1;
+    }
+  }
+  return append_char(buffer, L'"');
+}
+
+/* Ctrl+C reaches the child through the shared console; the launcher waits for its exit code. */
+static BOOL WINAPI ignore_console_signal(DWORD signal) {
+  (void)signal;
+  return TRUE;
 }
 
 int wmain(int argc, wchar_t **argv) {
@@ -30,22 +93,29 @@ int wmain(int argc, wchar_t **argv) {
     return 127;
   }
 
-  const wchar_t **child_argv = calloc((size_t)argc + 2, sizeof(wchar_t *));
-  if (!child_argv) {
+  wbuffer command = {0};
+  int failed = append_argument(&command, node_path) != 0 || append_argument(&command, cli_path) != 0;
+  for (int i = 1; !failed && i < argc; ++i) failed = append_argument(&command, argv[i]) != 0;
+  if (failed) {
     fwprintf(stderr, L"layang: out of memory\n");
+    free(command.data);
     return 127;
   }
-  child_argv[0] = node_path;
-  child_argv[1] = cli_path;
-  for (int i = 1; i < argc; ++i) child_argv[i + 1] = argv[i];
-  child_argv[argc + 1] = NULL;
 
-  intptr_t code = _wspawnv(_P_WAIT, node_path, child_argv);
-  if (code == -1) {
-    fwprintf(stderr, L"layang: unable to start bundled runtime\n");
-    free(child_argv);
+  STARTUPINFOW startup = {0};
+  PROCESS_INFORMATION process = {0};
+  startup.cb = sizeof(startup);
+  SetConsoleCtrlHandler(ignore_console_signal, TRUE);
+  if (!CreateProcessW(node_path, command.data, NULL, NULL, TRUE, 0, NULL, NULL, &startup, &process)) {
+    fwprintf(stderr, L"layang: unable to start bundled runtime (error %lu)\n", GetLastError());
+    free(command.data);
     return 127;
   }
-  free(child_argv);
+  free(command.data);
+  WaitForSingleObject(process.hProcess, INFINITE);
+  DWORD code = 127;
+  GetExitCodeProcess(process.hProcess, &code);
+  CloseHandle(process.hThread);
+  CloseHandle(process.hProcess);
   return (int)code;
 }

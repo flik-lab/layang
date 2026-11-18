@@ -14,3 +14,18 @@ onlyBuiltDependencies:
 nodeLinker: hoisted
 publicHoistPattern:
   - '*'
+
+# Advisories with no fixed release on the version line the build tools use. All three are
+# build-time only (packaging the desktop app) and never ship in the app or the CLI.
+auditConfig:
+  ignoreGhsas:
+    # extract-zip <=2.0.1 symlink traversal; no fixed version. @electron/packager unpacks
+    # the Electron zip it downloads from the official release.
+    - GHSA-jmr9-qjv8-65gv
+    - GHSA-7pqw-9j4j-h8q3
+    # picomatch ReDoS on attacker-supplied extglob patterns; no fixed version. fast-glob in
+    # @electron-forge/core only runs the project's own patterns.
+    - GHSA-fc5q-39xc-vjpf
+    # image-size ICNS infinite loop; fixed only in 2.x, an incompatible API for appdmg
+    # (macOS DMG maker), which reads the project's own icon.
+    - GHSA-w3rx-r6r6-pgpr

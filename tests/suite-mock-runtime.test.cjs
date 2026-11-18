@@ -155,7 +155,11 @@ const __suiteBaseDir = __dirname;
       t.after(async () => { await stopRestMockServer(); });
     
       const responsePromise = request(port);
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      // Poll for the observable pending state instead of assuming a request
+      // enters the queue in 30 ms on an overloaded CI runner.
+      const deadline = Date.now() + 1500;
+      while (getRestMockServerStatus().pendingCount !== 1 && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 10));
       assert.equal(getRestMockServerStatus().pendingCount, 1);
     
       const release = sendRestMockResponse({ scenarioId: 'rest-standby' });
@@ -188,7 +192,11 @@ const __suiteBaseDir = __dirname;
       assert.equal(getRestMockServerStatus().startedAt, startedAt);
     
       const responsePromise = request(port);
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      // Poll for the observable pending state instead of assuming a request
+      // enters the queue in 30 ms on an overloaded CI runner.
+      const deadline = Date.now() + 1500;
+      while (getRestMockServerStatus().pendingCount !== 1 && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 10));
       assert.equal(getRestMockServerStatus().pendingCount, 1);
       sendRestMockResponse({ scenarioId: 'rest-standby' });
       const response = await responsePromise;
@@ -243,23 +251,6 @@ const __suiteBaseDir = __dirname;
     const root = path.resolve(__dirname, "..");
     const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
     
-    test("Mocking exposes independent runtime switches and keeps gRPC Mock settings", () => {
-      const services = read("app/playground/features/services/services-workspace.tsx");
-      assert.match(services, /function MockRuntimeStrip/);
-      assert.match(services, /label: "gRPC Mock"/);
-      assert.match(services, /label: "Web Access"/);
-      assert.match(services, /label: "REST Mock"/);
-      assert.match(services, /label: "WebSocket Mock"/);
-      assert.match(services, /endpoint: grpcEndpoint/);
-      assert.match(services, /endpoint: webEndpoint/);
-      assert.match(services, /endpoint: restEndpoint/);
-      assert.match(services, /endpoint: websocketEndpoint/);
-      assert.doesNotMatch(services, /fontFamily: "monospace", fontSize: 10/);
-      assert.match(services, /onToggle\(item\.kind, event\.target\.checked\)/);
-      assert.match(services, />\s*Mock Settings\s*<\/Button>/);
-      assert.match(services, /<GrpcMockSettingsDialog/);
-      assert.match(services, /aria-label="Scenario settings"/);
-    });
     
     test("Source Control does not render a duplicate outer Git changes sidebar", () => {
       const sidebar = read("app/playground/features/shell/workbench-sidebar.tsx");

@@ -107,7 +107,7 @@ const __suiteBaseDir = __dirname;
     test("REST and WebSocket mock panels share concise section and field copy", () => {
       const rest = read("app/playground/features/rest/rest-panels.tsx");
       const websocket = read("app/playground/features/websocket/websocket-panels.tsx");
-      const services = read("app/playground/features/services/services-workspace.tsx");
+      const services = read("app/playground/features/services/services-runtime-ui.tsx");
       assert.match(rest, /uiCopy\.sections\.matchers/);
       assert.match(rest, /uiCopy\.sections\.response/);
       assert.match(rest, /uiCopy\.fields\.delayMs/);

@@ -1,0 +1,134 @@
+{
+  "schema": "layang-pr06-suite-v1",
+  "timestamp": "2026-11-05T22:04:57.658Z",
+  "runs": [
+    {
+      "name": "mock-100-1kb",
+      "exitCode": 0,
+      "signal": null,
+      "elapsedMs": 73,
+      "comparison": {
+        "comparable": false,
+        "reason": "Runtime, OS or CPU differs; deltas are informational only",
+        "phases": {
+          "parseAllBundles": {
+            "baselineP95Ms": 1.423,
+            "currentP95Ms": 1.081,
+            "deltaPercent": -24
+          },
+          "sha256MethodFiles": {
+            "baselineP95Ms": 0.727,
+            "currentP95Ms": 0.899,
+            "deltaPercent": 23.7
+          },
+          "serializeMethodFiles": {
+            "baselineP95Ms": 0.345,
+            "currentP95Ms": 0.206,
+            "deltaPercent": -40.3
+          },
+          "catalogMetadataSearch": {
+            "baselineP95Ms": 2.034,
+            "currentP95Ms": 0.511,
+            "deltaPercent": -74.9
+          }
+        }
+      }
+    },
+    {
+      "name": "mock-1000-10kb",
+      "exitCode": 0,
+      "signal": null,
+      "elapsedMs": 508,
+      "comparison": {
+        "comparable": false,
+        "reason": "Runtime, OS or CPU differs; deltas are informational only",
+        "phases": {
+          "parseAllBundles": {
+            "baselineP95Ms": 16.098,
+            "currentP95Ms": 6.83,
+            "deltaPercent": -57.6
+          },
+          "sha256MethodFiles": {
+            "baselineP95Ms": 19.936,
+            "currentP95Ms": 9.495,
+            "deltaPercent": -52.4
+          },
+          "serializeMethodFiles": {
+            "baselineP95Ms": 25.157,
+            "currentP95Ms": 11.76,
+            "deltaPercent": -53.3
+          },
+          "catalogMetadataSearch": {
+            "baselineP95Ms": 0.959,
+            "currentP95Ms": 0.121,
+            "deltaPercent": -87.4
+          }
+        }
+      }
+    },
+    {
+      "name": "mock-5000-1kb",
+      "exitCode": 0,
+      "signal": null,
+      "elapsedMs": 461,
+      "comparison": {
+        "comparable": false,
+        "reason": "Runtime, OS or CPU differs; deltas are informational only",
+        "phases": {
+          "parseAllBundles": {
+            "baselineP95Ms": 922.088,
+            "currentP95Ms": 14.546,
+            "deltaPercent": -98.4
+          },
+          "sha256MethodFiles": {
+            "baselineP95Ms": 15.781,
+            "currentP95Ms": 9.127,
+            "deltaPercent": -42.2
+          },
+          "serializeMethodFiles": {
+            "baselineP95Ms": 100.675,
+            "currentP95Ms": 8.842,
+            "deltaPercent": -91.2
+          },
+          "catalogMetadataSearch": {
+            "baselineP95Ms": 0.707,
+            "currentP95Ms": 0.179,
+            "deltaPercent": -74.7
+          }
+        }
+      }
+    },
+    {
+      "name": "mock-10000-1kb",
+      "exitCode": 0,
+      "signal": null,
+      "elapsedMs": 788,
+      "comparison": {
+        "comparable": false,
+        "reason": "Runtime, OS or CPU differs; deltas are informational only",
+        "phases": {
+          "parseAllBundles": {
+            "baselineP95Ms": 52.966,
+            "currentP95Ms": 20.527,
+            "deltaPercent": -61.2
+          },
+          "sha256MethodFiles": {
+            "baselineP95Ms": 19.261,
+            "currentP95Ms": 11.169,
+            "deltaPercent": -42
+          },
+          "serializeMethodFiles": {
+            "baselineP95Ms": 59.682,
+            "currentP95Ms": 12.3,
+            "deltaPercent": -79.4
+          },
+          "catalogMetadataSearch": {
+            "baselineP95Ms": 1.616,
+            "currentP95Ms": 0.355,
+            "deltaPercent": -78
+          }
+        }
+      }
+    }
+  ]
+}

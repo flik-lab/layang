@@ -13,8 +13,6 @@ type CommandShortcutScope = {
   closeAllRequestSessions: () => void;
   runActiveRequest: () => void;
   activeRunning: boolean;
-  saveActiveMockDraft: () => boolean | undefined;
-  mockDraftDirty: boolean;
   getActiveSection: () => string;
   windowKind?: LayangWindowKind;
 };
@@ -115,13 +113,6 @@ export function useWorkbenchCommandShortcuts(scope: CommandShortcutScope) {
         return;
       }
 
-      if (key === "s") {
-        if (isDialogTarget(event.target) || scope.getActiveSection() !== "services" || !scope.mockDraftDirty) return;
-        consumeShortcut(event);
-        scope.saveActiveMockDraft();
-        return;
-      }
-
       if (scope.windowKind === "main" && (event.key === "PageUp" || event.key === "PageDown") && scope.requestSessions.length > 1) {
         consumeShortcut(event);
         switchRequest(event.key === "PageUp" ? -1 : 1);
@@ -145,10 +136,8 @@ export function useWorkbenchCommandShortcuts(scope: CommandShortcutScope) {
     scope.closeRequestSession,
     scope.getActiveSection,
     scope.hydrated,
-    scope.mockDraftDirty,
     scope.requestSessions,
     scope.runActiveRequest,
-    scope.saveActiveMockDraft,
     scope.windowKind,
   ]);
 }

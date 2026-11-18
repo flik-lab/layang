@@ -1,13 +1,12 @@
 "use client";
 
 import type {
-  MockFormat,
-  MockMethodScenarioFile,
+
   MockScenario,
-  MockScenarioBundle,
+
   MockServerProject,
   MockServerStatus,
-  MockStreamSettings,
+
   GrpcGatewayMode,
   GrpcGatewayProfile,
   GrpcGatewayMethodBehavior,
@@ -15,22 +14,15 @@ import type {
   WorkspaceExportBundle,
 } from "../../shared/workbench-types";
 import type { LoadedProto, RpcMethodInfo } from "@/lib/types";
-import { createDefaultGatewayProfile, normalizeGatewayProfile, saveMockScenarioForMethod } from "./mock-scenario-core";
-import { syncRunningMockServerFromEditor } from "./use-mock-runtime-sync";
+import { createDefaultGatewayProfile, normalizeGatewayProfile } from "./mock-scenario-core";
 import { createPinnedGrpcBinding, findProtoVersion } from "../proto-library/proto-library-domain";
-import type { ProtoLibrary, ProtoLibraryVersion } from "../proto-library/proto-library-types";
+import type { ProtoLibrary } from "../proto-library/proto-library-types";
 import { recordGuiCliCommand } from "../cli/cli-command-history";
 import { performanceStats } from "../../shared/performance/performance-stats.store";
-import { resolveEffectiveMockProtoSources } from "./mock-proto-sources";
+import { resolveMockRuntimeSchema } from "./resolve-runtime-schema";
+import { notifyScenarioCatalogChanged } from "./catalog/scenario-catalog-events";
 
 type StateSetter<T> = (value: T | ((current: T) => T)) => void;
-type MockScenarioEditorDraft = {
-  methodKey: string;
-  scenarioId: string;
-  format: MockFormat;
-  text: string;
-} | null;
-
 type MockRuntimeReady = {
   ok: true;
   localTarget: string;
@@ -40,13 +32,6 @@ type MockRuntimeReady = {
 type MockRuntimeFailure = {
   ok: false;
   error: string;
-};
-
-type MockMethodRuntime = {
-  loaded: LoadedProto;
-  method: RpcMethodInfo;
-  library: ProtoLibrary;
-  version: ProtoLibraryVersion;
 };
 
 function yieldForRuntimeUiPaint() {
@@ -66,12 +51,6 @@ type ActionContext = Record<string, any> & {
   setMockServer: StateSetter<MockServerProject>;
   mockServerStatus: MockServerStatus;
   setMockServerStatus: StateSetter<MockServerStatus>;
-  setMockScenarioEditorDraft: StateSetter<MockScenarioEditorDraft>;
-  setMockScenarioEditorDirty: StateSetter<boolean>;
-  setMockScenarioEditorError: StateSetter<string>;
-  currentMockScenarios: MockScenario[];
-  allMockScenarios: MockScenario[];
-  mockScenarioEditorDirty: boolean;
   protoFiles: Array<{ name: string; text: string }>;
   protoLibraries: ProtoLibrary[];
   activeProtoLibraryId: string;
@@ -80,132 +59,38 @@ type ActionContext = Record<string, any> & {
 
 export function useGrpcMockEditorActions(ctx: ActionContext) {
   const {
-    activeMethodKey,
     activeProtoLibraryId,
     activeProtoVersionId,
-    applyProject,
-    buildDefaultMockScenario,
     clamp,
-    clearInheritedMockStreamOverridesForDefaultChange,
-    currentMockActiveScenario,
-    currentMockEditorText,
-    currentMockFile,
-    currentMockScenarios,
-    currentMockSelectedScenarioId,
     defaultMockPort,
-    downloadTextFile,
-    ensureUniqueMockScenarioId,
-    formatMockScenarioBundle,
-    formatSingleMockScenarioForEditor,
-    getMockMethodScenarioFile,
     getProjectSnapshot,
     getWorkspaceExportBundle,
     loaded,
-    markMockServerLocalDirty,
-    mergeExternalScenarioScenariosIntoProject,
     methodKey,
     mockRuntimeAppliedSeqRef,
-    mockRuntimeLastSyncSignatureRef,
     mockRuntimeUpdateSeqRef,
-    mockScenarioDraftId,
-    mockScenarioEditing,
-    mockScenarioEditorDraft,
-    mockScenarioEditorDirty,
-    mockScenarioInputRef,
     mockServer,
     mockServerRef,
     mockServerStatus,
     normalizeMockBindHost,
     normalizeMockPort,
-    normalizeMockStreamSettings,
-    parseExternalScenarioImportText,
-    parseMockScenarioText,
-    parseSingleMockScenarioText,
     persistProjectSnapshotNow,
     protoFiles,
     protoLibraries,
     protoRuntimeRegistry,
-    refreshGrpcMockServerFromWorkspace,
-    requestJson,
-    safeMockFileBaseName,
-    selectMethod,
     selectedMethod,
-    setMockScenarioDialogOpen,
-    setMockScenarioDraftId,
-    setMockScenarioEditing,
-    setMockScenarioEditorDraft,
-    setMockScenarioEditorDirty,
-    setMockScenarioEditorError,
-    setPendingMockScenarioNavigation,
     setMockServer,
     setMockServerStatus,
     setWebAccessStatus,
     webAccessStatus,
-    setMockSettingsOpen,
-    setRequestTab,
-    setSideSection,
-    setSidebarOpen,
     setWorkspaceFolderPath,
     showToast,
     toErrorMessage,
-    updateMockMethodScenarioFile,
     workspaceFolderPath,
     workspaceFolderStorageKey,
   } = ctx;
 
   const activeProtoVersion = findProtoVersion(protoLibraries, activeProtoLibraryId, activeProtoVersionId);
-
-  function resolveMockMethodRuntime(method: RpcMethodInfo): MockMethodRuntime | null {
-    const key = methodKey(method);
-    const currentMockServer = mockServerRef?.current ?? mockServer;
-
-    const resolveCompiled = (
-      libraryId: string,
-      versionId: string,
-      requireExactSignature: boolean,
-    ): MockMethodRuntime | null => {
-      const compiled = protoRuntimeRegistry?.resolveVersion(libraryId, versionId);
-      if (!compiled) return null;
-      const runtimeMethod = compiled.loaded.methods.find((candidate: RpcMethodInfo) => {
-        if (methodKey(candidate) !== key) return false;
-        if (!requireExactSignature) return true;
-        return (
-          candidate.requestType === method.requestType &&
-          candidate.responseType === method.responseType &&
-          candidate.requestStream === method.requestStream &&
-          candidate.responseStream === method.responseStream
-        );
-      });
-      if (!runtimeMethod) return null;
-      return {
-        loaded: compiled.loaded,
-        method: runtimeMethod,
-        library: compiled.library,
-        version: compiled.version,
-      };
-    };
-
-    const binding = currentMockServer.methodBindings?.[key];
-    if (binding) {
-      const bound = resolveCompiled(binding.libraryId, binding.versionId, false);
-      if (bound) return bound;
-    }
-
-    if (activeProtoLibraryId && activeProtoVersionId) {
-      const active = resolveCompiled(activeProtoLibraryId, activeProtoVersionId, true);
-      if (active) return active;
-    }
-
-    const exactSources = (currentMockServer.protoSources ?? [])
-      .map((source: MockServerProject["protoSources"][number]) => resolveCompiled(source.libraryId, source.versionId, true))
-      .filter((candidate: MockMethodRuntime | null): candidate is MockMethodRuntime => Boolean(candidate));
-    if (exactSources.length === 1) return exactSources[0];
-
-    const keySources = (currentMockServer.protoSources ?? [])
-      .map((source: MockServerProject["protoSources"][number]) => resolveCompiled(source.libraryId, source.versionId, false))
-      .filter((candidate: MockMethodRuntime | null): candidate is MockMethodRuntime => Boolean(candidate));
-    return keySources.length === 1 ? keySources[0] : null;
-  }
 
   function attachActiveMethodBinding(project: MockServerProject): MockServerProject {
     if (!selectedMethod || !activeProtoVersion) return project;
@@ -221,95 +106,6 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
 
   function setBoundMockServer(update: (current: MockServerProject) => MockServerProject) {
     setMockServer((current) => attachActiveMethodBinding(update(current)));
-  }
-
-  function clearMockScenarioEditorDraftState() {
-    setMockScenarioEditorDraft(null);
-    setMockScenarioEditorDirty(false);
-    setMockScenarioEditorError("");
-  }
-
-  function handleMockScenarioTextChange(value: string) {
-    if (!selectedMethod) return;
-    const key = methodKey(selectedMethod);
-    setMockScenarioEditorDraft({
-      methodKey: key,
-      scenarioId: currentMockSelectedScenarioId,
-      format: currentMockFile.format,
-      text: value,
-    });
-    setMockScenarioEditorDirty(true);
-    const parsed = parseSingleMockScenarioText(value, currentMockFile.format, mockServer.port, selectedMethod);
-    setMockScenarioEditorError(parsed.ok ? "" : parsed.error);
-  }
-
-  function saveMockScenarioEditorDraft(editorTextOverride?: string) {
-    if (!selectedMethod) return false;
-    const key = methodKey(selectedMethod);
-    const draftMatches =
-      mockScenarioEditorDraft &&
-      mockScenarioEditorDraft.methodKey === key &&
-      mockScenarioEditorDraft.scenarioId === currentMockSelectedScenarioId &&
-      mockScenarioEditorDraft.format === currentMockFile.format;
-    const editorText = editorTextOverride ?? (draftMatches ? mockScenarioEditorDraft.text : currentMockEditorText);
-    const parsed = parseSingleMockScenarioText(editorText, currentMockFile.format, mockServer.port, selectedMethod);
-    if (!parsed.ok) {
-      setMockScenarioEditorError(parsed.error);
-      showToast(parsed.error, "error");
-      return false;
-    }
-    const nextScenario = parsed.bundle.scenarios[0];
-    if (!nextScenario) {
-      const error = "No scenario found to save.";
-      setMockScenarioEditorError(error);
-      showToast(error, "warning");
-      return false;
-    }
-    const replacementId =
-      currentMockSelectedScenarioId ||
-      mockServer.selectedScenarioIds[key] ||
-      currentMockScenarios[0]?.id ||
-      nextScenario.id;
-    setBoundMockServer((current) => {
-      const file = getMockMethodScenarioFile(current, selectedMethod);
-      const currentParsed = parseMockScenarioText(file.scenarioText, file.format, current.port);
-      const existing = currentParsed.ok
-        ? currentParsed.bundle.scenarios.filter(
-            (scenario: MockScenario) =>
-              scenario.service === selectedMethod.serviceName && scenario.method === selectedMethod.methodName,
-          )
-        : [];
-      const remaining = existing.filter(
-        (scenario: MockScenario) => scenario.id !== replacementId && scenario.id !== nextScenario.id,
-      );
-      const nextBundle: MockScenarioBundle = {
-        version: currentParsed.ok ? currentParsed.bundle.version : 1,
-        scenarios: [nextScenario, ...remaining],
-      };
-      const nextProject = updateMockMethodScenarioFile(current, selectedMethod, {
-        format: currentMockFile.format,
-        scenarioText: formatMockScenarioBundle(nextBundle, currentMockFile.format),
-      });
-      return {
-        ...nextProject,
-        selectedScenarioIds: { ...nextProject.selectedScenarioIds, [key]: nextScenario.id },
-        enabledMethods: { ...nextProject.enabledMethods, [key]: true },
-        updatedAt: new Date().toISOString(),
-      };
-    });
-    clearMockScenarioEditorDraftState();
-    showToast("Mock scenario saved.", "success");
-    return true;
-  }
-
-  function discardMockScenarioEditorDraft() {
-    clearMockScenarioEditorDraftState();
-  }
-
-  function ensureMockScenarioEditorSaved() {
-    if (!mockScenarioEditorDirty) return true;
-    showToast("Save mock scenario before running.", "warning");
-    return false;
   }
 
   /**
@@ -623,9 +419,9 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
       return;
     }
     const profileId = mockServer.activeGatewayProfileId;
-    const method = loaded?.methods.find((item: RpcMethodInfo) => methodKey(item) === capturedMethodKey);
-    if (!method) {
-      showToast(`Method ${capturedMethodKey} is not available in the active proto revision.`, "error");
+    const store = window.electronMockScenarioStore;
+    if (!store || !workspaceFolderPath) {
+      showToast("Save a workspace folder before saving a Gateway capture.", "warning");
       return;
     }
     try {
@@ -635,27 +431,13 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
         return;
       }
       const scenario = result.scenario as MockScenario;
-      setMockServer((current) => {
-        const file = getMockMethodScenarioFile(current, method);
-        const parsed = parseMockScenarioText(file.scenarioText, file.format, current.port);
-        const scenarios = parsed.ok ? parsed.bundle.scenarios : [];
-        const nextBundle: MockScenarioBundle = {
-          version: parsed.ok ? parsed.bundle.version : 1,
-          scenarios: [scenario, ...scenarios.filter((item: MockScenario) => item.id !== scenario.id)],
-        };
-        const next = updateMockMethodScenarioFile(current, method, {
-          format: file.format,
-          scenarioText: formatMockScenarioBundle(nextBundle, file.format),
-        });
-        const key = methodKey(method);
-        return {
-          ...next,
-          selectedScenarioIds: { ...next.selectedScenarioIds, [key]: scenario.id },
-          enabledMethods: { ...next.enabledMethods, [key]: true },
-          updatedAt: new Date().toISOString(),
-        };
-      });
-      showToast("Gateway capture saved as an editable mock scenario.", "success");
+      const saved = await store.save(workspaceFolderPath,
+        { methodKey: capturedMethodKey, scenarioId: scenario.id }, JSON.stringify(scenario), 0, "");
+      if (!saved.ok) throw new Error(saved.conflict
+        ? "A scenario with this capture ID already exists; open it in the scenario editor."
+        : saved.error || "Capture save failed.");
+      notifyScenarioCatalogChanged(workspaceFolderPath);
+      showToast("Gateway capture saved to v3. Apply it explicitly to activate it.", "success");
     } catch (error) {
       showToast(`Save capture failed: ${toErrorMessage(error)}`, "error");
     }
@@ -678,533 +460,6 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
   /**
    * Converts the active mock source between JSON and YAML without applying an invalid draft.
    */
-  function handleMockFormatChange(format: MockFormat) {
-    if (!selectedMethod) {
-      setBoundMockServer((current) => {
-        const parsed = parseMockScenarioText(current.scenarioText, current.format, current.port);
-        return {
-          ...current,
-          format,
-          scenarioText: parsed.ok
-            ? formatMockScenarioBundle(parsed.bundle, format)
-            : formatMockScenarioBundle({ version: 1, scenarios: [] }, format),
-          updatedAt: new Date().toISOString(),
-        };
-      });
-      return;
-    }
-    setBoundMockServer((current) => {
-      const file = getMockMethodScenarioFile(current, selectedMethod);
-      const parsed = parseMockScenarioText(file.scenarioText, file.format, current.port);
-      if (!parsed.ok) {
-        setMockScenarioEditorError(parsed.error);
-        showToast(parsed.error, "error");
-        return current;
-      }
-      return updateMockMethodScenarioFile({ ...current, format }, selectedMethod, {
-        format,
-        scenarioText: formatMockScenarioBundle(parsed.bundle, format),
-      });
-    });
-  }
-
-  /**
-   * Formats the active single-scenario editor with stable JSON/YAML indentation.
-   */
-  function formatMockScenarioEditor() {
-    if (!selectedMethod) {
-      showToast("Select a method before formatting a mock scenario.", "warning");
-      return;
-    }
-    const file = getMockMethodScenarioFile(mockServer, selectedMethod);
-    const editorText =
-      mockScenarioEditorDraft &&
-      mockScenarioEditorDraft.methodKey === methodKey(selectedMethod) &&
-      mockScenarioEditorDraft.scenarioId === currentMockSelectedScenarioId &&
-      mockScenarioEditorDraft.format === file.format
-        ? mockScenarioEditorDraft.text
-        : currentMockEditorText;
-    const parsed = parseSingleMockScenarioText(editorText, file.format, mockServer.port, selectedMethod);
-    if (!parsed.ok) {
-      setMockScenarioEditorError(parsed.error);
-      showToast(parsed.error, "error");
-      return;
-    }
-    const scenario = parsed.bundle.scenarios[0];
-    if (!scenario) {
-      setMockScenarioEditorError("No scenario found to format.");
-      showToast("No scenario found to format.", "warning");
-      return;
-    }
-    const formattedText = formatSingleMockScenarioForEditor(scenario, file.format);
-    setMockScenarioEditorDraft({
-      methodKey: methodKey(selectedMethod),
-      scenarioId: currentMockSelectedScenarioId,
-      format: file.format,
-      text: formattedText,
-    });
-    setMockScenarioEditorDirty(true);
-    setMockScenarioEditorError("");
-    showToast("Mock scenario formatted.", "success");
-  }
-
-  /**
-   * Rebuilds one external mock scenario file per loaded proto method.
-   */
-  function _generateMockMappingFromProto() {
-    const methods = loaded?.methods ?? [];
-    if (methods.length === 0) {
-      showToast("Open a gRPC request from a collection before generating mock mappings.", "warning");
-      return;
-    }
-    setBoundMockServer((current) => {
-      const previous = current.methodFiles ?? {};
-      const nextFiles: Record<string, MockMethodScenarioFile> = { ...previous };
-      const selectedScenarioIds = { ...current.selectedScenarioIds };
-      const enabledMethods = { ...current.enabledMethods };
-      methods.forEach((method, index) => {
-        const key = methodKey(method);
-        const previousFile = previous[key];
-        if (previousFile) {
-          const parsed = parseMockScenarioText(previousFile.scenarioText, previousFile.format, current.port);
-          const existingScenarios = parsed.ok
-            ? parsed.bundle.scenarios.filter(
-                (scenario: MockScenario) =>
-                  scenario.service === method.serviceName && scenario.method === method.methodName,
-              )
-            : [];
-          if (!selectedScenarioIds[key] && existingScenarios.length) selectedScenarioIds[key] = existingScenarios[0].id;
-          if (!(key in enabledMethods)) enabledMethods[key] = existingScenarios.length > 0;
-          return;
-        }
-        const scenario = buildDefaultMockScenario(
-          method,
-          loaded?.root,
-          index,
-          key === activeMethodKey ? requestJson : undefined,
-          current.streamDefaults,
-        );
-        const fileFormat = current.format;
-        const bundle: MockScenarioBundle = { version: 1, scenarios: [scenario] };
-        nextFiles[key] = {
-          format: fileFormat,
-          scenarioText: formatMockScenarioBundle(bundle, fileFormat),
-          updatedAt: new Date().toISOString(),
-          catalogScenarios: [{
-            id: scenario.id,
-            service: scenario.service,
-            method: scenario.method,
-            description: scenario.description,
-          }],
-        };
-        selectedScenarioIds[key] = scenario.id;
-        enabledMethods[key] = true;
-      });
-      return {
-        ...current,
-        selectedScenarioIds,
-        enabledMethods,
-        methodFiles: nextFiles,
-        updatedAt: new Date().toISOString(),
-      };
-    });
-    setRequestTab("mock");
-    setSideSection("services");
-    setSidebarOpen(true);
-    showToast(`Generated ${methods.length} mock file(s), one per method.`, "success");
-  }
-
-  /**
-   * Adds one editable mock scenario for the active method and current request.
-   */
-  function addMockScenarioFromCurrent() {
-    if (!selectedMethod) {
-      showToast("Select a method before adding a mock scenario.", "warning");
-      return;
-    }
-    addMockScenarioForMethod(selectedMethod);
-  }
-
-  /**
-   * Adds one editable mock scenario for a specific method into that method's own file.
-   */
-  function addMockScenarioForMethod(method: RpcMethodInfo) {
-    const runtime = resolveMockMethodRuntime(method);
-    if (!runtime) {
-      showToast(
-        `Cannot add a scenario for ${method.methodName}: its Proto revision is not available in the runtime registry.`,
-        "error",
-      );
-      return;
-    }
-
-    clearMockScenarioEditorDraftState();
-    setMockServer((current) => {
-      const file = getMockMethodScenarioFile(current, runtime.method);
-      const parsed = parseMockScenarioText(file.scenarioText, file.format, current.port);
-      const bundle: MockScenarioBundle = parsed.ok ? parsed.bundle : { version: 1, scenarios: [] };
-      const methodScenarios = bundle.scenarios.filter(
-        (item: MockScenario) =>
-          item.service === runtime.method.serviceName && item.method === runtime.method.methodName,
-      );
-      const key = methodKey(runtime.method);
-      const scenario = ensureUniqueMockScenarioId(
-        buildDefaultMockScenario(
-          runtime.method,
-          runtime.loaded.root,
-          methodScenarios.length,
-          undefined,
-          current.streamDefaults,
-        ),
-        methodScenarios,
-      );
-      const nextBundle: MockScenarioBundle = {
-        ...bundle,
-        scenarios: [scenario, ...methodScenarios],
-      };
-      const nextProject = updateMockMethodScenarioFile(current, runtime.method, {
-        scenarioText: formatMockScenarioBundle(nextBundle, file.format),
-      });
-      return {
-        ...nextProject,
-        methodBindings: {
-          ...(nextProject.methodBindings ?? {}),
-          [key]: createPinnedGrpcBinding(runtime.library, runtime.version, runtime.method),
-        },
-        selectedScenarioIds: { ...nextProject.selectedScenarioIds, [key]: scenario.id },
-        enabledMethods: { ...nextProject.enabledMethods, [key]: true },
-      };
-    });
-    selectMethod(
-      runtime.loaded.root,
-      runtime.method,
-      createPinnedGrpcBinding(runtime.library, runtime.version, runtime.method),
-    );
-    setRequestTab("mock");
-    setMockSettingsOpen(false);
-    setSideSection("services");
-    setSidebarOpen(true);
-    showToast(`Scenario added for ${runtime.method.methodName}.`, "success");
-  }
-
-  /**
-   * Chooses the scenario that will be used when this method is enabled for mocking.
-   */
-  function forceMockScenarioSelectChange(key: string, scenarioId: string) {
-    if (!scenarioId) return;
-    clearMockScenarioEditorDraftState();
-    setBoundMockServer((current) => ({
-      ...current,
-      selectedScenarioIds: { ...current.selectedScenarioIds, [key]: scenarioId },
-      updatedAt: new Date().toISOString(),
-    }));
-  }
-
-  function handleMockScenarioSelectChange(method: RpcMethodInfo, scenarioId: string) {
-    const key = methodKey(method);
-    if (!scenarioId || mockServer.selectedScenarioIds[key] === scenarioId) return;
-    if (mockScenarioEditorDirty) {
-      setPendingMockScenarioNavigation?.({ methodKey: key, scenarioId });
-      return;
-    }
-    forceMockScenarioSelectChange(key, scenarioId);
-  }
-
-  /** Opens the method-only scenario rename/delete dialog. */
-  function openMockScenarioManager(method: RpcMethodInfo, scenarioId: string) {
-    if (!scenarioId) return;
-    setMockScenarioEditing({ methodKey: methodKey(method), scenarioId });
-    setMockScenarioDraftId(scenarioId);
-    setMockScenarioDialogOpen(true);
-  }
-
-  /** Renames the selected method scenario id and keeps the dropdown selection in sync. */
-  function confirmRenameMockScenario() {
-    if (!loaded || !mockScenarioEditing) return;
-    const method = loaded.methods.find((item) => methodKey(item) === mockScenarioEditing.methodKey);
-    if (!method) return;
-    const nextId = mockScenarioDraftId.trim();
-    if (!nextId) {
-      showToast("Scenario name is required.", "warning");
-      return;
-    }
-    const file = getMockMethodScenarioFile(mockServer, method);
-    const parsed = parseMockScenarioText(file.scenarioText, file.format, mockServer.port);
-    if (!parsed.ok) {
-      showToast(parsed.error, "error");
-      return;
-    }
-    const methodScenarios = parsed.bundle.scenarios.filter(
-      (scenario: MockScenario) => scenario.service === method.serviceName && scenario.method === method.methodName,
-    );
-    const exists = methodScenarios.some(
-      (scenario: MockScenario) => scenario.id === nextId && scenario.id !== mockScenarioEditing.scenarioId,
-    );
-    if (exists) {
-      showToast("Scenario name already exists for this method.", "warning");
-      return;
-    }
-    if (!methodScenarios.some((scenario: MockScenario) => scenario.id === mockScenarioEditing.scenarioId)) {
-      showToast("Scenario was not found for this method.", "warning");
-      return;
-    }
-    setBoundMockServer((current) => {
-      const currentFile = getMockMethodScenarioFile(current, method);
-      const currentParsed = parseMockScenarioText(currentFile.scenarioText, currentFile.format, current.port);
-      if (!currentParsed.ok) return current;
-      const scenario = currentParsed.bundle.scenarios.find(
-        (item: MockScenario) =>
-          item.service === method.serviceName &&
-          item.method === method.methodName &&
-          item.id === mockScenarioEditing.scenarioId,
-      );
-      if (!scenario) return current;
-      return (
-        saveMockScenarioForMethod(
-          current,
-          method,
-          mockScenarioEditing.scenarioId,
-          { ...scenario, id: nextId },
-          currentFile.format,
-        )?.project ?? current
-      );
-    });
-    clearMockScenarioEditorDraftState();
-    setMockScenarioDialogOpen(false);
-    showToast("Scenario renamed.", "success");
-  }
-
-  /** Deletes the selected method scenario without touching other method files. */
-  function deleteEditingMockScenario() {
-    if (!loaded || !mockScenarioEditing) return;
-    const method = loaded.methods.find((item) => methodKey(item) === mockScenarioEditing.methodKey);
-    if (!method) return;
-    const file = getMockMethodScenarioFile(mockServer, method);
-    const parsed = parseMockScenarioText(file.scenarioText, file.format, mockServer.port);
-    if (!parsed.ok) {
-      showToast(parsed.error, "error");
-      return;
-    }
-    if (
-      !parsed.bundle.scenarios.some(
-        (scenario: MockScenario) =>
-          scenario.service === method.serviceName &&
-          scenario.method === method.methodName &&
-          scenario.id === mockScenarioEditing.scenarioId,
-      )
-    ) {
-      showToast("Scenario was not found for this method.", "warning");
-      return;
-    }
-    setBoundMockServer((current) => {
-      const currentFile = getMockMethodScenarioFile(current, method);
-      const currentParsed = parseMockScenarioText(currentFile.scenarioText, currentFile.format, current.port);
-      if (!currentParsed.ok) return current;
-      const remaining = currentParsed.bundle.scenarios.filter(
-        (scenario: MockScenario) =>
-          !(
-            scenario.service === method.serviceName &&
-            scenario.method === method.methodName &&
-            scenario.id === mockScenarioEditing.scenarioId
-          ),
-      );
-      const nextBundle: MockScenarioBundle = { ...currentParsed.bundle, scenarios: remaining };
-      const nextProject = updateMockMethodScenarioFile(current, method, {
-        scenarioText: formatMockScenarioBundle(nextBundle, currentFile.format),
-      });
-      const key = methodKey(method);
-      const methodRemaining = remaining.filter(
-        (scenario: MockScenario) => scenario.service === method.serviceName && scenario.method === method.methodName,
-      );
-      const selectedScenarioIds = { ...nextProject.selectedScenarioIds };
-      if (
-        selectedScenarioIds[key] === mockScenarioEditing.scenarioId ||
-        !methodRemaining.some((scenario: MockScenario) => scenario.id === selectedScenarioIds[key])
-      ) {
-        if (methodRemaining[0]) selectedScenarioIds[key] = methodRemaining[0].id;
-        else delete selectedScenarioIds[key];
-      }
-      const enabledMethods = { ...nextProject.enabledMethods };
-      if (!methodRemaining.length) enabledMethods[key] = false;
-      return { ...nextProject, selectedScenarioIds, enabledMethods, updatedAt: new Date().toISOString() };
-    });
-    clearMockScenarioEditorDraftState();
-    setMockScenarioDialogOpen(false);
-    showToast("Scenario deleted.", "success");
-  }
-
-  /**
-   * Enables or disables mocking for one method without deleting that method's scenarios.
-   */
-  function handleMockMethodEnabledChange(method: RpcMethodInfo, enabled: boolean) {
-    const key = methodKey(method);
-    setBoundMockServer((current) => ({
-      ...current,
-      enabledMethods: { ...current.enabledMethods, [key]: enabled },
-      updatedAt: new Date().toISOString(),
-    }));
-  }
-
-  /**
-   * Updates stream overrides for one scenario. These values override the global defaults.
-   */
-  function handleMockScenarioStreamSettingsChange(
-    method: RpcMethodInfo,
-    scenarioId: string,
-    patch: MockStreamSettings,
-  ) {
-    const hasUnsavedScenarioDraft =
-      mockScenarioEditorDirty &&
-      mockScenarioEditorDraft?.methodKey === methodKey(method) &&
-      mockScenarioEditorDraft.scenarioId === scenarioId;
-    if (hasUnsavedScenarioDraft) {
-      showToast("Save the scenario before changing stream settings.", "warning");
-      return;
-    }
-    markMockServerLocalDirty();
-    setBoundMockServer((current) => {
-      const file = getMockMethodScenarioFile(current, method);
-      const parsed = parseMockScenarioText(file.scenarioText, file.format, current.port);
-      if (!parsed.ok) return current;
-      const nextBundle: MockScenarioBundle = {
-        ...parsed.bundle,
-        scenarios: parsed.bundle.scenarios.map((scenario: MockScenario) => {
-          if (
-            scenario.service !== method.serviceName ||
-            scenario.method !== method.methodName ||
-            scenario.id !== scenarioId
-          )
-            return scenario;
-          const currentStream = scenario.stream ?? {};
-          const nextStream = normalizeMockStreamSettings({ ...currentStream, ...patch }, currentStream);
-          return {
-            ...scenario,
-            stream: {
-              ...currentStream,
-              ...nextStream,
-              responses: currentStream.responses,
-            },
-          };
-        }),
-      };
-      return updateMockMethodScenarioFile(current, method, {
-        scenarioText: formatMockScenarioBundle(nextBundle, file.format),
-      });
-    });
-  }
-
-  /**
-   * Updates the global stream defaults stored once in mocks/grpc/server.yml.
-   */
-  function handleMockGlobalStreamBaseChange(patch: MockStreamSettings) {
-    if (mockScenarioEditorDirty) {
-      showToast("Save the scenario before changing global stream defaults.", "warning");
-      return;
-    }
-    markMockServerLocalDirty();
-    setBoundMockServer((current) => {
-      const previousBase = current.streamDefaults;
-      const nextBase = normalizeMockStreamSettings(
-        { ...current.streamDefaults, ...patch },
-        current.streamDefaults,
-      ) as Required<Pick<MockStreamSettings, "intervalMs" | "loop" | "maxLoops">>;
-      if (patch.loop === true && patch.maxLoops === undefined && (nextBase.maxLoops ?? 0) <= 1) nextBase.maxLoops = 0;
-      const changedKeys = (
-        ["intervalMs", "loop", "maxLoops"] as Array<keyof Pick<MockStreamSettings, "intervalMs" | "loop" | "maxLoops">>
-      ).filter((key) => Object.hasOwn(patch, key) && previousBase[key] !== nextBase[key]);
-      const nextProject = clearInheritedMockStreamOverridesForDefaultChange(current, previousBase, changedKeys);
-      return { ...nextProject, streamDefaults: nextBase, updatedAt: new Date().toISOString() };
-    });
-  }
-
-  /**
-   * Imports external mock JSON/YAML stubs into method scenario files.
-   * If the stub does not name a service/method, the currently selected method is used.
-   */
-  async function importMockScenarioFile(files: FileList | null) {
-    const fileArray = Array.from(files ?? []);
-    if (fileArray.length === 0) return;
-    try {
-      let imported = 0;
-      let nextProject = getProjectSnapshot();
-      const fallbackMethod = selectedMethod ?? null;
-      for (const file of fileArray) {
-        const text = await file.text();
-        const format: MockFormat = file.name.toLowerCase().endsWith(".json") ? "json" : "yaml";
-        const scenarios = parseExternalScenarioImportText(text, format, fallbackMethod);
-        if (scenarios.length === 0) {
-          const parsed = parseMockScenarioText(text, format, mockServer.port);
-          if (!parsed.ok) throw new Error(parsed.error);
-          scenarios.push(
-            ...parsed.bundle.scenarios.map((scenario: MockScenario) =>
-              fallbackMethod
-                ? { ...scenario, service: fallbackMethod.serviceName, method: fallbackMethod.methodName }
-                : scenario,
-            ),
-          );
-        }
-        nextProject = mergeExternalScenarioScenariosIntoProject(nextProject, scenarios, loaded?.methods ?? []);
-        imported += scenarios.length;
-      }
-      applyProject(nextProject);
-      if (fallbackMethod) {
-        setRequestTab("mock");
-        setSideSection("services");
-        setSidebarOpen(true);
-      }
-      showToast(
-        imported ? `Imported ${imported} external mock scenario(s).` : "No supported external mock scenarios found.",
-        imported ? "success" : "warning",
-      );
-    } catch (err) {
-      showToast(toErrorMessage(err), "error");
-    } finally {
-      if (mockScenarioInputRef.current) mockScenarioInputRef.current.value = "";
-    }
-  }
-
-  /**
-   * Exports the active scenario in its active JSON or YAML format.
-   */
-  function exportMockScenarioFile() {
-    if (!selectedMethod) {
-      showToast("Select a method before exporting a mock scenario.", "warning");
-      return;
-    }
-    const scenario = currentMockActiveScenario ?? currentMockScenarios[0];
-    if (!scenario) {
-      showToast("No scenario is available to export.", "warning");
-      return;
-    }
-    const file = getMockMethodScenarioFile(mockServer, selectedMethod);
-    const extension = file.format === "yaml" ? "yaml" : "json";
-    downloadTextFile(
-      `${safeMockFileBaseName(selectedMethod)}.${scenario.id}.${extension}`,
-      formatSingleMockScenarioForEditor(scenario, file.format),
-      file.format === "yaml" ? "application/x-yaml" : "application/json",
-    );
-  }
-
-  /**
-   * Manually pulls the latest mock scenario files from the workspace folder.
-   * This replaces automatic external-file polling so disk edits only apply when the user asks for them.
-   */
-  async function fetchMockScenarioFilesFromWorkspace() {
-    try {
-      const refreshed = await refreshGrpcMockServerFromWorkspace({
-        silent: true,
-        respectLocalDirty: false,
-        throwOnError: true,
-        applyToState: false,
-      });
-      showToast("Latest mock file loaded into the editor. Save to apply it.", "success");
-      return refreshed;
-    } catch (err) {
-      showToast(`Sync mock scenario file failed: ${toErrorMessage(err)}`, "error");
-      return null;
-    }
-  }
-
   /**
    * Opens the workspace mock scenario folder so JSON/YAML files can be edited directly on disk.
    */
@@ -1216,9 +471,8 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
 
     try {
       let nextPath = workspaceFolderPath;
-      // The ref is updated synchronously by the controller. Re-applying the
-      // render-time currentMockFile here can overwrite a rename/save performed
-      // immediately before Open Folder with the previous render's file.
+      // The ref is updated synchronously by the controller. Use its
+      // current settings when persisting the workspace.
       const diskMockServer = mockServerRef?.current ?? mockServer;
       const project = { ...getProjectSnapshot(), mockServer: diskMockServer, updatedAt: new Date().toISOString() };
 
@@ -1241,7 +495,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
         await persistProjectSnapshotNow?.(project);
       }
 
-      const openResult = await window.electronWorkspace.openPath(nextPath, "mocks/grpc/methods", {
+      const openResult = await window.electronWorkspace.openPath(nextPath, "mocks/grpc/scenarios", {
         ensureDirectory: true,
         reveal: false,
       });
@@ -1256,35 +510,9 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
   }
 
   function resolveRuntimeSchema(project: MockServerProject) {
-    const automaticSources = resolveEffectiveMockProtoSources(project.protoSources, protoLibraries);
-    const configuredSources = automaticSources.length
-      ? automaticSources
-      : activeProtoLibraryId && activeProtoVersionId
-        ? [{ libraryId: activeProtoLibraryId, versionId: activeProtoVersionId }]
-        : [];
-    const compiled = configuredSources
-      .map((source) => protoRuntimeRegistry?.resolveVersion?.(source.libraryId, source.versionId))
-      .filter(Boolean);
-    if (!compiled.length && loaded && protoFiles.length) {
-      return { protoFiles, methods: loaded.methods, sources: configuredSources };
-    }
-    const uniqueFiles = new Map<string, { name: string; text: string }>();
-    const uniqueMethods = new Map<string, RpcMethodInfo>();
-    for (const item of compiled) {
-      for (const file of item.version.files ?? []) {
-        const key = `${file.name}\u0000${file.text}`;
-        if (!uniqueFiles.has(key)) uniqueFiles.set(key, file);
-      }
-      for (const method of item.loaded.methods ?? []) {
-        const key = methodKey(method);
-        if (!uniqueMethods.has(key)) uniqueMethods.set(key, method);
-      }
-    }
-    return {
-      protoFiles: [...uniqueFiles.values()],
-      methods: [...uniqueMethods.values()],
-      sources: configuredSources,
-    };
+    return resolveMockRuntimeSchema(project, {
+      protoLibraries, protoRuntimeRegistry, activeProtoLibraryId, activeProtoVersionId, loaded, protoFiles,
+    }, new AbortController().signal);
   }
 
   /**
@@ -1294,7 +522,6 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
    */
   async function startMockRuntime(projectOverride?: MockServerProject): Promise<MockRuntimeReady | MockRuntimeFailure> {
     try {
-      if (!ensureMockScenarioEditorSaved()) return { ok: false, error: "Save the mock scenario before starting." };
       setMockServerStatus((current) => ({
         ...current,
         running: false,
@@ -1313,7 +540,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
         mockServer: effectiveMockServer,
         updatedAt: new Date().toISOString(),
       };
-      const schema = resolveRuntimeSchema(effectiveMockServer);
+      const schema = await resolveRuntimeSchema(effectiveMockServer);
       if (!schema.protoFiles.length || !schema.methods.length) {
         return { ok: false, error: "Import at least one Proto schema before starting gRPC Mock." };
       }
@@ -1322,16 +549,19 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
         return { ok: false, error: "gRPC Mock is available in the desktop app only." };
       }
       const port = normalizeMockPort(effectiveMockServer.port, defaultMockPort);
-      mockRuntimeLastSyncSignatureRef.current = "";
       mockRuntimeUpdateSeqRef.current += 1;
       const uiRuntimeRevision = mockRuntimeUpdateSeqRef.current;
+      if (!workspaceFolderPath) {
+        return { ok: false, error: "Save a workspace folder before starting file-based gRPC Mock." };
+      }
+      // The privileged main/utility runtime compiles v3 scenarios from disk;
+      // the renderer must not hydrate or hash the old methodFiles map.
       const mockStartStartedAt = performance.now();
       const result = await window.electronMock.start({
         port,
         bindHost: normalizeMockBindHost(effectiveMockServer.bindHost),
         protoFiles: schema.protoFiles,
         methods: schema.methods,
-        methodFiles: effectiveMockServer.methodFiles,
         streamDefaults: effectiveMockServer.streamDefaults,
         security: effectiveMockServer.security,
         limits: effectiveMockServer.limits,
@@ -1345,15 +575,17 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
       if (!result.ok) {
         return { ok: false, error: result.error ?? "gRPC Mock failed to start." };
       }
+      if (result.appliedRevision !== uiRuntimeRevision ||
+          typeof result.scenarioContentHash !== "string" || !result.scenarioContentHash) {
+        return { ok: false, error: "gRPC Mock did not confirm the starting scenario revision and content hash." };
+      }
 
       const confirmed = window.electronMock.status ? await window.electronMock.status() : { ...result, running: true };
       const activeIdsMatch = Object.entries(activeScenarioIds).every(
         ([key, scenarioId]) => !confirmed.activeScenarioIds || confirmed.activeScenarioIds[key] === scenarioId,
       );
-      const scenarioCountMatches =
-        true;
       const methodCountMatches = confirmed.methodCount === undefined || confirmed.methodCount === schema.methods.length;
-      if (!confirmed.running || !activeIdsMatch || !scenarioCountMatches || !methodCountMatches) {
+      if (!confirmed.running || !activeIdsMatch || !methodCountMatches) {
         await window.electronMock.stop?.().catch(() => undefined);
         return { ok: false, error: "gRPC Mock did not become ready with the latest scenario configuration." };
       }
@@ -1371,13 +603,16 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
         bindAddress: confirmed.bindAddress ?? result.bindAddress ?? localTarget,
         localTarget,
         reachableTargets: confirmed.reachableTargets ?? result.reachableTargets,
-        scenarioCount: confirmed.scenarioCount ?? result.scenarioCount ?? Object.keys(effectiveMockServer.methodFiles ?? {}).length,
+        scenarioCount: confirmed.scenarioCount ?? result.scenarioCount ?? 0,
         methodCount: confirmed.methodCount ?? result.methodCount ?? schema.methods.length,
         activeScenarioIds: confirmed.activeScenarioIds ?? result.activeScenarioIds ?? activeScenarioIds,
         enabledMethods: confirmed.enabledMethods ?? effectiveMockServer.enabledMethods,
         requestLog: confirmed.requestLog ?? result.requestLog ?? [],
         startedAt: new Date().toISOString(),
         configVersion: confirmed.configVersion ?? result.configVersion,
+        appliedRevision: confirmed.appliedRevision ?? result.appliedRevision,
+        scenarioContentHash: confirmed.scenarioContentHash ?? result.scenarioContentHash,
+        source: confirmed.source ?? result.source,
         updatedAt: confirmed.updatedAt ?? new Date().toISOString(),
         message: "gRPC Mock running.",
       };
@@ -1413,101 +648,13 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
   }
 
   async function ensureMockRuntimeSnapshot(project: MockServerProject): Promise<MockRuntimeReady | MockRuntimeFailure> {
-    const actualStatus = await window.electronMock?.status?.().catch(() => null);
-    const runtimeStatus = actualStatus?.running
-      ? { ...actualStatus, runtimeKind: "mock" as const }
-      : mockServerStatus.running && mockServerStatus.runtimeKind !== "gateway"
-        ? mockServerStatus
-        : null;
-    if (!runtimeStatus) return startMockRuntime(project);
-
-    try {
-      const result = await syncRunningMockServerFromEditor({
-        mockServer: project,
-        mockServerStatus: runtimeStatus,
-        setMockServerStatus,
-        loaded,
-        protoFiles,
-        protoLibraries,
-        protoRuntimeRegistry,
-        workspaceFolderPath,
-        activeProtoLibraryId,
-        activeProtoVersionId,
-        updateSeqRef: mockRuntimeUpdateSeqRef,
-        appliedSeqRef: mockRuntimeAppliedSeqRef,
-        lastSyncSignatureRef: mockRuntimeLastSyncSignatureRef,
-      });
-      if (result?.ok === false) return { ok: false, error: result.error ?? "gRPC Mock live synchronization failed." };
-      const confirmed = await window.electronMock?.status?.();
-      if (!confirmed?.running) return { ok: false, error: "gRPC Mock stopped before Web Access became ready." };
-      const localTarget =
-        confirmed.localTarget ??
-        `${confirmed.bindHost ?? normalizeMockBindHost(project.bindHost)}:${confirmed.port ?? normalizeMockPort(project.port, defaultMockPort)}`;
-      return {
-        ok: true,
-        localTarget,
-        status: { ...confirmed, running: true, runtimeKind: "mock" },
-      };
-    } catch (err) {
-      return { ok: false, error: toErrorMessage(err) };
-    }
-  }
-
-  async function handleGrpcMockLivePushSend(
-    method: RpcMethodInfo,
-    scenarioId: string,
-    options: { responseIndex?: number; sendAll?: boolean } = {},
-  ) {
-    if (!mockServerStatus.running) {
-      showToast("Start gRPC Mock before using Live Push.", "warning");
-      return;
-    }
-    if (!window.electronMock?.sendStream) {
-      showToast("Live Push is unavailable in this runtime.", "warning");
-      return;
-    }
-
-    try {
-      const project = mockServerRef?.current ?? mockServer;
-      await syncRunningMockServerFromEditor({
-        mockServer: project,
-        mockServerStatus,
-        setMockServerStatus,
-        loaded,
-        protoFiles,
-        protoLibraries,
-        protoRuntimeRegistry,
-        workspaceFolderPath,
-        activeProtoLibraryId,
-        activeProtoVersionId,
-        updateSeqRef: mockRuntimeUpdateSeqRef,
-        appliedSeqRef: mockRuntimeAppliedSeqRef,
-        lastSyncSignatureRef: mockRuntimeLastSyncSignatureRef,
-      });
-      const result = await window.electronMock.sendStream({
-        serviceName: method.serviceName,
-        methodName: method.methodName,
-        scenarioId,
-        responseIndex: options.responseIndex,
-        sendAll: options.sendAll,
-      });
-      if (!result?.ok) {
-        showToast(result?.error ?? "Live Push failed.", "error");
-        return;
-      }
-      setMockServerStatus((current: MockServerStatus) => ({
-        ...current,
-        activeLivePushStreamCount: result.activeLivePushStreamCount ?? current.activeLivePushStreamCount,
-        livePushStreams: result.livePushStreams ?? current.livePushStreams,
-        message: result.message ?? current.message,
-      }));
-      showToast(
-        result.sent && result.sent > 0 ? result.message ?? "Live gRPC data sent." : result.message ?? "No active Live Push stream.",
-        result.sent && result.sent > 0 ? "success" : "warning",
-      );
-    } catch (error) {
-      showToast(`Live Push failed: ${toErrorMessage(error)}`, "error");
-    }
+    // Native v3 snapshots are owned by the main/utility process. No renderer
+    // legacy scenario digest comparison or implicit Apply is allowed here.
+    const confirmed = await window.electronMock?.status?.().catch(() => null);
+    if (!confirmed?.running) return startMockRuntime(project);
+    const localTarget = confirmed.localTarget ??
+      `${confirmed.bindHost ?? normalizeMockBindHost(project.bindHost)}:${confirmed.port ?? normalizeMockPort(project.port, defaultMockPort)}`;
+    return { ok: true, localTarget, status: { ...confirmed, running: true, runtimeKind: "mock" } };
   }
 
   /** Stops only the native gRPC mock runtime. */
@@ -1535,7 +682,6 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
         await stopWebAccess();
       }
       const result = await window.electronMock?.stop?.();
-      mockRuntimeLastSyncSignatureRef.current = "";
       setMockServerStatus({ running: false, runtimeKind: "mock", message: result?.message });
       recordGuiCliCommand({
         command: "layang mock:stop --protocol grpc",
@@ -1551,7 +697,6 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
   /** Starts the single-upstream gRPC-Web bridge used by browser clients. */
   async function startWebAccess(profileOverride?: GrpcGatewayProfile, projectOverride?: MockServerProject) {
     try {
-      if (!ensureMockScenarioEditorSaved()) return false;
       setWebAccessStatus((current: MockServerStatus) => ({
         ...current,
         running: false,
@@ -1567,7 +712,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
         mockServer: effectiveMockServer,
         updatedAt: new Date().toISOString(),
       };
-      const schema = resolveRuntimeSchema(effectiveMockServer);
+      const schema = await resolveRuntimeSchema(effectiveMockServer);
       if (!schema.protoFiles.length || !schema.methods.length) {
         const message = "Import at least one Proto schema before starting Web Access.";
         setWebAccessStatus({ running: false, runtimeKind: "gateway", message });
@@ -1738,9 +883,7 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
   }
 
   return {
-    handleMockScenarioTextChange,
-    saveMockScenarioEditorDraft,
-    discardMockScenarioEditorDraft,
+
     handleMockPortChange,
     handleMockBindHostChange,
     handleGatewayModeChange,
@@ -1766,25 +909,9 @@ export function useGrpcMockEditorActions(ctx: ActionContext) {
     deleteGatewayProfile,
     handleGatewayMethodBehaviorChange,
     saveGatewayCaptureAsMock,
-    handleMockFormatChange,
-    formatMockScenarioEditor,
-    _generateMockMappingFromProto,
-    addMockScenarioFromCurrent,
-    addMockScenarioForMethod,
-    handleMockScenarioSelectChange,
-    forceMockScenarioSelectChange,
-    openMockScenarioManager,
-    confirmRenameMockScenario,
-    deleteEditingMockScenario,
-    handleMockMethodEnabledChange,
-    handleMockScenarioStreamSettingsChange,
-    handleMockGlobalStreamBaseChange,
-    importMockScenarioFile,
-    exportMockScenarioFile,
-    fetchMockScenarioFilesFromWorkspace,
+
     openMockScenarioFolder,
     startMockServer,
-    handleGrpcMockLivePushSend,
     stopMockServer,
     startWebAccess,
     stopWebAccess,

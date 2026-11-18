@@ -120,6 +120,7 @@ export type MockCatalogClient = {
 };
 
 export type MockCatalogStoreSnapshot = MockCatalogQueryResult & {
+  methods: MockCatalogMethodInput[];
   loading: boolean;
   syncing: boolean;
   error: string;
