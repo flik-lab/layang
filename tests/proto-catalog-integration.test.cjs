@@ -10,7 +10,7 @@ test("packaged worker parses real protobuf without renderer imports", () => {
   execFileSync(process.execPath, ["scripts/build-proto-catalog-worker.cjs"]);
   const messages = [];
   const self = { postMessage(value) { messages.push(value); } };
-  vm.runInNewContext(readFileSync("public/workers/proto-catalog.worker.js", "utf8"), {self, console, setTimeout, clearTimeout});
+  vm.runInNewContext(readFileSync("public/workers/proto-catalog.worker.js", "utf8"), {self, console, setTimeout, clearTimeout, TextDecoder, TextEncoder});
   self.onmessage({data:[{name:"test.proto",text:'syntax = "proto3"; package test; message Req { string value = 1; } service Echo { rpc Get(Req) returns (Req); }'}]});
   assert.equal(messages[0].error, undefined);
   assert.equal(messages[0].methods[0].serviceName, "test.Echo");
