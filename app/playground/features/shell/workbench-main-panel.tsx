@@ -13,7 +13,6 @@ import type { MetadataPair } from "@/lib/types";
 import { KeyboardArrowLeft, MoreHoriz, OpenInNew, WarningIcon } from "@/components/shadcn/icons";
 import { Box as ShellBox } from "@/components/shadcn/compat";
 import { WorkbenchTabs } from "@/components/ui/workbench";
-import { methodKey } from "../../shared/rpc-method-utils";
 import { performanceStats } from "../../shared/performance/performance-stats.store";
 import {
   defaultGrpcConnectionTimeoutMs,
@@ -164,7 +163,6 @@ export function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRu
     featureGetEnvironmentTransportTarget,
     generateRandomRequestJson,
 
-    openMockScenarioFolder,
     handleRequestJsonChange,
     handleResponseTabChange,
     handleConnectWebSocket,
@@ -178,8 +176,6 @@ export function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRu
     metadata,
     methodTypeLabel,
     managedWindow,
-    mockServer,
-    setMockServer,
     setMockSelectedMethodKey,
     selectProtoLibraryVersion,
     openEnvironmentManager,
@@ -189,7 +185,6 @@ export function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRu
     previewUrl,
     protoPreview,
     protoLibraries,
-    protoRuntimeRegistry,
     patchActiveCollectionRequest,
     publishDocumentationPage,
     removeMetadataRow,

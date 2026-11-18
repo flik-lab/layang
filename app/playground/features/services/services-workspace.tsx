@@ -7,9 +7,6 @@ import {
   useRef,
   useState,
   type RefObject,
-  type ChangeEvent,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
 } from "react";
 import {
   Alert,
@@ -36,13 +33,10 @@ import {
 } from "@/components/shadcn/compat";
 import {
   Add,
-  Close,
   Folder,
-  MockServer,
   MoreHoriz,
   OpenInNew,
   PlayArrow,
-  Refresh,
   Settings,
   StopCircle,
 } from "@/components/shadcn/icons";
@@ -59,9 +53,6 @@ import { RuntimeLogs, WorkspaceFrame, EmptyCard } from "./services-runtime-ui";
 import { chooseHttpsPemFiles } from "../../shared/certificate-settings";
 import {
   createDefaultGatewayProfile,
-  formatSingleMockScenarioForEditor,
-  parseSingleMockScenarioText,
-  saveMockScenarioForMethod,
 } from "../mock-server/mock-scenario-model";
 import { methodKey } from "../../shared/rpc-method-utils";
 import { uiCopy } from "../../shared/ui-copy";
@@ -77,17 +68,12 @@ import { FileBasedGrpcScenarios } from "../mock-server/workspace/FileBasedGrpcSc
 import { isScenarioMethodKey } from "../mock-server/workspace/CreateGrpcScenarioDialog";
 import { mockingUiStore, useScenarioNavigation } from "../mock-server/workspace/mockingUi.store";
 import { grpcMockOverviewMethodKey } from "../../shared/workbench-constants";
-import { normalizeMockExecutionConfig } from "../mock-server/mock-execution-model";
 import { resolveEffectiveMockProtoSources } from "../mock-server/mock-proto-sources";
 import type {
   GrpcGatewayProfile,
   GrpcWebProxyConfig,
-  MockFormat,
   MockProtoSource,
-  MockScenario,
-  MockScenarioResponse,
   MockServerProject,
-  MockServerStatus,
 } from "../../shared/workbench-types";
 
 function useImmediateMockMethodSelection(
@@ -148,8 +134,6 @@ export function ServicesWorkspace({ ctx: shellCtx, draftHandle }: { ctx: ViewCon
     managedWindow,
     mockServer,
     mockServerStatus,
-    protoLibraries,
-    protoRuntimeRegistry,
     setMockServer,
     startMockServer,
     stopMockServer,
@@ -476,7 +460,6 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios", draftHandle }
     mockServer,
     mockServerStatus,
     protoLibraries,
-    protoRuntimeRegistry,
     selectProtoLibraryVersion,
     setMockSelectedMethodKey,
     setMockServer,
@@ -1408,7 +1391,6 @@ function ProtoSourcesPanel({
   const {
     mockSelectedMethodKey,
     mockServer,
-    mockServerStatus,
     protoLibraries,
     protoRuntimeRegistry,
     selectProtoLibraryVersion,
