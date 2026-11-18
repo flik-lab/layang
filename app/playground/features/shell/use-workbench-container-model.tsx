@@ -966,10 +966,17 @@ export function useWorkbenchContainerModel() {
   const activeDocKey =
     activeMethodKey || webSocketDocKey(activeCollectionRequest) || restDocKey(activeCollectionRequest);
   const activeExampleKey = activeMethodKey || activeCollectionKey;
-  const currentExamples = useMemo(
-    () => (activeExampleKey ? examples.filter((example) => savedExampleKey(example) === activeExampleKey) : []),
-    [examples, activeExampleKey],
-  );
+  const exampleOwnerRequestId = activeCollectionRequest?.id ?? "";
+  const currentExamples = useMemo(() => {
+    if (!activeExampleKey) return [];
+    // A saved request shows its own examples (<request>.examples/); unlinked examples of the same
+    // RPC still show so older workspaces keep working.
+    return examples.filter((example) =>
+      exampleOwnerRequestId && example.requestId
+        ? example.requestId === exampleOwnerRequestId
+        : savedExampleKey(example) === activeExampleKey,
+    );
+  }, [examples, activeExampleKey, exampleOwnerRequestId]);
   const currentHistory = useMemo(
     () => (activeExampleKey ? history.filter((item) => item.method === activeExampleKey) : []),
     [history, activeExampleKey],

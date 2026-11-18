@@ -26,6 +26,7 @@ import { ServicesWorkspace } from "../services/services-workspace";
 import { SettingsWorkspace } from "../settings/settings-workspace";
 import { ProtoSchemaWorkspace } from "../proto-registry/proto-schema-workspace";
 import { SavedRequestControls } from "../saved-requests/SavedRequestControls";
+import { examplesAsSavedRequests, saveEditorAsExample } from "../saved-requests/request-examples-adapter";
 import { WorkbenchResponsePanel } from "../response-viewer/response-workbench-panel";
 import { GitSourceControlWorkspace } from "../git/git-source-control";
 import { ExampleEditorDialog, type ExampleEditorTab } from "../examples/examples-panel";
@@ -272,7 +273,41 @@ export function WorkbenchCollectionsMainPanel(props: { ctx: WorkbenchMainPanelRu
     (selectedMethod ? "grpc" : null);
   const savedRequestDefaultName =
     activeCollectionRequest?.name ?? activeSession?.title ?? selectedMethod?.methodName ?? "Saved request";
-  const savedRequestControls = (
+  // A saved collection request keeps its scenarios as examples next to it; loose tabs keep the
+  // workspace-wide saved requests.
+  const requestExamplesOwner = activeCollectionRequest ?? null;
+  const savedRequestControls = requestExamplesOwner ? (
+    <SavedRequestControls
+      savedRequests={examplesAsSavedRequests(currentExamples, requestExamplesOwner)}
+      currentKind={activeSavedRequestKind}
+      activeSavedRequestId={activeSession?.savedRequestId}
+      defaultName={savedRequestDefaultName}
+      disabled={!activeSession}
+      onLoad={(exampleId) => {
+        const example = currentExamples.find((item: SavedExample) => item.id === exampleId);
+        if (example) loadExample(example);
+      }}
+      onSave={(name, existingId) => {
+        const result = saveEditorAsExample(
+          examples,
+          requestExamplesOwner,
+          { requestJson, metadata, assertionJson: activeSession?.assertionJson },
+          name,
+          existingId,
+        );
+        setExamples(result.examples);
+        updateActiveSession({ savedRequestId: result.example.id });
+      }}
+      onRename={(exampleId, name) =>
+        setExamples((current: SavedExample[]) =>
+          current.map((item) =>
+            item.id === exampleId ? { ...item, name, updatedAt: new Date().toISOString() } : item,
+          ),
+        )
+      }
+      onDelete={(exampleId) => setExamples((current: SavedExample[]) => current.filter((item) => item.id !== exampleId))}
+    />
+  ) : (
     <SavedRequestControls
       savedRequests={savedRequests}
       currentKind={activeSavedRequestKind}
