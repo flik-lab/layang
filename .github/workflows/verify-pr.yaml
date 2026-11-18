@@ -93,5 +93,12 @@ jobs:
         run: pnpm electron:prepare
       - name: Build static renderer for packaged-path smoke
         run: pnpm build
+      - name: Enable Chromium SUID sandbox
+        # Ubuntu runners block unprivileged user namespaces, so Chromium falls back to the
+        # SUID helper, which must be owned by root with mode 4755.
+        run: |
+          sandbox="$(node -p "require('path').join(require('path').dirname(require('electron')), 'chrome-sandbox')")"
+          sudo chown root:root "$sandbox"
+          sudo chmod 4755 "$sandbox"
       - name: Run actual sandboxed renderer and Chromium CORS smoke test
         run: xvfb-run -a pnpm test:electron:smoke
