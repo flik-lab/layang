@@ -597,7 +597,14 @@ ipcMain.handle("workspace:save-folder", async (event, payload) => {
 
   if (!targetPath) return { ok: false, cancelled: true };
 
-  await writeWorkspaceFolder(targetPath, payload?.bundle ? payload.bundle : {});
+  try {
+    await writeWorkspaceFolder(targetPath, payload?.bundle ? payload.bundle : {});
+  } catch (error) {
+    if (error?.code === "WORKSPACE_CHANGED_EXTERNALLY") {
+      return { ok: false, conflict: true, directoryPath: targetPath, error: error.message };
+    }
+    throw error;
+  }
   broadcastWorkspaceSaved(targetPath, win);
   return { ok: true, directoryPath: targetPath };
 });
@@ -662,6 +669,10 @@ ipcMain.handle("workspace:open-folder", async (event, payload) => {
 
   try {
     const opened = await openWorkspaceFolder(directoryPath);
+    // The renderer now holds exactly what is on disk; saves are checked against this revision.
+    if (opened.status !== "not-a-workspace") {
+      workspaceInternalFingerprint.set(path.resolve(directoryPath), await computeWorkspaceRevision(directoryPath));
+    }
     return { ok: true, directoryPath, ...opened };
   } catch (error) {
     return {
@@ -823,6 +834,15 @@ async function writeWorkspaceFolder(directoryPath, bundle) {
 }
 
 async function writeWorkspaceFolderNow(resolvedDirectory, bundle) {
+  // Files written by the CLI, Git or an editor since this app last read or wrote the folder are not
+  // in the renderer's snapshot. Writing it would delete or revert them, so refuse and let the
+  // renderer reload the folder first.
+  const known = workspaceInternalFingerprint.get(resolvedDirectory);
+  if (known && (await computeWorkspaceRevision(resolvedDirectory)) !== known) {
+    const error = new Error("Workspace files changed outside Layang; reload them before saving.");
+    error.code = "WORKSPACE_CHANGED_EXTERNALLY";
+    throw error;
+  }
   workspaceWriteInProgress.add(resolvedDirectory);
   workspaceInternalWriteAt.set(resolvedDirectory, Date.now());
   try {
@@ -860,6 +880,8 @@ async function computeWorkspaceRevision(directoryPath) {
             relative === "docs/site" || relative === "docs/published" || relative === "docs/wiki-export") continue;
         await visit(absolute);
       } else if (entry.isFile()) {
+        // Written by documentation publishing, not part of the workspace sources.
+        if (relative === "docs/build-manifest.yml") continue;
         const stat = await fs.stat(absolute);
         records.push(`${relative}:${stat.size}:${Math.trunc(stat.mtimeMs)}`);
       }

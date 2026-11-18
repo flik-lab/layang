@@ -1,5 +1,8 @@
 import type { WorkspaceExportBundle } from "../../shared/workbench-types";
 
+/** Dispatched on window when a save was refused because the folder changed outside the app. */
+export const WORKSPACE_CONFLICT_EVENT = "layang:workspace-save-conflict";
+
 export type WorkspaceAutosaveState = {
   lastPayload: string;
   lastPath: string;
@@ -43,6 +46,15 @@ async function flushWorkspaceAutosaveQueue(state: WorkspaceAutosaveState): Promi
         state.pendingBundle = null;
 
         const result = await window.electronWorkspace?.saveFolder?.(pendingBundle, pendingPath);
+        if (result && !result.ok && (result as { conflict?: boolean }).conflict) {
+          // Files changed outside the app (CLI, Git, an editor). This snapshot predates them, so
+          // it is dropped instead of retried; the workspace controller reloads the folder.
+          state.pendingBundle = null;
+          state.pendingPayload = "";
+          state.lastPayload = "";
+          window.dispatchEvent(new CustomEvent(WORKSPACE_CONFLICT_EVENT, { detail: { directoryPath: pendingPath } }));
+          return;
+        }
         if (!result?.ok) {
           // A failed or cancelled IPC write must never be acknowledged as durable.
           // Keep the newest unsaved snapshot for a later retry.

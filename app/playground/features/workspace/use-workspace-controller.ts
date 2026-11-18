@@ -17,7 +17,7 @@ import {
   WORKSPACE_EXPORT_VERSION,
 } from "../../shared/workspace-versions";
 import { readStoredProject } from "./workspace-model";
-import { createWorkspaceAutosaveState } from "./workspace-autosave";
+import { createWorkspaceAutosaveState, WORKSPACE_CONFLICT_EVENT } from "./workspace-autosave";
 import { mockCatalogStore } from "../mock-server/catalog/mockCatalog.store";
 import { clearParsedMockMethodFileCache } from "../mock-server/mock-scenario-core";
 
@@ -401,13 +401,18 @@ export function useWorkspaceController({
       pending.seen += 1;
       if (pending.seen < 2) return;
 
+      await reloadFromDisk(revision.fingerprint, "Workspace reloaded after external file changes.");
+    }
+
+    async function reloadFromDisk(fingerprint: string, message: string) {
+      if (cancelled || externalReloadBusyRef.current) return;
       externalReloadBusyRef.current = true;
       try {
         const result = await window.electronWorkspace?.openFolder?.(workspaceFolderPath);
         if (!cancelled && result?.ok && result.bundle && applyWorkspaceBundle(result.bundle)) {
-          externalRevisionRef.current = revision.fingerprint;
+          externalRevisionRef.current = fingerprint;
           pendingExternalRevisionRef.current = { fingerprint: "", seen: 0 };
-          showToast("Workspace reloaded after external file changes.", "info");
+          showToast(message, "info");
         }
       } catch (error) {
         if (!cancelled) showToast(`External workspace reload failed: ${toErrorMessage(error)}`, "warning");
@@ -416,11 +421,23 @@ export function useWorkspaceController({
       }
     }
 
+    // An autosave refused because files changed outside the app: reload now instead of waiting
+    // for the poll to see the same revision twice.
+    const onSaveConflict = async () => {
+      const revision = await window.electronWorkspace?.getRevision?.(workspaceFolderPath).catch(() => null);
+      await reloadFromDisk(
+        revision?.ok ? (revision.fingerprint ?? "") : "",
+        "Workspace files changed outside Layang; reloaded them. Repeat your last unsaved edit if it is missing.",
+      );
+    };
+
     void checkExternalWorkspaceChanges();
     const interval = window.setInterval(() => void checkExternalWorkspaceChanges(), 2_500);
+    window.addEventListener(WORKSPACE_CONFLICT_EVENT, onSaveConflict);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
+      window.removeEventListener(WORKSPACE_CONFLICT_EVENT, onSaveConflict);
     };
   }, [windowKind, workspaceFolderPath, applyWorkspaceBundle, showToast]);
 
