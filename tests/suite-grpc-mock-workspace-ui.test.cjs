@@ -11,19 +11,7 @@ const __suiteBaseDir = __dirname;
   const __dirname = __suitePath.dirname(__suiteOrigin);
   const __filename = __suiteOrigin;
   const { describe: __suiteDescribe } = require("node:test");
-  __suiteDescribe("grpc-mock-compact-split-layout-regression.test.cjs", () => {
-    const assert = require("node:assert/strict");
-    const fs = require("node:fs");
-    const path = require("node:path");
-    const test = require("node:test");
-    
-    const root = path.resolve(__dirname, "..");
-    const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
-    
-    
-    
-    
-  });
+  __suiteDescribe("grpc-mock-compact-split-layout-regression.test.cjs", () => {});
 }
 
 {
