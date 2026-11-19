@@ -119,7 +119,9 @@ async function invokeUtilityNativeGrpc(event, payload, getRuntimeHost) {
     }
   });
   try {
-    return await host.invoke("grpc.invoke", payload);
+    // No host command timeout: a server stream stays in this call for as long as it streams.
+    // The runner enforces the connection, deadline and stream idle timeouts itself.
+    return await host.invoke("grpc.invoke", payload, { timeoutMs: 0 });
   } finally {
     unsubscribe();
   }

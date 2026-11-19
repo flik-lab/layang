@@ -45,7 +45,9 @@ function createDisposableTransportRuntimeManager(options = {}) {
     try {
       await host.start();
       await host.invoke("payload.setRetentionLimit", { limit: configuredRetentionLimit });
-      const result = await host.invoke("grpcWeb.invoke", { ...(payload || {}), runId });
+      // No host command timeout: a server stream stays in this call for as long as it streams.
+      // The transport enforces the connection, unary request and stream idle timeouts itself.
+      const result = await host.invoke("grpcWeb.invoke", { ...(payload || {}), runId }, { timeoutMs: 0 });
       registerResultDocuments(state, result);
       flush(state);
       return result;

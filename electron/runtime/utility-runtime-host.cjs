@@ -17,6 +17,16 @@ function createDeferred() {
   return { promise, resolve, reject };
 }
 
+/**
+ * Per-call command timeout: a finite override (0 = no timeout) or the host default.
+ */
+function resolveCommandTimeoutMs(override, fallback) {
+  if (override === undefined || override === null) return fallback;
+  const numeric = Number(override);
+  if (!Number.isFinite(numeric) || numeric < 0) return fallback;
+  return numeric === 0 ? 0 : Math.max(100, Math.floor(numeric));
+}
+
 function createUtilityRuntimeHost(options = {}) {
   const electron = options.utilityProcess && options.MessageChannelMain ? null : require("electron");
   const utilityProcess = options.utilityProcess || electron.utilityProcess;
@@ -167,7 +177,12 @@ function createUtilityRuntimeHost(options = {}) {
     return startingPromise;
   };
 
-  const invoke = async (type, payload = null) => {
+  /**
+   * Sends one command to the utility runtime.
+   * `options.timeoutMs` overrides the host command timeout for this call; 0 disables it, for
+   * commands that enforce their own deadlines (a gRPC-Web stream lasts as long as it streams).
+   */
+  const invoke = async (type, payload = null, options = {}) => {
     if ((disposing || disposed) && type !== "runtime.dispose") {
       throw new Error("Utility runtime host is shutting down.");
     }
@@ -180,13 +195,16 @@ function createUtilityRuntimeHost(options = {}) {
     const deferred = createDeferred();
     const sourceGeneration = generation;
     const entry = { ...deferred, generation: sourceGeneration, timer: null };
-    entry.timer = setTimeout(() => {
-      if (pending.get(requestId) !== entry) return;
-      pending.delete(requestId);
-      entry.reject(new Error(`Utility runtime command ${type} timed out after ${commandTimeoutMs} ms.`));
-      emit({ protocolVersion: 1, type: "event", event: "runtime.commandTimeout",
-        payload: { command: type, generation: sourceGeneration } });
-    }, commandTimeoutMs);
+    const timeoutMs = resolveCommandTimeoutMs(options?.timeoutMs, commandTimeoutMs);
+    if (timeoutMs > 0) {
+      entry.timer = setTimeout(() => {
+        if (pending.get(requestId) !== entry) return;
+        pending.delete(requestId);
+        entry.reject(new Error(`Utility runtime command ${type} timed out after ${timeoutMs} ms.`));
+        emit({ protocolVersion: 1, type: "event", event: "runtime.commandTimeout",
+          payload: { command: type, generation: sourceGeneration } });
+      }, timeoutMs);
+    }
     pending.set(requestId, entry);
     try {
       port.postMessage(createCommandEnvelope(requestId, type, payload));
