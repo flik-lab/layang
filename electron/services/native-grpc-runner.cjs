@@ -9,6 +9,7 @@ const { writeProtoWorkspace } = require("../utils/file-utils.cjs");
 const { getCurrentCertificateSettings } = require("../utils/certificate-settings.cjs");
 const { safeRelativePath } = require("../utils/path-utils.cjs");
 const { serializeNativeGrpcMessage } = require("./native-grpc-serialization.cjs");
+const { normalizeRequestFieldNames } = require("../../lib/grpc-request-field-names.cjs");
 
 /**
  * Invokes native gRPC through @grpc/grpc-js and streams normalized events back to the renderer.
@@ -44,6 +45,14 @@ async function invokeNativeGrpc(payload, emit = () => undefined, registerCall = 
 
     const loadedPackage = grpc.loadPackageDefinition(packageDefinition);
     const ServiceCtor = getByDottedPath(loadedPackage, payload.method.serviceName);
+    // Proto field names (snake_case) map to the loaded camelCase names; unknown keys are rejected
+    // instead of being dropped from the message.
+    const requestType = packageDefinition.protobufRoot
+      ?.lookupService(payload.method.serviceName)
+      ?.methods[payload.method.methodName]?.resolvedRequestType;
+    const requestJson = requestType
+      ? normalizeRequestFieldNames(requestType, payload.requestJson)
+      : payload.requestJson;
 
     if (typeof ServiceCtor !== "function") {
       throw new Error(`Service constructor not found: ${payload.method.serviceName}`);
@@ -100,7 +109,7 @@ async function invokeNativeGrpc(payload, emit = () => undefined, registerCall = 
       ? await invokeServerStreaming(
           client,
           clientMethodName,
-          payload.requestJson,
+          requestJson,
           metadata,
           callOptions,
           emit,
@@ -111,7 +120,7 @@ async function invokeNativeGrpc(payload, emit = () => undefined, registerCall = 
       : await invokeUnary(
           client,
           clientMethodName,
-          payload.requestJson,
+          requestJson,
           metadata,
           callOptions,
           emit,
