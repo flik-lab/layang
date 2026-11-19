@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+* gRPC request bodies may use the proto field names (`tactical_track_number`) as well as their camelCase form (`tacticalTrackNumber`), in the CLI (gRPC-Web and native) and the desktop app. Before, a proto field name was dropped without a warning and the server received an empty message. A key that matches no field now fails the request and names the key and the valid fields.
+* gRPC mock matchers (`equals`, `contains`, `matches`, `glob`) written with proto field names match requests, which the gateway decodes with camelCase names.
+
 ## 1.2.0
 
 ### Added
