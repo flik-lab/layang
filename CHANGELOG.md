@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.1
+
+### Fixed
+
+* gRPC request bodies may use the proto field names (`tactical_track_number`) as well as their camelCase form (`tacticalTrackNumber`), in the CLI (gRPC-Web and native) and the desktop app. Before, a proto field name was dropped without a warning and the server received an empty message. A key that matches no field now fails the request and names the key and the valid fields.
+* gRPC mock matchers (`equals`, `contains`, `matches`, `glob`) written with proto field names match requests, which the gateway decodes with camelCase names.
+* Desktop app: gRPC-Web and native gRPC server streams no longer stop after 60 seconds while messages are still arriving. The stream ran as one utility-runtime command, and that command's 60-second timeout ended it whatever the Stream idle setting was. Streams now end only on the Stream idle timeout (no message for that long), the server, or Cancel.
+
 ## 1.2.0
 
 ### Added

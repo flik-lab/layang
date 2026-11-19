@@ -1,3 +1,4 @@
+import { normalizeRequestFieldNames } from "./grpc-request-field-names.cjs";
 import type * as protobuf from "protobufjs";
 import { transportLifecycleStore } from "../app/playground/features/response-viewer/model/transportLifecycle.store";
 import { createGrpcWebDecodeWorkerClient, type GrpcWebDecodeWorkerClient, type GrpcWebDecodeWorkerFrame } from "./grpc-web-decode-worker-client";
@@ -36,7 +37,12 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
 
   const requestType = params.root.lookupType(params.method.requestType);
   const responseType = params.root.lookupType(params.method.responseType);
-  const requestObject = normalizeProtobufRequestObject(requestType, ensureObject(params.requestJson));
+  // Proto field names (snake_case) map to the loaded camelCase names; unknown keys are rejected
+  // instead of being dropped from the message.
+  const requestObject = normalizeProtobufRequestObject(
+    requestType,
+    normalizeRequestFieldNames(requestType, ensureObject(params.requestJson)),
+  );
   const verifyError = requestType.verify(requestObject);
 
   if (verifyError) {

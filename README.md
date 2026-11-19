@@ -5,7 +5,7 @@
 # Layang
 
 [![Website](https://img.shields.io/badge/website-layang.mff.web.id-blue)](https://layang.mff.web.id/)
-[![Source version](https://img.shields.io/badge/source%20version-1.2.0-blue)](./package.json)
+[![Source version](https://img.shields.io/badge/source%20version-1.2.1-blue)](./package.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Layang is a desktop API workbench for REST, WebSocket, gRPC, and gRPC-Web. It uses workspace folders as the source of truth, so the same requests, schemas, mocks, environments, and documentation can be used from both the desktop app and CLI.
@@ -45,6 +45,11 @@ The gRPC service workspace groups:
 * Activity
 
 Request-specific examples and documentation stay with the request instead of being managed from a separate global screen.
+
+## What's new in 1.2.1
+
+* gRPC request bodies accept the proto field names (`tactical_track_number`) as well as camelCase; an unknown key fails the request instead of being dropped.
+* Desktop gRPC-Web and native gRPC streams keep running past 60 seconds while messages arrive.
 
 ## What's new in 1.2.0
 
