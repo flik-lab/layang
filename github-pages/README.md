@@ -4,16 +4,19 @@ This folder is the public landing-site source for Layang.
 
 ## Pages
 
-- `index.html` - product landing page for Layang 1.1.6, including REST, WebSocket, gRPC, gRPC-Web, local mocks, gateway access, certificate settings, documentation, workspace files, CLI, and download sections.
+- `index.html` - the product landing page: request file and CLI output, app screenshot, workflow, streaming mock scenario, workspace layout, transport support, CLI in CI, and downloads.
+
+Version numbers and platform claims on the page must match `package.json` and the release workflow; `tests/site-content.test.cjs` checks this.
 
 ## Assets
 
-- `assets/layang-logo.png`
-- `assets/layang-app-screenshot.png`
-- `assets/layang-app-ws.png`
-- `assets/layang-mock-stream.png`
-- `assets/layang-app-documentation.png`
-- `assets/styles.css`
+- `assets/styles.css` - the page styles (light and dark from the same tokens).
+- `assets/layang-logo.png` - logo and favicon.
+- `assets/app-unary-light.png`, `assets/app-unary-dark.png` - the app with the sample workspace (Greeter, Orders, Health) at 2x.
+- `assets/app-stream-dark.png`, `assets/app-mock-dark.png`, `assets/app-mock-dark-crop.png` - streaming response and mock scenario editor.
+- `assets/og-image.png` - 1200x630 social preview.
+
+Screenshots must only show the public sample workspace against `127.0.0.1`/`localhost`. Never commit a screenshot with internal service names, project names or private IP addresses.
 
 ## Local checks
 

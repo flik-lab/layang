@@ -10,7 +10,10 @@
 
 Layang is a desktop API workbench for REST, WebSocket, gRPC, and gRPC-Web. It uses workspace folders as the source of truth, so the same requests, schemas, mocks, environments, and documentation can be used from both the desktop app and CLI.
 
-![Layang workbench](github-pages/assets/layang-app-screenshot.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="github-pages/assets/app-unary-dark.png">
+  <img alt="Layang with the Greeter, Orders and Health collections and a SayHello response" src="github-pages/assets/app-unary-light.png">
+</picture>
 
 ## Download
 
@@ -117,7 +120,7 @@ See [Workspace Format v6](./docs/architecture/workspace-format.md) for the compl
 
 ## gRPC Mock
 
-![Layang mock streaming](github-pages/assets/layang-mock-stream.png)
+![Layang gRPC mock scenario editor](github-pages/assets/app-mock-dark.png)
 
 gRPC mock scenarios are stored with the workspace and use YAML as the canonical format.
 
@@ -187,7 +190,7 @@ When switching to the latest response, the existing payload remains visible unti
 
 ## Documentation
 
-![Layang documentation](github-pages/assets/layang-app-documentation.png)
+An example of the generated site is published at [layang.mff.web.id/reference](https://layang.mff.web.id/reference/).
 
 Documentation can be authored at workspace, collection, folder, and request level.
 
