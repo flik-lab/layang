@@ -33,6 +33,10 @@ test("the CSP meta tag is the first element of <head> and blocks plugins, framin
   assert.match(policy, /base-uri 'none'/);
   assert.match(policy, /frame-src 'none'/);
   assert.doesNotMatch(policy, /script-src[^;]*'unsafe-inline'/);
+  // protobufjs codegen runs in file-based workers, so the page never needs eval.
+  assert.doesNotMatch(policy, /'unsafe-eval'/);
+  assert.match(policy, /script-src 'self' 'sha256-/);
+  assert.match(policy, /worker-src 'self' blob:/);
   assert.ok(policy.includes(sha("self.__next_f.push([1])")));
 });
 

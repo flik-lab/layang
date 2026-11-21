@@ -10,8 +10,11 @@
  * by its SHA-256 hash, so no other inline script can run.
  *
  * Notes on the policy:
- * - 'unsafe-eval' is required by protobufjs, which generates encoders and
- *   decoders with `new Function` at runtime. Inline scripts stay blocked.
+ * - No 'unsafe-eval': protobufjs generates codecs with `new Function`, so
+ *   everything that needs it runs in the file-based workers under
+ *   out/workers/ (built by scripts/build-proto-catalog-worker.cjs). A worker
+ *   loaded from its own file does not inherit this page policy; blob: workers
+ *   do, and only run hand-written decoders. Inline scripts stay blocked.
  * - connect-src allows any http(s)/ws(s) endpoint because Layang is an API
  *   client: gRPC-Web and WebSocket requests go straight from the renderer to
  *   whatever server the user targets.
@@ -41,7 +44,7 @@ function hashInlineScripts(html) {
 function buildContentSecurityPolicy(scriptHashes = []) {
   return [
     "default-src 'self'",
-    ["script-src 'self' 'unsafe-eval'", ...scriptHashes].join(" "),
+    ["script-src 'self'", ...scriptHashes].join(" "),
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",

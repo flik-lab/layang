@@ -3,6 +3,7 @@ import type * as protobuf from "protobufjs";
 import { transportLifecycleStore } from "../app/playground/features/response-viewer/model/transportLifecycle.store";
 import { createGrpcWebDecodeWorkerClient, type GrpcWebDecodeWorkerClient, type GrpcWebDecodeWorkerFrame } from "./grpc-web-decode-worker-client";
 import { buildGrpcWebWorkerSchema, canDecodeInGrpcWebWorker } from "./grpc-web-worker-schema";
+import { canEncodeGrpcWebRequestInWorker, encodeGrpcWebRequestInWorker } from "./grpc-web-request-encoder-client";
 import type { GrpcEvent, GrpcResult, MetadataPair, ResponseDocumentRef, RpcMethodInfo } from "./types";
 
 type Bytes = Uint8Array<ArrayBufferLike>;
@@ -37,20 +38,16 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
 
   const requestType = params.root.lookupType(params.method.requestType);
   const responseType = params.root.lookupType(params.method.responseType);
-  // Proto field names (snake_case) map to the loaded camelCase names; unknown keys are rejected
-  // instead of being dropped from the message.
-  const requestObject = normalizeProtobufRequestObject(
-    requestType,
-    normalizeRequestFieldNames(requestType, ensureObject(params.requestJson)),
-  );
-  const verifyError = requestType.verify(requestObject);
-
-  if (verifyError) {
-    throw new Error(`Invalid request payload: ${verifyError}`);
-  }
-
-  const requestMessage = requestType.fromObject(requestObject);
-  const requestPayload = requestType.encode(requestMessage).finish();
+  // protobufjs builds verify/fromObject/encode with `new Function`, which the
+  // packaged renderer CSP blocks, so a file-based worker encodes the request.
+  // Without Worker support (Node tests) the same encoder runs inline.
+  const requestPayload = canEncodeGrpcWebRequestInWorker()
+    ? await encodeGrpcWebRequestInWorker({
+        root: params.root,
+        requestType: params.method.requestType,
+        requestJson: params.requestJson,
+      })
+    : encodeGrpcWebRequestPayload(requestType, params.requestJson);
   const requestFrame = encodeGrpcFrame(requestPayload, false);
   const responseStream = params.method.responseStream;
   // Keep unary and server-streaming on the same grpc-web-text wire format.
@@ -94,6 +91,32 @@ export async function invokeGrpcWebText(params: InvokeGrpcWebTextParams): Promis
     headers,
     responseType,
   });
+}
+
+/**
+ * Serializes a request JSON object into protobuf bytes with exactly the
+ * renderer's validation rules: proto field names are mapped to the loaded
+ * camelCase names (unknown keys are rejected instead of being dropped), enum
+ * names become numbers, and the result must pass `Type.verify`.
+ *
+ * This calls protobufjs codegen. The request encoder worker
+ * (scripts/build-proto-catalog-worker.cjs) bundles this module so the page
+ * itself never needs `'unsafe-eval'`; keep this function and its helpers free
+ * of module-scope dependencies on the imports above.
+ */
+export function encodeGrpcWebRequestPayload(requestType: protobuf.Type, requestJson: unknown): Uint8Array {
+  const requestObject = normalizeProtobufRequestObject(
+    requestType,
+    normalizeRequestFieldNames(requestType, ensureObject(requestJson)),
+  );
+  const verifyError = requestType.verify(requestObject);
+
+  if (verifyError) {
+    throw new Error(`Invalid request payload: ${verifyError}`);
+  }
+
+  const requestMessage = requestType.fromObject(requestObject);
+  return requestType.encode(requestMessage).finish();
 }
 
 /**
