@@ -10,6 +10,8 @@ const { stringifyYaml } = require("../lib/workspace-yaml.cjs");
 const { registerGrpcScenarioStoreIpc } = require("../electron/ipc/grpc-scenario-store-ipc.cjs");
 const setup = async () => {
  const root = await fs.mkdtemp(path.join(os.tmpdir(), "layang-v3-"));
+ // Scenario store IPC only serves folders the user granted access to.
+ require("../electron/utils/workspace-access.cjs").getWorkspaceAccess().addRoot(root);
  await writeGitWorkspace(root, { project:{ collections:[], protoLibraries:[], environments:[], mockServer:{methodFiles:{}} }, layout:{}, settings:{} });
  return {root, repo:new GrpcScenarioRepository(root)};
 };

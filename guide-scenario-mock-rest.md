@@ -138,6 +138,13 @@ Example:
 }
 ```
 
+Template rules:
+
+- Every `{{uuid}}` occurrence gets its own fresh UUID.
+- When the response `content-type` contains `json` (the default), a value substituted **inside a JSON string literal** (`"{{request.query.name}}"`) is JSON-escaped, so quotes, backslashes and control characters in request data cannot break the body. A placeholder outside quotes (`"n": {{request.query.n}}`) is inserted raw, so the request value must itself be valid JSON there.
+- For non-JSON content types, values are inserted as-is.
+- Unknown placeholders are left unchanged.
+
 ## Common Scenarios
 
 ### Success
@@ -198,9 +205,29 @@ Example:
 }
 ```
 
+If the scenario is disabled while a delayed response is waiting, the client receives `503` with a JSON error instead of the scenario response.
+
+## Error Responses and Limits
+
+| Status | When |
+| --- | --- |
+| `400` | The request path contains malformed percent-encoding (`Malformed URL encoding`). |
+| `403` | The server is bound to loopback, the request comes from a web browser (it has an `Origin` or `Sec-Fetch-Site` header), and its `Host` header is not `localhost`, `127.0.0.1`, `[::1]` or the bind host (DNS-rebinding protection). |
+| `404` | No scenario matched. |
+| `413` | The request body is larger than 10 MiB. The connection is closed after the response. |
+| `500` | Unexpected mock server error (logged; JSON body). |
+| `503` | Pending-request capacity reached, or the scenario was disabled during its delay. |
+| `504` | A standby (manual/periodic/scheduled) response was not released before its timeout. |
+
+All responses include `access-control-allow-origin: *`. The `Host` check is what prevents other websites from reading the mock through DNS rebinding.
+
+The **status** `requestCount` counts every logged request since the server started; the visible request log keeps only the latest 80 entries.
+
 ## APISIX Notes
 
-If APISIX runs in Docker or another machine, set **Bind IP** to an address APISIX can reach, not `0.0.0.0`.
+If APISIX runs in Docker or another machine, set **Bind IP** to an address APISIX can reach. `0.0.0.0` and `::` are narrowed to `127.0.0.1`.
+
+When the mock is bound to loopback, browser requests must carry a loopback `Host` header. Requests from tools, services and CLIs are not checked. If a browser calls the mock through APISIX and APISIX forwards the browser's original `Host` (`pass_host: pass`, the default), the mock answers `403`; set `pass_host: node` on the upstream, or bind the mock to a non-loopback IP (no `Host` check is applied then).
 
 Examples:
 

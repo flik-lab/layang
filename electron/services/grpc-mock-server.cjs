@@ -447,8 +447,7 @@ function rebuildRuntimeScenarioIndexes(runtime) {
         active = list.filter((scenario) => scenario.id === selectedId && isRuntimeScenarioActive(scenario));
       } else {
         const firstActive =
-          list.filter(isRuntimeScenarioActive).sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0))[0] ||
-          list[0];
+          list.filter(isRuntimeScenarioActive).sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0))[0];
         active = firstActive ? [firstActive] : [];
       }
     }
@@ -1509,7 +1508,7 @@ function getActiveRuntimeScenariosForMethod(method, runtime) {
   const active =
     methodScenarios
       .filter(isRuntimeScenarioActive)
-      .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0))[0] || methodScenarios[0];
+      .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0))[0];
   return active ? [active] : [];
 }
 
@@ -2158,4 +2157,5 @@ module.exports = {
   stopMockServer,
   updateActiveMockServer,
   sendMockServerStreamMessage,
+  _internals: { getActiveRuntimeScenariosForMethod, rebuildRuntimeScenarioIndexes },
 };

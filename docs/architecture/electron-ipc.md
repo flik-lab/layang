@@ -259,3 +259,25 @@ Each utility-process instance has a generation ID. Utility-owned native gRPC doc
 5. clears renderer response-session references and transport lifecycle counters tied to the old generation.
 
 An explicit application shutdown disables restart, so a delayed child `exit` event cannot resurrect the runtime.
+
+## Workspace folder access
+
+The renderer names folders in many payloads (`directoryPath`, `workspacePath`). The main process does not take those names on trust: `electron/utils/workspace-access.cjs` keeps the list of folders the user granted, and every handler that reads, writes, opens, runs Git or runs the CLI in a folder checks it.
+
+A folder is granted when:
+
+- the user picks it in a native folder dialog;
+- it is the default workspace folder, the saved workspace preference, or a folder passed on the command line (`layang open <dir>`);
+- the user confirms a native "Allow folder access" dialog shown by the main process. This covers paths the renderer remembers, such as the last opened workspace, a typed clone target or a Git workspace copy.
+
+Grants are saved in `userData/trusted-workspaces.json` (at most 100 folders). A path is allowed when it is a granted folder or inside one, after symlinks are resolved, so a link inside a workspace cannot point outside it. A filesystem root is never granted.
+
+`workspace:open-path` also refuses executables and scripts (and, on macOS and Linux, files with an execute bit), and `reveal` no longer creates a missing file.
+
+## Renderer policy
+
+- The packaged renderer has a Content-Security-Policy `<meta>` tag added by `scripts/apply-csp.cjs` after `next build`. Inline scripts are allowed only by hash and there is no `'unsafe-eval'`: protobufjs generates codecs with `new Function`, so gRPC-Web request encoding runs in the file-based worker `out/workers/grpc-web-request-encoder.worker.js` (a worker loaded from its own file does not inherit the page policy; blob: workers do and only run hand-written decoders); `connect-src` allows any http(s)/ws(s) endpoint because the renderer is an API client.
+- `electron/utils/permission-policy.cjs` denies every Chromium permission request (camera, microphone, geolocation, notifications, devices) except clipboard writes.
+- Packaged builds set Electron fuses in `forge.config.js`: `NODE_OPTIONS` and `--inspect` are ignored, the app only loads from an integrity-checked `app.asar`, and `RunAsNode` is off, so `ELECTRON_RUN_AS_NODE` cannot turn the app executable into a Node runtime. The integrated CLI terminal runs the CLI in an Electron utility process (`utilityProcess.fork` of `lib/cli-utility-entry.cjs`). When it starts a background mock or gateway (`--daemon`), `lib/cli-daemon-launcher.cjs` asks the main process over `parentPort`; `cli-ipc.cjs` accepts only `mock:serve` / `gateway:serve` for a granted workspace with a log file inside `<workspace>/.layang/`, and forks the daemon as another utility process. Those in-app daemons stop when the app quits; daemons started by the standalone CLI are ordinary detached processes and keep running.
+- Git commands always run with `core.fsmonitor=false`, `core.pager=cat` and `protocol.ext.allow=never`, so a repository's own `.git/config` cannot make status, log or diff run a program. Before an operation that can run hooks (commit, push, pull, merge, branch switch, discard, worktree add) in a repository that has hooks, `electron/utils/git-hooks-policy.cjs` asks the user once per repository (Skip hooks / Run hooks / Cancel) and asks again when the set of hooks changes; skipped hooks run with `core.hooksPath` pointed at an empty private folder.
+- The OpenSSL-generated local HTTPS root CA (Linux) carries critical name constraints for the requested host names and addresses, `pathlen:0` and CA-only key usage. A root from an older version, or one that does not cover new host names, is replaced and its key deleted.
