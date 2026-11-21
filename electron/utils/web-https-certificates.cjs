@@ -16,6 +16,8 @@ const { getCurrentCertificateSettings } = require("./certificate-settings.cjs");
 const execFileAsync = promisify(execFile);
 const state = { configured: false, certificateDirectory: "", registryPath: "", app: null };
 
+const LOCAL_ROOT_CA_METADATA_VERSION = 1;
+
 function configureWebHttpsCertificates(options = {}) {
   const app = options.app;
   const userDataPath =
@@ -510,18 +512,66 @@ async function detectTrustEnvironment(distro = {}) {
   };
 }
 
+/**
+ * OpenSSL config for the local root CA. The CA may only issue certificates for
+ * the host names and addresses it was created for (critical nameConstraints),
+ * cannot create intermediate CAs (pathlen:0), and is only for signing.
+ * RFC 5280 leaves a name type unconstrained when no subtree of that type is
+ * listed, so both DNS and IP subtrees are always present (localhost, 127.0.0.1, ::1).
+ */
+function buildLocalRootCaConfig(hostnames) {
+  const permitted = [];
+  let dnsIndex = 0;
+  let ipIndex = 0;
+  for (const hostname of hostnames) {
+    const family = net.isIP(hostname);
+    if (family === 4) permitted.push(`permitted;IP.${++ipIndex} = ${hostname}/255.255.255.255`);
+    else if (family === 6)
+      permitted.push(`permitted;IP.${++ipIndex} = ${hostname}/ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff`);
+    else permitted.push(`permitted;DNS.${++dnsIndex} = ${hostname}`);
+  }
+  return (
+    "[req]\ndistinguished_name = dn\nx509_extensions = v3_ca\nprompt = no\n[dn]\nCN = Layang Local CA\n" +
+    "[v3_ca]\nbasicConstraints = critical, CA:TRUE, pathlen:0\nkeyUsage = critical, keyCertSign, cRLSign\n" +
+    "subjectKeyIdentifier = hash\nnameConstraints = critical, @name_constraints\n" +
+    `[name_constraints]\n${permitted.join("\n")}\n`
+  );
+}
+
+/** True when the saved root CA metadata says it was constrained to (at least) these host names. */
+function localRootCaCovers(metadata, hostnames) {
+  if (!metadata || metadata.version !== LOCAL_ROOT_CA_METADATA_VERSION || !Array.isArray(metadata.hostnames)) return false;
+  const covered = new Set(metadata.hostnames.map((value) => String(value).toLowerCase()));
+  return hostnames.every((hostname) => covered.has(String(hostname).toLowerCase()));
+}
+
 async function generateWithOpenSsl(opensslPath, hostnames, paths) {
   const rootKeyPath = path.join(state.certificateDirectory, "layang-local-root-ca-key.pem");
+  const rootMetadataPath = path.join(state.certificateDirectory, "layang-local-root-ca.json");
+  const rootConfigPath = path.join(state.certificateDirectory, "layang-local-root-ca.cnf");
   const csrPath = path.join(state.certificateDirectory, "layang-web-access.csr");
   const serialPath = path.join(state.certificateDirectory, "layang-local-root-ca.srl");
   const configPath = path.join(state.certificateDirectory, "layang-openssl.cnf");
   const altNames = hostnames
     .map((hostname, index) => `${net.isIP(hostname) ? "IP" : "DNS"}.${index + 1} = ${hostname}`)
     .join("\n");
-  const config = `[req]\ndistinguished_name = dn\nreq_extensions = v3_req\nprompt = no\n[dn]\nCN = ${hostnames[0] || "localhost"}\n[v3_req]\nkeyUsage = critical, digitalSignature, keyEncipherment\nextendedKeyUsage = serverAuth\nsubjectAltName = @alt_names\n[alt_names]\n${altNames}\n`;
+  const config = `[req]\ndistinguished_name = dn\nreq_extensions = v3_req\nprompt = no\n[dn]\nCN = ${hostnames[0] || "localhost"}\n[v3_req]\nbasicConstraints = critical, CA:FALSE\nkeyUsage = critical, digitalSignature, keyEncipherment\nextendedKeyUsage = serverAuth\nsubjectAltName = @alt_names\n[alt_names]\n${altNames}\n`;
   try {
     await fsp.writeFile(configPath, config, "utf8");
-    if (!fs.existsSync(paths.rootCaPath) || !fs.existsSync(rootKeyPath)) {
+    let metadata = null;
+    try {
+      metadata = JSON.parse(await fsp.readFile(rootMetadataPath, "utf8"));
+    } catch {
+      metadata = null;
+    }
+    // A root CA from an older Layang has no name constraints, and a constrained one may not
+    // cover new host names: create a new root and delete the old key so it can never sign again.
+    const reuseRoot =
+      fs.existsSync(paths.rootCaPath) && fs.existsSync(rootKeyPath) && localRootCaCovers(metadata, hostnames);
+    if (!reuseRoot) {
+      await fsp.rm(rootKeyPath, { force: true });
+      await fsp.rm(serialPath, { force: true });
+      await fsp.writeFile(rootConfigPath, buildLocalRootCaConfig(hostnames), "utf8");
       await execFileAsync(
         opensslPath,
         [
@@ -533,8 +583,8 @@ async function generateWithOpenSsl(opensslPath, hostnames, paths) {
           "-sha256",
           "-days",
           "825",
-          "-subj",
-          "/CN=Layang Local CA",
+          "-config",
+          rootConfigPath,
           "-keyout",
           rootKeyPath,
           "-out",
@@ -547,6 +597,11 @@ async function generateWithOpenSsl(opensslPath, hostnames, paths) {
       } catch {
         /* ignore */
       }
+      await fsp.writeFile(
+        rootMetadataPath,
+        `${JSON.stringify({ version: LOCAL_ROOT_CA_METADATA_VERSION, hostnames, createdAt: new Date().toISOString() }, null, 2)}\n`,
+        "utf8",
+      );
     }
     await execFileAsync(
       opensslPath,
@@ -891,4 +946,5 @@ module.exports = {
   setupLocalHttps,
   testHttpsEndpoint,
   validateHttpsCertificate,
+  _internals: { buildLocalRootCaConfig, generateWithOpenSsl, localRootCaCovers },
 };
