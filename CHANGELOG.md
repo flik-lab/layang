@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Security
+
+* Desktop app: the main process only works in folders you granted: one picked in a folder dialog, the default or saved workspace, a folder passed on the command line, or one you confirm in a new "Allow folder access" dialog. Workspace, docs, Git, CLI and gRPC scenario requests for any other folder are refused, so a compromised renderer can no longer write to, open or run Git or the CLI in an arbitrary folder. The first time you reopen an older workspace that is not your saved workspace, Layang asks once.
+* Desktop app: "Open" for workspace paths refuses executables and scripts, and "Reveal" no longer creates a missing file.
+* Desktop app: the packaged renderer has a Content-Security-Policy; only Layang's own scripts run. Camera, microphone, location, notification and device permission requests are denied.
+* Desktop app: packaged builds set Electron fuses: `NODE_OPTIONS` and `--inspect` are ignored, and app code only loads from an integrity-checked `app.asar`.
+* Git: status, log, diff and the other Git commands ignore `core.fsmonitor` and `core.pager` from the repository's `.git/config`, so opening a downloaded workspace cannot run a program. Branch names and start points that start with `-` are rejected.
+* Certificate settings: an imported CA trusts a server only when it actually signed the server's certificate chain and the certificate names the requested host. Before, a server could send a copy of the CA next to an unrelated certificate.
+* REST mock: when bound to loopback, browser requests whose `Host` is not loopback are refused with `403` (DNS rebinding). WebSocket mock: upgrades from other websites (`Origin`) or with a non-loopback `Host` are refused. Request bodies over 10 MB get `413`, and WebSocket frames over 16 MB close the connection with code 1009.
+
+### Fixed
+
+* WebSocket mock: paths added or changed while the server runs are accepted without a restart.
+* REST mock: a malformed `%` escape in the URL returns `400` instead of leaving the request hanging; any unexpected error returns `500`.
+* REST mock: a request whose scenario is disabled during its delay gets `503` instead of no response.
+* REST mock: `requestCount` counts every request, each `{{uuid}}` gets its own value, and template values inside JSON strings are escaped. The `504` standby response has CORS headers.
+* Native gRPC mock: a method whose scenarios are all inactive returns `NOT_FOUND` instead of serving the first inactive scenario.
+* CLI `mock:reload`: the new configuration is loaded before the running servers are stopped. If it fails, the old servers keep running.
+
+### Changed
+
+* WebSocket mock: `maxLoops` means the same as for gRPC streams: the number of restarts after the first full pass (`maxLoops: 1` plays the sequence twice, `0` loops until the client disconnects). This now also applies to incoming replies and scheduled sends, which used to count single messages. The editor field is labelled "Max loops".
+* Releases are created as drafts and are only published (and offered to auto-update) after a maintainer publishes them. Release notes come from this changelog, every release has a `SHA256SUMS` file and a build-provenance attestation, and the release runs the same checks as pull requests. Windows builds are signed when a signing certificate is configured.
+* CI: GitHub Actions are pinned to commit SHAs, Node.js is pinned in `.nvmrc`, and Dependabot keeps actions and npm packages up to date.
+* Docs: the gRPC mock guide describes native one-active-scenario selection versus gateway priority fall-through, the v3 scenario folder layout and what the Activity tab shows.
+
 ## 1.2.1
 
 ### Fixed
