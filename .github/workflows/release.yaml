@@ -23,7 +23,7 @@ jobs:
       release_name: ${{ steps.release-meta.outputs.release_name }}
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Read package version
         id: release-meta
         shell: bash
@@ -73,11 +73,11 @@ jobs:
     runs-on: windows-2025
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Setup pnpm
         uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -120,7 +120,7 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 $archive.FullName).Hash.ToLowerInvariant()
           "$hash  $($archive.Name)" | Set-Content -Encoding ascii "$($archive.FullName).sha256"
       - name: Upload Windows release artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: layang-windows-${{ needs.prepare.outputs.version }}
           path: |
@@ -141,11 +141,11 @@ jobs:
     runs-on: ubuntu-24.04 # rpm 4.20+ (newer images) breaks electron-installer-redhat %install paths
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Setup pnpm
         uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -169,7 +169,7 @@ jobs:
           fi
           (cd "$(dirname "${archives[0]}")" && sha256sum "$(basename "${archives[0]}")") > "${archives[0]}.sha256"
       - name: Upload Linux release artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: layang-linux-${{ needs.prepare.outputs.version }}
           path: |
@@ -196,7 +196,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
       - name: Create release tag from package version
@@ -236,7 +236,7 @@ jobs:
             exit 1
           fi
       - name: Download release artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           path: release-artifacts
       - name: Verify standalone CLI assets
@@ -282,7 +282,7 @@ jobs:
       - name: Create draft release
         # Draft until a maintainer publishes it: update.electronjs.org only serves published
         # releases, so users are not offered the update before then.
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
           name: ${{ needs.prepare.outputs.release_name }}

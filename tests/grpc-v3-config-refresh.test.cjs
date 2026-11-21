@@ -39,5 +39,5 @@ test("CI keeps real gRPC E2E and Electron window smoke as explicit quality gates
   assert.match(workflow, /xvfb-run -a pnpm test:electron:smoke/);
   const nightly = read(".github/workflows/soak-v3-repository.yaml");
   assert.match(nightly, /soak-v3-repository\.cjs 10000 1800/);
-  assert.match(nightly, /upload-artifact@[0-9a-f]{40} # v4/);
+  assert.match(nightly, /upload-artifact@[0-9a-f]{40} # v\d+/);
 });
