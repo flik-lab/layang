@@ -40,7 +40,8 @@ function createFakeUtilityProcess() {
 }
 
 function tempWorkspace(t) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "layang-cli-up-")));
+  // realpathSync.native expands Windows 8.3 short names (RUNNER~1), as the main process does.
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "layang-cli-up-")));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, ".layang", "runtime"), { recursive: true });
   return root;
@@ -153,7 +154,7 @@ test("daemon requests are validated strictly before anything is forked", (t) => 
 
 test("a symlinked .layang folder cannot redirect the daemon log", { skip: process.platform === "win32" }, (t) => {
   const other = tempWorkspace(t);
-  const workspace = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "layang-cli-link-")));
+  const workspace = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "layang-cli-link-")));
   t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
   fs.symlinkSync(path.join(other, ".layang"), path.join(workspace, ".layang"));
   const access = createWorkspaceAccess();
