@@ -100,6 +100,12 @@ importers:
       '@electron-forge/maker-zip':
         specifier: 7.11.2
         version: 7.11.2
+      '@electron-forge/plugin-fuses':
+        specifier: 7.11.2
+        version: 7.11.2(@electron/fuses@1.8.0)
+      '@electron/fuses':
+        specifier: 1.8.0
+        version: 1.8.0
       '@radix-ui/react-slot':
         specifier: 1.2.4
         version: 1.2.4(@types/react@19.2.14)(react@19.2.6)
@@ -304,6 +310,12 @@ packages:
     resolution: {integrity: sha512-tIFzEE2+D9NnCAn/rLwSkh8H59IqN+G973JNl7xmCzquO6qa7/veitZOQFGO79Zmmgkc8R/fmiCbh7LIdLS9Tg==}
     engines: {node: '>= 16.4.0'}
 
+  '@electron-forge/plugin-fuses@7.11.2':
+    resolution: {integrity: sha512-Y65MwTmYY0ytwtUy+u9M77rEe8MeMdRR+V2IsjAozIzAVp/38NJXfF7+AqlqE9M/fDENjPuwKnrg2IOj9P1TRg==}
+    engines: {node: '>= 16.4.0'}
+    peerDependencies:
+      '@electron/fuses': ^1.0.0
+
   '@electron-forge/publisher-base@7.11.2':
     resolution: {integrity: sha512-YwK4ZF3+uW7PBEV/ho59NVTriP3fCahskORrztUaFIdG0QP3hqMsfmo01euv98FDsBEW9UXo7/EW8t5jpmYZ0Q==}
     engines: {node: '>= 16.4.0'}
@@ -343,6 +355,10 @@ packages:
   '@electron/asar@3.4.1':
     resolution: {integrity: sha512-i4/rNPRS84t0vSRa2HorerGRXWyF4vThfHesw0dmcWHp+cspK743UanA0suA5Q5y8kzY2y6YKrvbIUn69BCAiA==}
     engines: {node: '>=10.12.0'}
+    hasBin: true
+
+  '@electron/fuses@1.8.0':
+    resolution: {integrity: sha512-zx0EIq78WlY/lBb1uXlziZmDZI4ubcCXIMJ4uGjXzZW0nS19TjSPeXPAjzzTmKQlJUZm0SbmZhPKP7tuQ1SsEw==}
     hasBin: true
 
   '@electron/get@3.1.0':
@@ -3358,6 +3374,15 @@ snapshots:
       - bluebird
       - supports-color
 
+  '@electron-forge/plugin-fuses@7.11.2(@electron/fuses@1.8.0)':
+    dependencies:
+      '@electron-forge/plugin-base': 7.11.2
+      '@electron-forge/shared-types': 7.11.2
+      '@electron/fuses': 1.8.0
+    transitivePeerDependencies:
+      - bluebird
+      - supports-color
+
   '@electron-forge/publisher-base@7.11.2':
     dependencies:
       '@electron-forge/shared-types': 7.11.2
@@ -3450,6 +3475,12 @@ snapshots:
       commander: 5.1.0
       glob: 7.2.3
       minimatch: 3.1.5
+
+  '@electron/fuses@1.8.0':
+    dependencies:
+      chalk: 4.1.2
+      fs-extra: 9.1.0
+      minimist: 1.2.8
 
   '@electron/get@3.1.0':
     dependencies:
