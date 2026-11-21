@@ -10,6 +10,8 @@ const {
 
 let runtime = null;
 const MAX_PENDING_REQUESTS = 1000;
+const DEFAULT_MAX_BODY_BYTES = 10 * 1024 * 1024;
+const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
 function normalizePort(value) {
   const port = Number(value);
@@ -19,8 +21,51 @@ function normalizePort(value) {
 
 function normalizeBindHost(value) {
   const host = typeof value === "string" ? value.trim() : "";
-  if (!host || host === "0.0.0.0") return "127.0.0.1";
+  // Wildcard binds (IPv4 or IPv6) are narrowed to loopback: the mock is a local dev tool.
+  if (!host || host === "0.0.0.0" || host === "::" || host === "[::]") return "127.0.0.1";
   return host;
+}
+
+function normalizeMaxBodyBytes(value) {
+  const numeric = Math.trunc(Number(value));
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : DEFAULT_MAX_BODY_BYTES;
+}
+
+function parseHostHeaderHostname(value) {
+  const host = String(value || "").trim().toLowerCase();
+  if (!host) return "";
+  if (host.startsWith("[")) {
+    const end = host.indexOf("]");
+    return end === -1 ? host : host.slice(0, end + 1);
+  }
+  const colon = host.indexOf(":");
+  return colon === -1 ? host : host.slice(0, colon);
+}
+
+function isLoopbackHostname(hostname) {
+  return LOOPBACK_HOSTNAMES.has(String(hostname || "").toLowerCase());
+}
+
+/**
+ * DNS-rebinding guard: when the mock is bound to loopback, a request sent by a web
+ * browser (it carries `Origin` or `Sec-Fetch-Site`) must name loopback (or the bind
+ * host) in its Host header. Non-browser clients and gateways that rewrite Host are
+ * not affected, and requests without a Host header (HTTP/1.0) are allowed.
+ */
+function isAllowedHostHeader(hostHeader, bindHost, headers) {
+  if (!isLoopbackHostname(bindHost)) return true;
+  if (headers && !headers.origin && !headers["sec-fetch-site"]) return true;
+  const hostname = parseHostHeaderHostname(hostHeader);
+  if (!hostname) return true;
+  return isLoopbackHostname(hostname) || hostname === String(bindHost || "").toLowerCase();
+}
+
+function safeDecodeURIComponent(value) {
+  try {
+    return { ok: true, value: decodeURIComponent(value) };
+  } catch {
+    return { ok: false, value };
+  }
 }
 
 function normalizePairList(value) {
@@ -59,6 +104,7 @@ function normalizeConfig(payload) {
   return {
     port: normalizePort(payload?.port),
     bindHost: normalizeBindHost(payload?.bindHost),
+    maxBodyBytes: normalizeMaxBodyBytes(payload?.maxBodyBytes),
     scenarios: Array.isArray(payload?.scenarios)
       ? payload.scenarios.map(normalizeScenario).sort((left, right) => right.priority - left.priority)
       : [],
@@ -95,7 +141,8 @@ function matchPath(patternInput, pathname) {
   if (!match) return { ok: false, params: {} };
   const params = {};
   for (let index = 0; index < names.length; index += 1) {
-    params[names[index]] = decodeURIComponent(match[index + 1] ?? "");
+    // Never throw on malformed escapes; the handler rejects malformed paths with 400 up front.
+    params[names[index]] = safeDecodeURIComponent(match[index + 1] ?? "").value;
   }
   return { ok: true, params };
 }
@@ -161,14 +208,75 @@ function responseHeaders(headers) {
   return output;
 }
 
-async function readBody(req) {
-  const chunks = [];
-  for await (const chunk of req) chunks.push(Buffer.from(chunk));
-  return Buffer.concat(chunks).toString("utf8");
+class RestMockHttpError extends Error {
+  constructor(status, message, details = {}) {
+    super(message);
+    this.status = status;
+    this.details = details;
+  }
+}
+
+/**
+ * Reads the request body up to maxBytes. On overflow it stops buffering, pauses the stream and
+ * rejects with a 413 RestMockHttpError (the connection is closed after the response).
+ */
+function readBody(req, maxBytes = DEFAULT_MAX_BODY_BYTES) {
+  return new Promise((resolve, reject) => {
+    const declared = Number(req.headers?.["content-length"]);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      req.pause();
+      reject(new RestMockHttpError(413, "Request body too large", { maxBodyBytes: maxBytes }));
+      return;
+    }
+    const chunks = [];
+    let total = 0;
+    let settled = false;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      req.off("data", onData);
+      req.off("end", onEnd);
+      req.off("error", onError);
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const onData = (chunk) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += buffer.length;
+      if (total > maxBytes) {
+        chunks.length = 0;
+        req.pause();
+        finish(new RestMockHttpError(413, "Request body too large", { maxBodyBytes: maxBytes }));
+        return;
+      }
+      chunks.push(buffer);
+    };
+    const onEnd = () => finish(null, Buffer.concat(chunks, total).toString("utf8"));
+    const onError = (error) => finish(error);
+    req.on("data", onData);
+    req.once("end", onEnd);
+    req.once("error", onError);
+  });
+}
+
+function sendJsonError(res, statusCode, payload, extraHeaders = {}) {
+  if (res.headersSent || res.writableEnded || res.destroyed) return false;
+  try {
+    res.writeHead(statusCode, {
+      "content-type": "application/json",
+      "access-control-allow-origin": "*",
+      ...extraHeaders,
+    });
+    res.end(JSON.stringify(payload, null, 2));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function pushRequestLog(entry) {
   if (!runtime) return;
+  runtime.requestCount = (runtime.requestCount || 0) + 1;
   runtime.requestLog = [entry, ...(runtime.requestLog || [])].slice(0, 80);
 }
 
@@ -185,15 +293,19 @@ function writeRestResponse(pending, source = "incoming") {
   runtime?.pending?.delete(pending.id);
   const durationMs = Date.now() - pending.started;
   try {
+    const headers = responseHeaders(scenario.headers);
+    const isJson = Object.entries(headers).some(
+      ([key, value]) => key.toLowerCase() === "content-type" && /json/i.test(value),
+    );
     pending.res.writeHead(scenario.status, {
-      ...responseHeaders(scenario.headers),
+      ...headers,
       "access-control-allow-origin": "*",
       "x-layang-rest-mock": scenario.id,
       "x-layang-rest-mock-trigger": source,
       "x-layang-rest-mock-duration-ms": String(durationMs),
     });
     if (pending.method === "HEAD") pending.res.end();
-    else pending.res.end(renderTemplate(scenario.body, { request: pending.request, pathParams: pending.pathParams }));
+    else pending.res.end(renderTemplate(scenario.body, { request: pending.request, pathParams: pending.pathParams, json: isJson }));
   } catch {
     return false;
   }
@@ -239,7 +351,12 @@ function enqueuePendingRestResponse({ req, res, request, scenario, pathParams, s
     const durationMs = Date.now() - started;
     pushRequestLog({ id: randomId(), method: request.method, path: request.pathname, status: 504, scenarioId: scenario.id, matched: true, durationMs, timestamp: new Date().toISOString(), source: "timeout" });
     try {
-      res.writeHead(504, { "content-type": "application/json", "x-layang-rest-mock": scenario.id, "x-layang-rest-mock-trigger": "timeout" });
+      res.writeHead(504, {
+        "content-type": "application/json",
+        "access-control-allow-origin": "*",
+        "x-layang-rest-mock": scenario.id,
+        "x-layang-rest-mock-trigger": "timeout",
+      });
       res.end(JSON.stringify({ error: "Mock standby timeout", scenarioId: scenario.id, timeoutMs }, null, 2));
     } catch { /* client disconnected */ }
   }, timeoutMs);
@@ -318,17 +435,68 @@ function scheduleScenario(state, scenario, now = Date.now()) {
 }
 
 function createHandler(config) {
+  const handle = createRequestHandler(config);
+  return (req, res) => {
+    Promise.resolve()
+      .then(() => handle(req, res))
+      .catch((error) => {
+        if (error instanceof RestMockHttpError) {
+          const sent = sendJsonError(res, error.status, { error: error.message, ...error.details }, error.status === 413 ? { connection: "close" } : {});
+          pushRequestLog({
+            id: randomId(), method: String(req.method || "GET").toUpperCase(), path: String(req.url || "/").split("?")[0],
+            status: error.status, matched: false, durationMs: 0, timestamp: new Date().toISOString(), source: "rejected",
+          });
+          if (error.status === 413) {
+            if (sent) res.once("finish", () => req.socket?.destroy());
+            else req.socket?.destroy();
+          }
+          return;
+        }
+        console.error("[rest-mock] request handler failed:", error);
+        if (!sendJsonError(res, 500, { error: "REST mock internal error", message: String(error?.message || error) })) {
+          try { res.destroy(); } catch { /* ignore */ }
+        }
+      });
+  };
+}
+
+function respondScenarioUnavailable(pending) {
+  if (pending.done) return;
+  pending.done = true;
+  if (pending.timeout) clearTimeout(pending.timeout);
+  runtime?.pending?.delete(pending.id);
+  const durationMs = Date.now() - pending.started;
+  const sent = sendJsonError(pending.res, 503, {
+    error: "REST mock scenario was disabled before the response was sent",
+    scenarioId: pending.scenario.id,
+  }, { "x-layang-rest-mock": pending.scenario.id, "x-layang-rest-mock-trigger": "scenario-disabled" });
+  if (sent) {
+    pushRequestLog({
+      id: randomId(), method: pending.method, path: pending.request.pathname, status: 503, scenarioId: pending.scenario.id,
+      matched: true, durationMs, timestamp: new Date().toISOString(), source: "scenario-disabled",
+    });
+  }
+}
+
+function createRequestHandler(config) {
   return async (req, res) => {
     const started = Date.now();
     const method = String(req.method || "GET").toUpperCase();
-    const parsed = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+    if (!isAllowedHostHeader(req.headers.host, config.bindHost, req.headers)) {
+      sendJsonError(res, 403, { error: "Host header not allowed for loopback-bound REST mock", host: String(req.headers.host || "") });
+      return;
+    }
+    const parsed = new URL(req.url || "/", "http://localhost");
+    if (!safeDecodeURIComponent(parsed.pathname).ok) {
+      throw new RestMockHttpError(400, "Malformed URL encoding", { path: parsed.pathname });
+    }
     if (method === "OPTIONS") {
       res.writeHead(204, { "access-control-allow-origin": "*", "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,HEAD,OPTIONS", "access-control-allow-headers": "*", "access-control-max-age": "3600" });
       res.end();
       return;
     }
 
-    const body = await readBody(req);
+    const body = await readBody(req, config.maxBodyBytes);
     const request = { method, pathname: parsed.pathname, url: parsed, headers: req.headers, body, bodyJson: parseJsonSafe(body) };
     let matchedParams = {};
     const scenario = config.scenarios.find((item) => {
@@ -348,7 +516,10 @@ function createHandler(config) {
 
     const pending = { id: randomId(), req, res, request, scenario, pathParams: matchedParams, method, started, done: false, timeout: null };
     if (executionAllows(scenario.execution, "incoming")) {
-      const write = () => writeRestResponse(pending, "incoming");
+      // writeRestResponse returns false when the scenario was disabled during the delay: never hang.
+      const write = () => {
+        if (!writeRestResponse(pending, "incoming")) respondScenarioUnavailable(pending);
+      };
       if (scenario.delayMs > 0) {
         const timer = setTimeout(write, scenario.delayMs);
         timer.unref?.();
@@ -359,19 +530,62 @@ function createHandler(config) {
   };
 }
 
+function resolveTemplateToken(token, context) {
+  if (token === "now") return new Date().toISOString();
+  if (token === "timestamp") return String(Date.now());
+  if (token === "uuid") return randomId();
+  let match = /^request\.path\.([\w.-]+)$/.exec(token);
+  if (match) return String(context.pathParams?.[match[1]] ?? "");
+  match = /^request\.query\.([\w.-]+)$/.exec(token);
+  if (match) return String(context.request?.url?.searchParams?.get(match[1]) ?? "");
+  match = /^request\.header\.([\w.-]+)$/.exec(token);
+  if (match) return getHeader(context.request?.headers ?? {}, match[1]);
+  match = /^request\.bodyJson\.([\w.[\]-]+)$/.exec(token);
+  if (match) {
+    const value = getJsonPathValue(context.request?.bodyJson, match[1]);
+    if (value === undefined || value === null) return "";
+    return typeof value === "string" ? value : JSON.stringify(value);
+  }
+  return undefined;
+}
+
+/**
+ * Renders {{...}} placeholders. Every occurrence is resolved separately (each {{uuid}} is fresh).
+ * When context.json is true, values substituted inside a JSON string literal are JSON-escaped so
+ * request-controlled text (quotes, backslashes, control chars) cannot break or inject into the body.
+ * Placeholders outside string literals are inserted raw (e.g. `"n": {{request.query.n}}`).
+ */
 function renderTemplate(text, context = {}) {
-  return String(text)
-    .replaceAll("{{now}}", new Date().toISOString())
-    .replaceAll("{{timestamp}}", String(Date.now()))
-    .replaceAll("{{uuid}}", randomId())
-    .replace(/{{request\.path\.([\w.-]+)}}/g, (_match, key) => context.pathParams?.[key] ?? "")
-    .replace(/{{request\.query\.([\w.-]+)}}/g, (_match, key) => context.request?.url?.searchParams?.get(key) ?? "")
-    .replace(/{{request\.header\.([\w.-]+)}}/g, (_match, key) => getHeader(context.request?.headers ?? {}, key))
-    .replace(/{{request\.bodyJson\.([\w.[\]-]+)}}/g, (_match, path) => {
-      const value = getJsonPathValue(context.request?.bodyJson, path);
-      if (value === undefined || value === null) return "";
-      return typeof value === "string" ? value : JSON.stringify(value);
-    });
+  const source = String(text);
+  const json = Boolean(context.json);
+  let output = "";
+  let inString = false;
+  let escaped = false;
+  let index = 0;
+  while (index < source.length) {
+    if (source.startsWith("{{", index)) {
+      const end = source.indexOf("}}", index + 2);
+      if (end !== -1) {
+        const token = source.slice(index + 2, end);
+        const value = resolveTemplateToken(token, context);
+        if (value !== undefined) {
+          output += json && inString ? JSON.stringify(value).slice(1, -1) : value;
+          index = end + 2;
+          escaped = false;
+          continue;
+        }
+      }
+    }
+    const char = source[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+    } else if (char === '"') inString = true;
+    output += char;
+    index += 1;
+  }
+  return output;
 }
 
 function randomId() {
@@ -388,7 +602,7 @@ async function startRestMockServer(payload = {}) {
     server.listen(config.port, config.bindHost, () => { server.off("error", reject); resolve(); });
   });
   runtime = {
-    server, config, startedAt: new Date().toISOString(), requestLog: [], pending: new Map(),
+    server, config, startedAt: new Date().toISOString(), requestLog: [], requestCount: 0, pending: new Map(),
     scenarioTimers: new Map(), nextScheduleAt: new Map(),
   };
   reconcileScenarioTimers(runtime);
@@ -435,7 +649,7 @@ function status(message) {
     bindHost: runtime.config.bindHost,
     url: `http://${runtime.config.bindHost}:${runtime.config.port}`,
     scenarioCount: runtime.config.scenarios.length,
-    requestCount: runtime.requestLog?.length ?? 0,
+    requestCount: runtime.requestCount ?? 0,
     pendingCount: runtime.pending.size,
     maxPendingRequests: MAX_PENDING_REQUESTS,
     nextScheduleAt: nextSchedule ? new Date(nextSchedule).toISOString() : undefined,
@@ -454,5 +668,8 @@ module.exports = {
   stopRestMockServer,
   sendRestMockResponse,
   getRestMockServerStatus,
-  _internals: { normalizeConfig, scenarioMatches, renderTemplate, getJsonPathValue, releasePendingRestResponses },
+  _internals: {
+    normalizeConfig, scenarioMatches, renderTemplate, getJsonPathValue, releasePendingRestResponses,
+    isAllowedHostHeader, normalizeBindHost, createHandler, DEFAULT_MAX_BODY_BYTES,
+  },
 };

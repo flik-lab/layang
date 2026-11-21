@@ -162,11 +162,11 @@ export function MockExecutionControls({
             <TextField
               size="small"
               type="number"
-              label={inline ? undefined : grpcStream ? "Max" : "Max executions"}
-              title="0 = unlimited"
+              label={inline ? undefined : grpcStream ? "Max" : "Max loops"}
+              title="Restarts after the first full pass (same as gRPC). 0 = unlimited"
               value={value.periodic.maxExecutions}
               disabled={disabled || !value.periodic.loop}
-              inputProps={{ min: 0, step: 1, "aria-label": grpcStream ? "Max" : "Max executions" }}
+              inputProps={{ min: 0, step: 1, "aria-label": grpcStream ? "Max" : "Max loops" }}
               onChange={(event: any) =>
                 patch({ periodic: { ...value.periodic, maxExecutions: Math.max(0, Math.floor(Number(event.target.value) || 0)) } })
               }
