@@ -8,7 +8,8 @@ const test = require("node:test");
 const { createWorkspaceAccess, canonicalizePath } = require("../electron/utils/workspace-access.cjs");
 
 function tempDir(prefix = "layang-access-") {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  // realpathSync.native expands Windows 8.3 short names (RUNNER~1), as workspace-access.cjs does.
+  return fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
 test("an unknown folder is refused, a granted folder and its children are allowed", () => {
