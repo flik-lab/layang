@@ -5,8 +5,15 @@ const { ipcMain } = require("../utils/trusted-ipc-main.cjs");
 const git = require("../../lib/git-client.cjs");
 const gitUx = require("../../lib/git-ux-v2.cjs");
 const { getWorkspaceAccess } = require("../utils/workspace-access.cjs");
+const { HOOK_RUNNING_GIT_CHANNELS } = require("../utils/git-hooks-policy.cjs");
 
-function registerGitIpc() {
+const hookRunningChannels = new Set(HOOK_RUNNING_GIT_CHANNELS);
+
+/**
+ * @param {{ getHooksPolicy?: () => { decide(directoryPath: string): Promise<"run" | "skip" | "cancel"> } }} [options]
+ */
+function registerGitIpc(options = {}) {
+  hooksPolicyGetter = typeof options.getHooksPolicy === "function" ? options.getHooksPolicy : null;
   handle("git:info", async (payload) => git.detectRepository(requireDirectory(payload)));
   handle("git:init", async (payload) => git.initRepository(requireDirectory(payload), payload || {}));
   handle("git:clone", async (payload) =>
@@ -88,10 +95,20 @@ function registerGitIpc() {
   handle("git:commit-suggest", async (payload) => gitUx.suggestCommit(requireDirectory(payload), payload || {}));
 }
 
+let hooksPolicyGetter = null;
+
+/** Runs a hook-capable Git action with hooks on or off, as the user decided for this repository. */
+async function runWithHookDecision(channel, payload, action) {
+  if (!hookRunningChannels.has(channel) || !hooksPolicyGetter) return action(payload);
+  const decision = await hooksPolicyGetter().decide(requireDirectory(payload));
+  if (decision === "cancel") throw new Error("Cancelled: the repository's Git hooks were not approved.");
+  return decision === "skip" ? git.runWithGitHooksDisabled(() => action(payload)) : action(payload);
+}
+
 function handle(channel, action) {
   ipcMain.handle(channel, async (_event, payload) => {
     try {
-      const result = await action(payload || {});
+      const result = await runWithHookDecision(channel, payload || {}, action);
       return { ok: true, result };
     } catch (error) {
       return {

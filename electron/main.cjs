@@ -58,6 +58,8 @@ const { safePathSegment } = require("./utils/path-utils.cjs");
 const { findWorkspaceArgument } = require("./utils/launch-args.cjs");
 const { configureWorkspaceAccess, getWorkspaceAccess } = require("./utils/workspace-access.cjs");
 const { applyPermissionPolicy } = require("./utils/permission-policy.cjs");
+const { configureGitHooksPolicy, getGitHooksPolicy } = require("./utils/git-hooks-policy.cjs");
+const { listRepositoryHooks } = require("../lib/git-client.cjs");
 const { ROOT_FILE: gitWorkspaceRootFile, readGitWorkspace, writeGitWorkspace } = require("../lib/git-workspace.cjs");
 const { exportBundleVersion: WORKSPACE_EXPORT_VERSION } = require("../lib/workspace-versions.json");
 const {
@@ -128,7 +130,7 @@ function startApplication() {
   registerLoggerIpc();
   registerCertificateSettingsIpc();
   registerAppZoomIpc();
-  registerGitIpc();
+  registerGitIpc({ getHooksPolicy: getGitHooksPolicy });
   registerCliIpc();
   let readingProtoZip = false;
   ipcMain.handle("proto:read-zip", async (_event, bytes) => {
@@ -198,6 +200,13 @@ function startApplication() {
       app,
       dialog,
       getWindow: () => getMainWindow() || BrowserWindow.getFocusedWindow() || undefined,
+      logger: mainLogger,
+    });
+    configureGitHooksPolicy({
+      app,
+      dialog,
+      getWindow: () => getMainWindow() || BrowserWindow.getFocusedWindow() || undefined,
+      listHooks: listRepositoryHooks,
       logger: mainLogger,
     });
     workspaceAccess.addRoot(getDefaultWorkspaceDirectory());
