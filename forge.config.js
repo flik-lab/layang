@@ -68,9 +68,10 @@ export default {
   plugins: [
     new FusesPlugin({
       version: FuseVersion.V1,
-      // Kept on: the integrated CLI terminal and the mock/gateway daemons it starts
-      // run bin/layang.cjs with this executable in Node mode (ELECTRON_RUN_AS_NODE).
-      [FuseV1Options.RunAsNode]: true,
+      // Off: ELECTRON_RUN_AS_NODE cannot turn the app binary into a plain Node runtime.
+      // The integrated CLI terminal and its mock/gateway daemons run in Electron utility
+      // processes instead (electron/ipc/cli-ipc.cjs, lib/cli-daemon-launcher.cjs).
+      [FuseV1Options.RunAsNode]: false,
       [FuseV1Options.EnableCookieEncryption]: true,
       // Nobody can inject code through NODE_OPTIONS or attach a debugger with --inspect.
       [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,

@@ -66,6 +66,8 @@ layang ui .
 
 `layang ui <workspace>` launches the optional desktop app with that workspace. Set `LAYANG_GUI_EXECUTABLE` when the GUI is installed in a custom location.
 
+The desktop app's integrated terminal runs the same CLI inside the app (in an Electron utility process; the app executable cannot run as Node). Background mocks and gateways started there with `--daemon` are owned by the app and stop when the app quits. Daemons started by the standalone CLI are ordinary detached processes and keep running until `mock:stop` / `gateway:stop`. `mock:status` and `mock:stop` work the same way for both.
+
 ## Building release artifacts
 
 Run on the target operating system after installing project dependencies:

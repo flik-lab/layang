@@ -134,9 +134,9 @@ const __suiteBaseDir = __dirname;
     });
     
     test("integrated terminal executes official CLI without a shell and streams output", () => {
-      assert.match(cliIpc, /spawn\(process\.execPath/);
-      assert.match(cliIpc, /ELECTRON_RUN_AS_NODE: "1"/);
-      assert.match(cliIpc, /shell: false/);
+      assert.match(cliIpc, /getUtilityProcess\(\)\.fork\(cliEntryPath\(\), args/);
+      assert.match(cliIpc, /LAYANG_INTEGRATED_CLI: "1"/);
+      assert.doesNotMatch(cliIpc, /ELECTRON_RUN_AS_NODE: "1"/);
       assert.match(cliIpc, /cli:event:\$\{runId\}/);
       assert.match(preload, /contextBridge\.exposeInMainWorld\("electronCli"/);
       assert.match(preload, /cli:cancel/);

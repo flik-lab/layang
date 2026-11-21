@@ -15,10 +15,15 @@ test("packaged builds flip the Electron fuses that turn the app into a code-inje
   assert.match(forgeConfig, /\[FuseV1Options\.OnlyLoadAppFromAsar\]: true/);
 });
 
-test("RunAsNode stays on while the integrated CLI runs the app binary in Node mode", () => {
+test("RunAsNode is off and the integrated CLI no longer runs the app binary in Node mode", () => {
+  assert.match(forgeConfig, /\[FuseV1Options\.RunAsNode\]: false/);
   const cliIpc = fs.readFileSync(path.join(__dirname, "..", "electron", "ipc", "cli-ipc.cjs"), "utf8");
-  if (/ELECTRON_RUN_AS_NODE: "1"/.test(cliIpc)) {
-    assert.match(forgeConfig, /\[FuseV1Options\.RunAsNode\]: true/);
+  assert.doesNotMatch(cliIpc, /ELECTRON_RUN_AS_NODE: "1"/);
+  assert.doesNotMatch(cliIpc, /spawn\(process\.execPath/);
+  assert.match(cliIpc, /utilityProcess/);
+  for (const file of ["main.cjs", "preload.cjs"]) {
+    const source = fs.readFileSync(path.join(__dirname, "..", "electron", file), "utf8");
+    assert.doesNotMatch(source, /ELECTRON_RUN_AS_NODE/, `${file} does not rely on RunAsNode`);
   }
 });
 
