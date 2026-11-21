@@ -200,7 +200,7 @@ const __suiteBaseDir = __dirname;
     
     test("only essential release helper scripts remain", () => {
       const scripts = fs.readdirSync(path.join(root, "scripts")).filter((name) => name.endsWith(".cjs")).sort();
-      assert.deepEqual(scripts, ["build-cli-portable.cjs", "build-proto-catalog-worker.cjs", "electron-runtime.cjs", "electron-window-smoke.cjs", "package-cli-release.cjs"]);
+      assert.deepEqual(scripts, ["apply-csp.cjs", "build-cli-portable.cjs", "build-proto-catalog-worker.cjs", "electron-runtime.cjs", "electron-window-smoke.cjs", "package-cli-release.cjs"]);
     });
     
   });

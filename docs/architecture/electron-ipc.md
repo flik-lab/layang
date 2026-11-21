@@ -259,3 +259,24 @@ Each utility-process instance has a generation ID. Utility-owned native gRPC doc
 5. clears renderer response-session references and transport lifecycle counters tied to the old generation.
 
 An explicit application shutdown disables restart, so a delayed child `exit` event cannot resurrect the runtime.
+
+## Workspace folder access
+
+The renderer names folders in many payloads (`directoryPath`, `workspacePath`). The main process does not take those names on trust: `electron/utils/workspace-access.cjs` keeps the list of folders the user granted, and every handler that reads, writes, opens, runs Git or runs the CLI in a folder checks it.
+
+A folder is granted when:
+
+- the user picks it in a native folder dialog;
+- it is the default workspace folder, the saved workspace preference, or a folder passed on the command line (`layang open <dir>`);
+- the user confirms a native "Allow folder access" dialog shown by the main process. This covers paths the renderer remembers, such as the last opened workspace, a typed clone target or a Git workspace copy.
+
+Grants are saved in `userData/trusted-workspaces.json` (at most 100 folders). A path is allowed when it is a granted folder or inside one, after symlinks are resolved, so a link inside a workspace cannot point outside it. A filesystem root is never granted.
+
+`workspace:open-path` also refuses executables and scripts (and, on macOS and Linux, files with an execute bit), and `reveal` no longer creates a missing file.
+
+## Renderer policy
+
+- The packaged renderer has a Content-Security-Policy `<meta>` tag added by `scripts/apply-csp.cjs` after `next build`. Inline scripts are allowed only by hash. `'unsafe-eval'` stays because protobufjs generates codecs at runtime; `connect-src` allows any http(s)/ws(s) endpoint because the renderer is an API client.
+- `electron/utils/permission-policy.cjs` denies every Chromium permission request (camera, microphone, geolocation, notifications, devices) except clipboard writes.
+- Packaged builds set Electron fuses in `forge.config.js`: `NODE_OPTIONS` and `--inspect` are ignored, and the app only loads from an integrity-checked `app.asar`. `RunAsNode` stays enabled because the integrated CLI terminal and the mock and gateway daemons it starts run `bin/layang.cjs` with the app executable in Node mode.
+- Git commands always run with `core.fsmonitor=false`, `core.pager=cat` and `protocol.ext.allow=never`, so a repository's own `.git/config` cannot make status, log or diff run a program. Repository hooks still run on commit, as they do with the git command line.

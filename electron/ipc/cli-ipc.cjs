@@ -6,6 +6,7 @@ const { app } = require("electron");
 const { ipcMain } = require("../utils/trusted-ipc-main.cjs");
 const { normalizeIntegratedCliCommand } = require("../../lib/cli-command-line.cjs");
 const { readMockStatus, stopMockRuntime } = require("../../lib/cli-mock.cjs");
+const { getWorkspaceAccess } = require("../utils/workspace-access.cjs");
 
 const activeRuns = new Map();
 
@@ -23,7 +24,12 @@ function registerCliIpc() {
     }
     if (!args.length) return { ok: false, code: 1, error: "Enter a Layang CLI command." };
 
-    const workspacePath = normalizeWorkspacePath(payload?.workspacePath);
+    let workspacePath;
+    try {
+      workspacePath = normalizeWorkspacePath(payload?.workspacePath);
+    } catch (error) {
+      return { ok: false, code: 1, error: error?.message || String(error) };
+    }
     const cliPath = path.join(app.getAppPath(), "bin", "layang.cjs");
     const child = spawn(process.execPath, [cliPath, ...args], {
       cwd: workspacePath || app.getAppPath(),
@@ -63,9 +69,9 @@ function registerCliIpc() {
 
 
   ipcMain.handle("cli:mock-runtime-status", async (_event, payload) => {
-    const workspacePath = normalizeWorkspacePath(payload?.workspacePath);
-    if (!workspacePath) return { ok: true, running: false, statuses: {} };
     try {
+      const workspacePath = normalizeWorkspacePath(payload?.workspacePath);
+      if (!workspacePath) return { ok: true, running: false, statuses: {} };
       const status = await readMockStatus(workspacePath);
       return { ok: true, ...status };
     } catch (error) {
@@ -74,9 +80,11 @@ function registerCliIpc() {
   });
 
   ipcMain.handle("cli:mock-runtime-stop", async (_event, payload) => {
-    const workspacePath = normalizeWorkspacePath(payload?.workspacePath);
-    if (!workspacePath) return { ok: false, running: false, error: "Open a workspace before stopping CLI mock runtime." };
     try {
+      const workspacePath = normalizeWorkspacePath(payload?.workspacePath);
+      if (!workspacePath) {
+        return { ok: false, running: false, error: "Open a workspace before stopping CLI mock runtime." };
+      }
       const result = await stopMockRuntime(workspacePath);
       return { ok: true, ...result };
     } catch (error) {
@@ -93,9 +101,10 @@ function registerCliIpc() {
   });
 }
 
+/** The CLI runs with the workspace as its working directory, so it must be a granted folder. */
 function normalizeWorkspacePath(value) {
   const text = typeof value === "string" ? value.trim() : "";
-  return text ? path.resolve(text) : "";
+  return text ? getWorkspaceAccess().assertAllowed(text) : "";
 }
 
 function stopActiveCliRuns() {

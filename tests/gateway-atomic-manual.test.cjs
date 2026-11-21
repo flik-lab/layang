@@ -180,6 +180,8 @@ test("file-backed Gateway IPC applies only current saved revisions from its own 
   const { GrpcScenarioRepository } = require("../lib/grpc-scenario-repository.cjs");
   const { registerGrpcScenarioStoreIpc } = require("../electron/ipc/grpc-scenario-store-ipc.cjs");
   const root = await fsP.mkdtemp(path.join(os.tmpdir(), "layang-gateway-atomic-"));
+  // Scenario store IPC only serves folders the user granted access to.
+  require("../electron/utils/workspace-access.cjs").getWorkspaceAccess().addRoot(root);
   try {
     await writeGitWorkspace(root, {project:{collections:[],protoLibraries:[],environments:[],mockServer:{methodFiles:{}}},layout:{},settings:{}});
     const ref = { methodKey:"demo.Service/Stream",scenarioId:"standby" };

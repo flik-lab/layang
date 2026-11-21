@@ -8,7 +8,7 @@
     "predev": "pnpm prepare:proto-worker",
     "prebuild": "pnpm prepare:proto-worker",
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build && node scripts/apply-csp.cjs",
     "start": "next start",
     "desktop": "pnpm prepare:proto-worker && concurrently -k \"pnpm exec next dev --port 12999\" \"wait-on http://localhost:12999/playground && node scripts/electron-runtime.cjs\"",
     "desktop:win": "pnpm run build && electron-forge make --platform=win32 --targets=@electron-forge/maker-squirrel && electron-forge make --platform=win32 --targets=@electron-forge/maker-zip",

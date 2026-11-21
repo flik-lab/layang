@@ -10,6 +10,8 @@ const { registerGrpcScenarioStoreIpc } = require("../electron/ipc/grpc-scenario-
 
 async function workspace(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "layang-v3-incremental-"));
+  // Scenario store IPC only serves folders the user granted access to.
+  require("../electron/utils/workspace-access.cjs").getWorkspaceAccess().addRoot(root);
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   await fs.writeFile(path.join(root, "layang.yml"), "version: 6\nname: Incremental Test\n");
   return { root, repo: new GrpcScenarioRepository(root) };
