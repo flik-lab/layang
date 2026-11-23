@@ -62,7 +62,7 @@ pnpm run build
 
 ## Releases
 
-CI and releases use the exact Node.js version in `.nvmrc` (it is also the runtime bundled into the standalone CLI). Every workflow action is pinned to a commit SHA; Dependabot (`.github/dependabot.yml`) proposes weekly updates for actions and npm packages.
+CI and releases use the exact Node.js version in `.nvmrc` (it is also the runtime bundled into the standalone CLI). Every workflow action is pinned to a commit SHA; Dependabot (`.github/dependabot.yml`) proposes weekly updates for actions and npm packages. Actions updates arrive as one grouped PR, `@electron-forge/*` packages move together in one PR, and Biome gets its own PR because its minors add lint rules. Electron majors are not proposed: upgrade them by hand, then run `pnpm desktop:linux` (or `desktop:win`) and launch the packaged app before merging, because PR CI does not package the app.
 
 The release workflow (`.github/workflows/release.yaml`) runs the same reusable verification as pull requests (`.github/workflows/verify.yaml`), packages Windows and Linux, and then creates a **draft** GitHub Release. Release notes come from the `## <version>` section of `CHANGELOG.md`; the release fails without it. The draft includes a `SHA256SUMS` file over every asset and GitHub build provenance attestations (`gh attestation verify <file> --repo flik-lab/layang`). A maintainer publishes the draft by hand; only then does auto-update offer it. Manual runs (**Run workflow**) are accepted only from `main`.
 
