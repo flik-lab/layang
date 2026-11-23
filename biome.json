@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.6.8/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -33,7 +33,7 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "correctness": {
         "noUnusedVariables": "warn",
         "useExhaustiveDependencies": "off"
@@ -70,10 +70,29 @@
   },
   "overrides": [
     {
-      "includes": ["package.json"],
+      "includes": [
+        "package.json"
+      ],
       "json": {
         "formatter": {
           "expand": "auto"
+        }
+      }
+    },
+    {
+      "includes": [
+        "electron/**",
+        "lib/**/*.cjs",
+        "lib/**/*.mjs",
+        "scripts/**",
+        "bin/**",
+        "tests/**"
+      ],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noComponentHookFactories": "off"
+          }
         }
       }
     }

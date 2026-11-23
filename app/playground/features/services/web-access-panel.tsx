@@ -124,7 +124,7 @@ export function WebAccessPanel({
     }
   }
 
-  function useBrowserUrl() {
+  function handleUseBrowserUrl() {
     handleTargetDraftChange(browserUrl);
     commitTargetDraft(browserUrl);
     setSideSection("collections");
@@ -256,7 +256,7 @@ export function WebAccessPanel({
                 >
                   Copy URL
                 </Button>
-                <Button size="small" variant="contained" onClick={useBrowserUrl}>
+                <Button size="small" variant="contained" onClick={handleUseBrowserUrl}>
                   Use in request
                 </Button>
               </Stack>
