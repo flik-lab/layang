@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+* Desktop app: Electron 45 (was 42), with React 19.3 and updated CodeMirror. Packaged builds are made with Electron Forge 8; the security fuses (`RunAsNode`, `NODE_OPTIONS` and `--inspect` off, `app.asar` integrity on) are verified in the packaged binary.
+* Desktop app: the secure-storage check uses Electron's asynchronous API, and renderer console logging uses the new event format, so Electron 45 logs no deprecation warnings at startup.
+* Development: Biome 2.6 (lints HTML too), and Dependabot groups updates by how they must be tested: one PR for all GitHub Actions, one for all Electron Forge packages, a separate PR for Biome, and no automatic Electron majors.
+
 ## 1.2.2
 
 ### Security

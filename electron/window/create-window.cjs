@@ -84,8 +84,14 @@ function attachRendererDiagnostics(win) {
   win.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
     windowLogger.error("renderer did-fail-load", { errorCode, errorDescription, validatedURL });
   });
-  win.webContents.on("console-message", (_event, level, message, line, sourceId) => {
-    windowLogger.debug("renderer console", { level, message, line, sourceId });
+  // Electron 45+ passes the details on the event; the positional arguments are deprecated.
+  win.webContents.on("console-message", (event) => {
+    windowLogger.debug("renderer console", {
+      level: event?.level,
+      message: event?.message,
+      line: event?.lineNumber,
+      sourceId: event?.sourceId,
+    });
   });
   win.webContents.on("did-finish-load", () => {
     windowLogger.info("renderer did-finish-load", { url: win.webContents.getURL() });

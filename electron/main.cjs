@@ -42,7 +42,7 @@ const { stopRestMockServer } = require("./services/rest-mock-server.cjs");
 const { configureLogger, getLogger, registerProcessErrorHandlers } = require("./utils/logger.cjs");
 const { configureCertificateSettings, shouldAllowCertificateError } = require("./utils/certificate-settings.cjs");
 const { configureAppZoomSettings } = require("./utils/app-zoom-settings.cjs");
-const { configureSecureSecrets } = require("./utils/secure-secrets.cjs");
+const { configureSecureSecrets, refreshSafeStorageAvailability } = require("./utils/secure-secrets.cjs");
 const { configureWebHttpsCertificates } = require("./utils/web-https-certificates.cjs");
 const { createWindow } = require("./window/create-window.cjs");
 const {
@@ -192,6 +192,7 @@ function startApplication() {
     configureLogger({ app, appName: "Layang" });
     configureCertificateSettings({ app });
     configureSecureSecrets({ app });
+    await refreshSafeStorageAvailability().catch(() => undefined);
     configureWebHttpsCertificates({ app });
     configureAppZoomSettings({ app });
     registerProcessErrorHandlers(getLogger("process"));
