@@ -25,8 +25,11 @@
 * Native gRPC mock: a method whose scenarios are all inactive returns `NOT_FOUND` instead of serving the first inactive scenario.
 * CLI `mock:reload`: the new configuration is loaded before the running servers are stopped. If it fails, the old servers keep running.
 * CLI `mock:start --daemon` (Windows): the background mock no longer exits with `EPERM` when `.layang/runtime/mock-runtime.json` is briefly open in another process (for example `mock:status` or an antivirus scan). The state write is retried, a write that still fails is logged instead of stopping the servers, and no `.tmp` file is left behind.
+* Published docs: plain relative links (`tactical-navigation/index.html`) no longer turn into `#`, so every link in the generated gRPC reference works. The gRPC reference and scenario pages get their own centred layout instead of being squeezed into the sidebar column.
 
 ### Changed
+
+* Published docs (`docs:build` static site): redesigned for reading. Body text uses the full text color at 15px, tables and code are larger, light and dark follow the system, the sidebar has a labelled search (`/` to focus), a protocol switch, method badges (`POST`, `gRPC`, `WS`) and a "Specifications" list for the gRPC reference and OpenAPI files, the outline highlights the current section, and phones get a menu button. Rebuild published docs with `docs:build` to pick it up.
 
 * WebSocket mock: `maxLoops` means the same as for gRPC streams: the number of restarts after the first full pass (`maxLoops: 1` plays the sequence twice, `0` loops until the client disconnects). This now also applies to incoming replies and scheduled sends, which used to count single messages. The editor field is labelled "Max loops".
 * Releases are created as drafts and are only published (and offered to auto-update) after a maintainer publishes them. Release notes come from this changelog, every release has a `SHA256SUMS` file and a build-provenance attestation, and the release runs the same checks as pull requests. Windows builds are signed when a signing certificate is configured.
