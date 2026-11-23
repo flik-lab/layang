@@ -120,7 +120,7 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 $archive.FullName).Hash.ToLowerInvariant()
           "$hash  $($archive.Name)" | Set-Content -Encoding ascii "$($archive.FullName).sha256"
       - name: Upload Windows release artifacts
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: layang-windows-${{ needs.prepare.outputs.version }}
           path: |
@@ -169,7 +169,7 @@ jobs:
           fi
           (cd "$(dirname "${archives[0]}")" && sha256sum "$(basename "${archives[0]}")") > "${archives[0]}.sha256"
       - name: Upload Linux release artifacts
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: layang-linux-${{ needs.prepare.outputs.version }}
           path: |
