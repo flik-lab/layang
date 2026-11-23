@@ -1,624 +1,304 @@
 <!doctype html>
 <html lang="en">
- <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Layang - gRPC-first API workbench</title>
-  <meta
-   name="description"
-   content="Layang is a gRPC-first, workspace-based API workbench for testing, mocking, documenting, benchmarking, and automating gRPC, gRPC-Web, WebSocket, and REST APIs."
-  />
-  <meta
-   name="robots"
-   content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1"
-  />
-  <link rel="canonical" href="https://layang.mff.web.id/" />
-  <meta
-   property="og:title"
-   content="Layang - gRPC-first API workbench"
-  />
-  <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://layang.mff.web.id/" />
-  <meta
-   property="og:description"
-   content="Test gRPC, gRPC-Web, WebSocket, and REST APIs from one workspace with local mocks, streaming responses, documentation, benchmarks, and CLI workflows."
-  />
-  <meta
-   property="og:image"
-   content="https://layang.mff.web.id/assets/layang-app-screenshot.png"
-  />
-  <meta name="twitter:card" content="summary_large_image" />
-  <meta
-   name="twitter:title"
-   content="Layang - gRPC-first API workbench"
-  />
-  <meta
-   name="twitter:description"
-   content="Test gRPC, gRPC-Web, WebSocket, and REST APIs from one workspace. Run local mocks and use the same project from the desktop app or CLI."
-  />
-  <meta
-   name="twitter:image"
-   content="https://layang.mff.web.id/assets/layang-app-screenshot.png"
-  />
-  <link rel="icon" href="assets/layang-logo.png" />
-  <link rel="stylesheet" href="assets/styles.css" />
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Layang: gRPC requests you can commit</title>
+  <meta name="description" content="Layang is a desktop app and CLI for gRPC, gRPC-Web, WebSocket and REST. Requests, proto revisions, mocks and docs are YAML files in a workspace folder you keep in Git.">
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <meta name="color-scheme" content="light dark">
+  <link rel="canonical" href="https://layang.mff.web.id/">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://layang.mff.web.id/">
+  <meta property="og:title" content="Layang: gRPC requests you can commit">
+  <meta property="og:description" content="Desktop app and CLI for gRPC, gRPC-Web, WebSocket and REST. Requests and mocks are files in your repo.">
+  <meta property="og:image" content="https://layang.mff.web.id/assets/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Layang: gRPC requests you can commit">
+  <meta name="twitter:description" content="Desktop app and CLI for gRPC, gRPC-Web, WebSocket and REST. Requests and mocks are files in your repo.">
+  <meta name="twitter:image" content="https://layang.mff.web.id/assets/og-image.png">
+  <link rel="icon" href="assets/layang-logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="assets/styles.css">
   <script type="application/ld+json">
-   {
+  {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "Layang",
     "applicationCategory": "DeveloperApplication",
-    "operatingSystem": "Windows, Linux, macOS",
+    "operatingSystem": "Windows, Linux",
+    "softwareVersion": "1.2.2",
     "url": "https://layang.mff.web.id/",
     "downloadUrl": "https://github.com/flik-lab/layang/releases",
-    "image": "https://layang.mff.web.id/assets/layang-app-screenshot.png",
-    "description": "Layang is a gRPC-first, workspace-based API workbench for gRPC, gRPC-Web, WebSocket, and REST.",
-    "softwareVersion": "1.1.6",
-    "author": {
-     "@type": "Organization",
-     "name": "Layang contributors"
-    },
-    "offers": {
-     "@type": "Offer",
-     "price": "0",
-     "priceCurrency": "USD"
-    }
-   }
+    "image": "https://layang.mff.web.id/assets/og-image.png",
+    "description": "Desktop app and CLI for gRPC, gRPC-Web, WebSocket and REST with requests, mocks and docs stored as files in a workspace folder.",
+    "license": "https://opensource.org/licenses/MIT",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+  }
   </script>
- </head>
- <body>
-  <header class="navbar">
-   <div class="container nav-inner">
-    <a class="brand" href="index.html" aria-label="Layang home">
-     <img src="assets/layang-logo.png" alt="Layang logo" />
-     <span>Layang</span>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./" aria-label="Layang home">
+      <img src="assets/layang-logo.png" alt="" width="28" height="28">
+      Layang
     </a>
-
-    <nav class="nav-links" aria-label="Main navigation">
-     <a href="#app">App</a>
-     <a href="#workflow">Workflow</a>
-     <a href="#mocking">Mocking</a>
-     <a href="#web-access">Web Access</a>
-     <a href="#workspace">Workspace</a>
-     <a href="#documentation">Docs</a>
-     <a href="#cli">CLI</a>
+    <nav aria-label="Sections">
+      <a href="#workflow">Workflow</a>
+      <a href="#mocks">Mocks</a>
+      <a href="#workspace">Workspace</a>
+      <a href="#protocols">Protocols</a>
+      <a href="reference/">Example docs</a>
+      <a href="#download">Download</a>
     </nav>
+    <a class="gh" href="https://github.com/flik-lab/layang">GitHub</a>
+  </div>
+</header>
 
-    <div class="nav-actions">
-     <a
-      class="btn star-btn"
-      href="https://github.com/flik-lab/layang"
-      aria-label="Star Layang on GitHub"
-     >
-      <span class="star-icon" aria-hidden="true">&#9733;</span>
-      Star
-      <strong class="star-count" data-github-stars>5</strong>
-     </a>
-     <a
-      class="btn primary"
-      href="https://github.com/flik-lab/layang/releases"
-     >
-      Download
-     </a>
-    </div>
-   </div>
-  </header>
-
-  <main>
-   <section class="hero hero-centered">
-    <div class="container hero-stack">
-     <a
-      class="announcement"
-      href="https://github.com/flik-lab/layang/releases"
-     >
-      <span class="announcement-dot"></span>
-      Layang v1.1.6 is officially released
-      <span aria-hidden="true">-&gt;</span>
-     </a>
-
-     <h1>A gRPC-first API workbench.</h1>
-
-     <p class="hero-lead">
-      Test gRPC, gRPC-Web, WebSocket, and REST APIs from one workspace.
-      Run local mocks, inspect streaming responses, and use the same
-      project from the desktop app or CLI.
-     </p>
-
-     <div class="hero-actions centered-actions">
-      <a
-       class="btn primary large"
-       href="https://github.com/flik-lab/layang/releases"
-      >
-       Download release
-      </a>
-      <a
-       class="btn large star-btn"
-       href="https://github.com/flik-lab/layang"
-       aria-label="Star Layang on GitHub"
-      >
-       <span class="star-icon" aria-hidden="true">&#9733;</span>
-       Star on GitHub
-       <strong class="star-count" data-github-stars>5</strong>
-      </a>
-     </div>
-
-     <div class="install-strip" aria-label="CLI command preview">
-      <span class="terminal-dot red"></span>
-      <span class="terminal-dot yellow"></span>
-      <span class="terminal-dot green"></span>
-      <code>layang run ./workspace --request "Get Track" --env dev</code>
-     </div>
-    </div>
-
-    <div class="container hero-product-wrap" id="app">
-     <figure class="product-shot">
-      <div class="shot-toolbar">
-       <span class="traffic"></span>
-       <span class="traffic"></span>
-       <span class="traffic"></span>
-       <span>Layang Workbench</span>
+<main id="main">
+  <section class="hero">
+    <div class="wrap">
+      <div>
+        <p class="label">Desktop app and CLI for gRPC, gRPC-Web, WebSocket and REST</p>
+        <h1>gRPC requests you can commit.</h1>
+        <p class="lead">Layang keeps requests, proto revisions, mocks and docs as YAML files in a workspace folder. The desktop app and the CLI open the same folder, so the request you debug at your desk is the one CI runs.</p>
+        <div class="actions">
+          <a class="btn primary" href="#download">Download v1.2.2</a>
+          <a class="btn" href="#workflow">See the workflow</a>
+        </div>
+        <p class="label meta-line"><span>Windows and Linux</span><span>MIT licensed</span><span>Works offline</span></p>
       </div>
-      <img
-       src="assets/layang-app-screenshot.png"
-       alt="Layang desktop app showing the API request and schema workbench"
-      />
-     </figure>
-    </div>
-   </section>
 
-   <section id="workflow" class="section section-tight">
-    <div class="container split-heading">
-     <div>
-      <div class="eyebrow">
-       <span class="dot"></span>
-       Core workflow
+      <div class="pair" aria-label="A saved request file and the CLI running it">
+        <div class="file">
+          <div class="pane-head"><b>collections/greeter/say-hello.grpc.yml</b><span>tracked in Git</span></div>
+<pre><span class="k">version:</span> <span class="n">2</span>
+<span class="k">kind:</span> request
+<span class="k">info:</span>
+  <span class="k">name:</span> Say Hello
+  <span class="k">protocol:</span> grpc
+<span class="k">request:</span>
+  <span class="k">url:</span> <span class="s">localhost:50051</span>
+  <span class="k">grpc:</span>
+    <span class="k">method:</span> <span class="s">demo.v1.GreeterService/SayHello</span>
+  <span class="k">body:</span>
+    <span class="k">name:</span> <span class="s">Ayu</span>
+    <span class="k">age:</span> <span class="n">29</span>
+  <span class="k">assertions:</span>
+    <span class="k">grpcStatus:</span> OK</pre>
+        </div>
+        <div class="term">
+          <div class="pane-head"><b>terminal</b><span>same file, no export</span></div>
+<pre><span class="prompt">$</span> layang run ./workspace --request "Say Hello"
+<span class="ok">✓</span> demo.v1.GreeterService/SayHello <span class="dim">(11ms)</span>
+  <span class="ok">✓</span> grpcStatus: <span class="dim">expected 0, received 0</span>
+Done: 1/1 passed, 0 failed.</pre>
+        </div>
       </div>
-      <h2>Requests, schemas, mocks, and responses stay in one project.</h2>
-     </div>
-     <p>
-      Import a Proto, select a method, send a request, inspect the
-      response, and save the work without moving between separate tools.
-     </p>
     </div>
+  </section>
 
-    <div class="container feature-bento">
-     <article class="bento-card bento-large">
-      <h3>Native gRPC and gRPC-Web</h3>
-      <p>
-       Run unary and server-streaming methods with request bodies,
-       metadata, response history, trailers, and assertions.
-      </p>
-      <pre class="code-block mini">
-target: localhost:50051
-method: demo.v1.GreeterService/SayHello
-transport: native-grpc</pre>
-     </article>
-
-     <article class="bento-card">
-      <h3>REST</h3>
-      <p>
-       Build requests with params, headers, auth, body modes, examples,
-       and local mock scenarios.
-      </p>
-     </article>
-
-     <article class="bento-card">
-      <h3>WebSocket</h3>
-      <p>
-       Open ws/wss connections, send payloads, inspect live events, and
-       use local mock responses.
-      </p>
-     </article>
-
-     <article class="bento-card">
-      <h3>Proto schemas</h3>
-      <p>
-       Import `.proto` files and browse services, methods, request
-       messages, response messages, and revisions.
-      </p>
-     </article>
-
-     <article class="bento-card">
-      <h3>Response viewer</h3>
-      <p>
-       Inspect latest JSON, message history, tables, search results, and
-       streaming payloads without losing the current scroll position.
-      </p>
-     </article>
-
-     <article class="bento-card">
-      <h3>Benchmarks</h3>
-      <p>
-       Run latency samples from saved requests and export results for
-       local checks or CI.
-      </p>
-     </article>
+  <section class="block" aria-labelledby="app-title">
+    <div class="wrap">
+      <div class="block-head">
+        <h2 id="app-title">One window for the proto, the call and the stream.</h2>
+        <p>Pick a method from the imported proto, edit the body against its message type, and read responses, metadata and each streamed message as it arrives.</p>
+      </div>
+      <figure class="shot">
+        <picture>
+          <source srcset="assets/app-unary-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="assets/app-unary-light.png" width="2880" height="1800" alt="Layang with the Greeter, Orders and Health collections. SayHello is open with the JSON body {&quot;name&quot;: &quot;Ayu&quot;, &quot;age&quot;: 29} and its response from a local gRPC-Web server.">
+        </picture>
+      </figure>
     </div>
-   </section>
+  </section>
 
-   <section class="section alt">
-    <div class="container split-heading">
-     <div>
-      <div class="eyebrow">
-       <span class="dot"></span>
-       Protocols
+  <section class="block" id="workflow" aria-labelledby="flow-title">
+    <div class="wrap">
+      <div class="block-head">
+        <h2 id="flow-title">From a .proto file to a check in CI.</h2>
+        <p>Each step writes plain files into the workspace. Use the desktop app or the CLI for any of them; both read and write the same files.</p>
       </div>
-      <h2>Use the protocol that matches the service.</h2>
-     </div>
-     <p>
-      REST, WebSocket, native gRPC, and gRPC-Web requests share the same
-      workspace, environments, documentation, and project files.
-     </p>
+      <ol class="steps">
+        <li>
+          <span class="num">1</span>
+          <h3>Import the proto</h3>
+          <p>Layang stores an immutable revision, so a request stays pinned to the schema it was written against.</p>
+          <div class="cmd">layang schema:import ./workspace --file samples/greeter.proto</div>
+        </li>
+        <li>
+          <span class="num">2</span>
+          <h3>Send a request</h3>
+          <p>Unary or server-streaming, over native gRPC or gRPC-Web, with metadata, deadlines and assertions.</p>
+          <div class="cmd">layang run ./workspace --request "Say Hello"</div>
+        </li>
+        <li>
+          <span class="num">3</span>
+          <h3>Mock the method</h3>
+          <p>Each scenario is its own YAML file. Start the mock server locally for the frontend team or for tests.</p>
+          <div class="cmd">layang mock:start ./workspace --protocol grpc</div>
+        </li>
+        <li>
+          <span class="num">4</span>
+          <h3>Commit and check</h3>
+          <p>Review the diff like any other code. CI validates the workspace and runs the saved requests.</p>
+          <div class="cmd">layang validate ./workspace --json</div>
+        </li>
+      </ol>
     </div>
+  </section>
 
-    <div class="container two-column reverse-on-mobile">
-     <figure class="media-card">
-      <img
-       src="assets/layang-app-ws.png"
-       alt="Layang WebSocket request and live event workflow"
-      />
-      <figcaption>
-       WebSocket requests use the same workspace and response workflow
-       as the other supported protocols.
-      </figcaption>
-     </figure>
-
-     <div class="comparison-card">
-      <div class="comparison-row head">
-       <span>Protocol</span>
-       <span>Client</span>
-       <span>Typical use</span>
+  <section class="block" id="mocks" aria-labelledby="mock-title">
+    <div class="wrap split">
+      <div>
+        <div class="block-head stacked">
+          <h2 id="mock-title">A streaming mock is a file you can read.</h2>
+          <p>This scenario answers <code>WatchHello</code> for Ayu with three messages, half a second apart, and plays the list twice. Edit it in the app or in your editor, then apply it to the running server.</p>
+        </div>
+        <div class="notes">
+          <div class="note"><code>input</code><p>Use this scenario only when the request matches: <code>equals</code>, <code>contains</code>, <code>matches</code> (regex), <code>glob</code> or <code>headers</code>.</p></div>
+          <div class="note"><code>intervalMs</code><p>Time between streamed messages. A single response can set its own <code>delayMs</code>.</p></div>
+          <div class="note"><code>maxLoops: 1</code><p>Restarts once after the first full pass, so the list plays twice. <code>0</code> keeps streaming until the client cancels.</p></div>
+          <div class="note"><code>Live Push</code><p>Keep the stream open and send the next saved response by hand while you watch the client.</p></div>
+        </div>
       </div>
-      <div class="comparison-row">
-       <span>Native gRPC</span>
-       <span>Desktop</span>
-       <span>Unary, server-streaming, client-streaming, and bidirectional calls.</span>
+      <div class="stack">
+        <div class="pair">
+          <div class="file">
+            <div class="pane-head"><b>mocks/grpc/scenarios/…/two-passes.scenario.yml</b></div>
+<pre><span class="k">name:</span> Two passes
+<span class="k">enabled:</span> true
+<span class="k">input:</span>
+  <span class="k">contains:</span>
+    <span class="k">name:</span> <span class="s">Ayu</span>
+<span class="k">stream:</span>
+  <span class="k">execution:</span>
+    <span class="k">mode:</span> periodic
+  <span class="k">intervalMs:</span> <span class="n">500</span>
+  <span class="k">loop:</span> true
+  <span class="k">maxLoops:</span> <span class="n">1</span>
+  <span class="k">responses:</span>
+    - <span class="k">data:</span> { <span class="k">message:</span> <span class="s">Hello</span>, <span class="k">sequence:</span> <span class="n">1</span> }
+    - <span class="k">data:</span> { <span class="k">message:</span> <span class="s">Still here</span>, <span class="k">sequence:</span> <span class="n">2</span> }
+    - <span class="k">data:</span> { <span class="k">message:</span> <span class="s">Bye</span>, <span class="k">sequence:</span> <span class="n">3</span> }</pre>
+          </div>
+        </div>
+        <figure class="shot">
+          <img src="assets/app-mock-dark-crop.png" width="2224" height="1520" loading="lazy" alt="The scenario editor in Layang showing a WatchHello scenario with periodic delivery, a 500 ms interval, loop turned on and its YAML.">
+        </figure>
       </div>
-      <div class="comparison-row">
-       <span>gRPC-Web</span>
-       <span>Desktop / browser</span>
-       <span>Unary and server-streaming calls through browser-compatible endpoints.</span>
-      </div>
-      <div class="comparison-row">
-       <span>WebSocket</span>
-       <span>Desktop</span>
-       <span>Live ws/wss connections, messages, events, mocks, and benchmarks.</span>
-      </div>
-      <div class="comparison-row">
-       <span>REST</span>
-       <span>Desktop</span>
-       <span>HTTP requests, examples, docs, auth, and local mock scenarios.</span>
-      </div>
-     </div>
     </div>
-   </section>
+  </section>
 
-   <section id="mocking" class="section">
-    <div class="container split-heading">
-     <div>
-      <div class="eyebrow">
-       <span class="dot"></span>
-       Mocking
+  <section class="block" id="workspace" aria-labelledby="ws-title">
+    <div class="wrap">
+      <div class="block-head">
+        <h2 id="ws-title">What is in the folder.</h2>
+        <p>Everything a teammate needs is tracked. Open tabs, window layout, absolute import paths and the last environment you used stay in <code>.layang/</code>, which the workspace <code>.gitignore</code> excludes, so opening a request never creates a diff.</p>
       </div>
-      <h2>Run local mocks without maintaining another project.</h2>
-     </div>
-     <p>
-      Mock scenarios live with the workspace. Start them from the app,
-      edit saved scenarios, and keep streaming behavior close to the
-      request definitions that use it.
-     </p>
-    </div>
-
-    <div class="container media-grid">
-     <figure class="media-card">
-      <img
-       src="assets/layang-mock-stream.png"
-       alt="Layang gRPC mock streaming editor"
-      />
-      <figcaption>
-       gRPC mock scenarios with response sequences and streaming controls.
-      </figcaption>
-     </figure>
-
-     <div class="workflow-steps">
-      <article>
-       <span>SCENARIO</span>
-       <strong>Per-method scenarios</strong>
-       <p>
-        Keep multiple saved responses for the same RPC method and switch
-        between scenarios when needed.
-       </p>
-      </article>
-
-      <article>
-       <span>STREAM</span>
-       <strong>Scheduled responses</strong>
-       <p>
-        Configure response sequences, intervals, loops, and maximum loop
-        counts for server-streaming methods.
-       </p>
-      </article>
-
-      <article>
-       <span>LIVE</span>
-       <strong>Live Push</strong>
-       <p>
-        Keep a stream open and send saved responses manually without
-        closing the client connection.
-       </p>
-      </article>
-
-      <article>
-       <span>FILES</span>
-       <strong>Workspace-backed</strong>
-       <p>
-        gRPC, REST, and WebSocket mock scenarios stay with the workspace
-        and can be reviewed in Git.
-       </p>
-      </article>
-     </div>
-    </div>
-   </section>
-
-   <section id="web-access" class="section alt">
-    <div class="container split-heading">
-     <div>
-      <div class="eyebrow">
-       <span class="dot"></span>
-       Web Access
+      <div class="tree">
+        <table>
+          <tbody>
+            <tr><td>layang.yml</td><td class="git yes">tracked</td><td>Workspace name and file format versions.</td></tr>
+            <tr><td>collections/</td><td class="git yes">tracked</td><td>One YAML file per request, named by protocol: <code>say-hello.grpc.yml</code>, <code>login.rest.yml</code>, <code>events.websocket.yml</code>.</td></tr>
+            <tr><td>protos/</td><td class="git yes">tracked</td><td>Immutable proto revisions with checksums. Changed sources become a new revision.</td></tr>
+            <tr><td>environments/</td><td class="git yes">tracked</td><td>Targets and variables per environment.</td></tr>
+            <tr><td>mocks/</td><td class="git yes">tracked</td><td>gRPC scenarios, one file each, plus REST and WebSocket mock configuration.</td></tr>
+            <tr><td>docs/</td><td class="git yes">tracked</td><td>Notes you write and the static site <code>layang docs:build</code> generates. <a href="reference/">See an example.</a></td></tr>
+            <tr><td>.layang/</td><td class="git no">ignored</td><td>Machine-local state that should not reach your teammates.</td></tr>
+          </tbody>
+        </table>
       </div>
-      <h2>Expose gRPC services to browser clients.</h2>
-     </div>
-     <p>
-      Web Access provides a gRPC-Web endpoint backed by the local Native
-      gRPC Mock runtime or another configured gRPC target.
-     </p>
     </div>
+  </section>
 
-    <div class="container feature-bento">
-     <article class="bento-card bento-large">
-      <h3>Browser-compatible endpoint</h3>
-      <p>
-       Run gRPC-Web over HTTP or HTTPS. HTTPS uses HTTP/2 and can fall
-       back to HTTP/1.1 when configured.
-      </p>
-      <pre class="code-block mini">
-Browser
-  -> gRPC-Web / HTTPS
-  -> Web Access
-  -> Native gRPC</pre>
-     </article>
-
-     <article class="bento-card">
-      <h3>Independent runtime</h3>
-      <p>
-       Native gRPC and Web Access have separate status and Start/Stop
-       controls.
-      </p>
-     </article>
-
-     <article class="bento-card">
-      <h3>TLS and certificates</h3>
-      <p>
-       Configure HTTPS certificates and trust internal CA certificates
-       for local or lab environments.
-      </p>
-     </article>
-
-     <article class="bento-card">
-      <h3>CORS</h3>
-      <p>
-       Configure browser origins without changing the underlying gRPC
-       service definition.
-      </p>
-     </article>
-
-     <article class="bento-card">
-      <h3>Custom upstream</h3>
-      <p>
-       Route Web Access to the local mock runtime or another gRPC target.
-      </p>
-     </article>
-    </div>
-   </section>
-
-   <section id="workspace" class="section">
-    <div class="container two-column">
-     <div>
-      <div class="eyebrow">
-       <span class="dot"></span>
-       Workspace
+  <section class="block" id="protocols" aria-labelledby="proto-title">
+    <div class="wrap">
+      <div class="block-head">
+        <h2 id="proto-title">What each transport supports.</h2>
+        <p>Listed as it works in v1.2.2, including what the desktop app does not do yet.</p>
       </div>
-      <h2>The workspace is the project.</h2>
-      <p class="section-copy">
-       Requests, Proto revisions, environments, mocks, and documentation
-       are stored as workspace files. The desktop app and CLI read the
-       same project.
-      </p>
-
-      <div class="check-list">
-       <span>Readable project files</span>
-       <span>Git-friendly changes</span>
-       <span>Desktop and CLI use the same workspace</span>
-       <span>Machine-local state stays under `.layang/`</span>
+      <div class="support">
+        <table>
+          <thead>
+            <tr><th scope="col">Transport</th><th scope="col">Desktop app</th><th scope="col">CLI</th><th scope="col">Local mock</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Native gRPC</td><td>Unary and server-streaming</td><td>Unary, server, client and bidirectional streaming</td><td>Unary and server-streaming, with TLS and mTLS</td></tr>
+            <tr><td>gRPC-Web</td><td>Unary and server-streaming</td><td>Unary and server-streaming</td><td>Gateway in front of the mock, or a proxy to a real upstream</td></tr>
+            <tr><td>WebSocket</td><td>Connect, send and watch live events</td><td>Run saved requests</td><td>Push on connect, replies to matching messages, manual send</td></tr>
+            <tr><td>REST</td><td>Requests with params, headers, auth and body</td><td>Run saved requests</td><td>Path, query, header and body matching, with delays</td></tr>
+          </tbody>
+        </table>
       </div>
-     </div>
-
-     <div class="file-tree-card">
-      <div class="file-tree-title">Documents/Layang/Workspace</div>
-      <pre>
-layang.yml
-collections/
-protos/
-environments/
-mocks/
-workspace-schemas/
-docs/
-.layang/</pre>
-     </div>
     </div>
-   </section>
+  </section>
 
-   <section id="documentation" class="section alt">
-    <div class="container two-column reverse-on-mobile">
-     <div>
-      <div class="eyebrow">
-       <span class="dot"></span>
-       Documentation
+  <section class="block" aria-labelledby="ci-title">
+    <div class="wrap split">
+      <div class="block-head stacked">
+        <h2 id="ci-title">The same workspace runs in CI.</h2>
+        <p>The standalone CLI bundles its own Node runtime. Unpack it on a runner, validate the workspace, start the mocks and fail the build when a saved request stops matching its assertions.</p>
       </div>
-      <h2>Generate docs from workspace data.</h2>
-      <p class="section-copy">
-       Build Markdown or HTML documentation from request metadata, Proto
-       definitions, examples, mocks, and saved responses.
-      </p>
-      <p><a href="reference/index.html">Browse the example API reference</a></p>
-
-      <div class="timeline-list">
-       <div>
-        <strong>API reference</strong>
-        <span>Service, method, request, response, and source information.</span>
-       </div>
-       <div>
-        <strong>Examples</strong>
-        <span>Include saved request and response examples where they are useful.</span>
-       </div>
-       <div>
-        <strong>Export</strong>
-        <span>Keep Markdown in the repository or publish generated static documentation.</span>
-       </div>
+      <div class="pair term">
+        <div class="pane-head"><b>.github/workflows/api.yml</b></div>
+<pre><span class="dim">- name: Check API workspace</span>
+  run: |
+    layang validate ./workspace --json
+    layang mock:start ./workspace --protocol grpc --daemon
+    layang run ./workspace --reporter junit --output api.xml
+    layang mock:stop ./workspace</pre>
       </div>
-     </div>
-
-     <figure class="media-card">
-      <img
-       src="assets/layang-app-documentation.png"
-       alt="Layang generated documentation preview"
-      />
-      <figcaption>
-       Documentation preview generated from the current workspace.
-      </figcaption>
-     </figure>
     </div>
-   </section>
+  </section>
 
-   <section id="cli" class="section">
-    <div class="container split-heading">
-     <div>
-      <div class="eyebrow">
-       <span class="dot"></span>
-       CLI
+  <section class="block" id="download" aria-labelledby="dl-title">
+    <div class="wrap">
+      <div class="block-head">
+        <h2 id="dl-title">Download v1.2.2</h2>
+        <p>Builds for Windows and Linux are on GitHub Releases. macOS builds are not published yet.</p>
       </div>
-      <h2>Use the same workspace from the terminal.</h2>
-     </div>
-     <p>
-      Run validation, saved requests, mocks, benchmarks, documentation,
-      and CI checks without exporting the project to another format.
-     </p>
-    </div>
-
-    <div class="container cli-grid">
-     <div class="terminal-card">
-      <div class="terminal-bar">
-       <span class="terminal-dot red"></span>
-       <span class="terminal-dot yellow"></span>
-       <span class="terminal-dot green"></span>
+      <div class="dl">
+        <div>
+          <h3>Windows</h3>
+          <ul><li>LayangSetup.exe</li><li>Portable .zip</li></ul>
+          <p class="muted">The installed app updates itself when a new release is published.</p>
+          <a href="https://github.com/flik-lab/layang/releases/latest">Get the Windows build</a>
+        </div>
+        <div>
+          <h3>Linux</h3>
+          <ul><li>.deb</li><li>.rpm</li><li>Portable .zip</li></ul>
+          <p class="muted">No automatic updates on Linux. Install the newer package to upgrade.</p>
+          <a href="https://github.com/flik-lab/layang/releases/latest">Get the Linux build</a>
+        </div>
+        <div>
+          <h3>CLI only</h3>
+          <ul><li>layang-cli-windows-x64.zip</li><li>layang-cli-linux-x64.tar.gz</li></ul>
+          <p class="muted">For CI runners and servers. Each archive has a <code>.sha256</code> file next to it.</p>
+          <a href="https://github.com/flik-lab/layang/blob/main/CLI_STANDALONE.md">CLI setup guide</a>
+        </div>
       </div>
-<pre>
-layang validate ./workspace --json
-
-layang run ./workspace \
-  --request "Get Track" \
-  --env dev \
-  --reporter junit \
-  --output reports/layang-junit.xml
-
-layang mock:start ./workspace \
-  --protocol all \
-  --daemon
-
-layang benchmark ./workspace \
-  --request "Get Track" \
-  --iterations 50
-
-layang docs:build ./workspace --check
-
-layang ui ./workspace
-</pre>
-     </div>
-
-     <div class="cli-points">
-      <article>
-       <strong>Validate</strong>
-       <span>Check workspace structure, schemas, saved requests, and mock files.</span>
-      </article>
-      <article>
-       <strong>Run</strong>
-       <span>Execute saved requests with environments and CI-friendly exit codes.</span>
-      </article>
-      <article>
-       <strong>Report</strong>
-       <span>Write JSON or JUnit output for local checks and build pipelines.</span>
-      </article>
-     </div>
-    </div>
-   </section>
-
-   <section class="section final-cta">
-    <div class="container final-card">
-     <div>
-      <div class="eyebrow">
-       <span class="dot"></span>
-       Layang 1.1.6
+      <div class="pair term verify">
+        <div class="pane-head"><b>check a CLI download</b></div>
+<pre><span class="prompt">$</span> sha256sum layang-cli-linux-x64.tar.gz
+<span class="dim">compare the hash with the first field of</span> layang-cli-linux-x64.tar.gz.sha256</pre>
       </div>
-      <h2>Download Layang.</h2>
-      <p>
-       Desktop releases are available from GitHub. Standalone CLI
-       packages are available for CLI-only workflows.
-      </p>
-     </div>
-
-     <div class="final-actions">
-      <a
-       class="btn primary large"
-       href="https://github.com/flik-lab/layang/releases"
-      >
-       Download release
-      </a>
-      <a
-       class="btn large star-btn"
-       href="https://github.com/flik-lab/layang"
-       aria-label="Star Layang on GitHub"
-      >
-       <span class="star-icon" aria-hidden="true">&#9733;</span>
-       Star on GitHub
-       <strong class="star-count" data-github-stars>5</strong>
-      </a>
-     </div>
     </div>
-   </section>
-  </main>
+  </section>
+</main>
 
-  <footer class="footer">
-   <div class="container footer-grid">
-    <div>
-     <a class="brand footer-brand" href="index.html">
-      <img src="assets/layang-logo.png" alt="" />
-      <span>Layang</span>
-     </a>
-     <p>gRPC-first API workbench for desktop and CLI workflows.</p>
-    </div>
-
-    <div class="footer-links">
-     <a href="#workflow">Workflow</a>
-     <a href="#mocking">Mocking</a>
-     <a href="#web-access">Web Access</a>
-     <a href="#workspace">Workspace</a>
-     <a href="#documentation">Docs</a>
-     <a href="#cli">CLI</a>
-    </div>
-   </div>
-  </footer>
-
-  <script src="assets/site.js" defer></script>
- </body>
+<footer>
+  <div class="wrap">
+    <span>Layang is MIT licensed. <em>Layang-layang</em> is Indonesian for kite.</span>
+    <span><a href="https://github.com/flik-lab/layang">Source</a> · <a href="https://github.com/flik-lab/layang/blob/main/CHANGELOG.md">Changelog</a> · <a href="https://github.com/flik-lab/layang/issues">Issues</a></span>
+  </div>
+</footer>
+</body>
 </html>

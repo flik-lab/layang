@@ -32,10 +32,12 @@ test("runtime accepts only compiled canonical scenario arrays", () => {
 });
 
 test("CI keeps real gRPC E2E and Electron window smoke as explicit quality gates", () => {
-  const workflow = read(".github/workflows/verify-pr.yaml");
+  // verify-pr.yaml and release.yaml both call the shared gate in verify.yaml.
+  assert.match(read(".github/workflows/verify-pr.yaml"), /uses: \.\/\.github\/workflows\/verify\.yaml/);
+  const workflow = read(".github/workflows/verify.yaml");
   assert.match(workflow, /LAYANG_REQUIRE_RUNTIME_DEPS: '1'/);
   assert.match(workflow, /xvfb-run -a pnpm test:electron:smoke/);
   const nightly = read(".github/workflows/soak-v3-repository.yaml");
   assert.match(nightly, /soak-v3-repository\.cjs 10000 1800/);
-  assert.match(nightly, /upload-artifact@v4/);
+  assert.match(nightly, /upload-artifact@[0-9a-f]{40} # v\d+/);
 });

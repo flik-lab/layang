@@ -4,6 +4,7 @@ const { GrpcScenarioRepository } = require("../../lib/grpc-scenario-repository.c
 const { MAX_INLINE_SCENARIO_BYTES } = require("../../lib/grpc-scenario-limits.cjs");
 const { stringifyYaml } = require("../../lib/workspace-yaml.cjs");
 const path = require("node:path");
+const { getWorkspaceAccess } = require("../utils/workspace-access.cjs");
 const fs = require("node:fs/promises");
 
 /** Narrow IPC boundary; all paths are repository-generated, never renderer-supplied. */
@@ -17,7 +18,7 @@ function registerGrpcScenarioStoreIpc(ipcMain, options = {}) {
     try {
       if (typeof payload?.directoryPath !== "string" || !payload.directoryPath.trim())
         return { ok: false, error: "Missing workspace folder." };
-      const repo = new GrpcScenarioRepository(payload.directoryPath);
+      const repo = new GrpcScenarioRepository(getWorkspaceAccess().assertAllowed(payload.directoryPath));
       return await fn(repo, payload, _event);
     } catch (error) {
       return { ok: false, code: String(error?.code || "SCENARIO_STORE_ERROR"), error: String(error?.message || error) };

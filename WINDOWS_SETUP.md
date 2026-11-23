@@ -92,12 +92,13 @@ pnpm run cli:dist
 
 ## GitHub Release checklist
 
-1. Bump `package.json` version, for example `1.1.3`.
-2. Open **Actions → Release → Run workflow**. The workflow reads `package.json` and creates/publishes tag `v${package.version}` automatically.
+1. Bump `package.json` version, for example `1.1.3`, and add a `## 1.1.3` section to `CHANGELOG.md`. The release fails if that section is missing; it becomes the release notes.
+2. Open **Actions → Release → Run workflow** from the `main` branch (other branches are refused). The workflow reads `package.json` and creates tag `v${package.version}` automatically.
 3. Alternatively, push a SemVer tag manually, for example `v1.1.3`; the workflow validates that the tag matches `package.json`.
-4. Let the release workflow build Windows and Linux desktop packages plus the standalone CLI.
-5. Confirm the GitHub Release contains the Windows installer/portable archive, Linux packages, and both CLI archives with SHA-256 files.
-6. Tell normal Windows users to install from `LayangSetup.exe`; CLI-only users can use the standalone CLI archive.
+4. Let the release workflow run the same verification as pull requests, then build Windows and Linux desktop packages plus the standalone CLI.
+5. Approve the `release` environment deployment when asked. The workflow creates a **draft** GitHub Release with every asset, a `SHA256SUMS` file covering all of them, and build provenance attestations.
+6. Confirm the draft contains the Windows installer/portable archive, Linux packages, both CLI archives with SHA-256 files, and `SHA256SUMS`, then click **Publish release**. Auto-update (update.electronjs.org) only offers published releases, so users get the update only after this step.
+7. Tell normal Windows users to install from `LayangSetup.exe`; CLI-only users can use the standalone CLI archive.
 
 ## Local update testing notes
 

@@ -2,10 +2,24 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { FuseV1Options, FuseVersion } from "@electron/fuses";
+import { FusesPlugin } from "@electron-forge/plugin-fuses";
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const windowsAppUserModelId = "com.squirrel.Layang.layang";
 const windowsUpgradeCode = "1dd84257-e27c-4a72-abcb-12c8f88ecf42";
+
+// Authenticode signing is opt-in: the release workflow decodes the certificate from
+// secrets into WINDOWS_CERTIFICATE_FILE. Without it the Windows build stays unsigned.
+const windowsCertificateFile = process.env.WINDOWS_CERTIFICATE_FILE || "";
+const windowsSign =
+  windowsCertificateFile && fs.existsSync(windowsCertificateFile)
+    ? {
+        certificateFile: windowsCertificateFile,
+        certificatePassword: process.env.WINDOWS_CERTIFICATE_PASSWORD || "",
+        timestampServer: process.env.WINDOWS_TIMESTAMP_SERVER || "http://timestamp.digicert.com",
+      }
+    : undefined;
 
 function ensureElectronWinstaller7z() {
   const vendorDir = path.join(rootDir, "node_modules", "electron-winstaller", "vendor");
@@ -29,6 +43,7 @@ export default {
     appCategoryType: "public.app-category.developer-tools",
     icon: path.join(rootDir, "electron", "assets", "icon"),
     asar: true,
+    ...(windowsSign ? { windowsSign } : {}),
     extraResource: [path.join(rootDir, "resources", "helpers")],
     win32metadata: {
       CompanyName: "Flik Lab",
@@ -50,6 +65,22 @@ export default {
     ],
   },
   rebuildConfig: {},
+  plugins: [
+    new FusesPlugin({
+      version: FuseVersion.V1,
+      // Off: ELECTRON_RUN_AS_NODE cannot turn the app binary into a plain Node runtime.
+      // The integrated CLI terminal and its mock/gateway daemons run in Electron utility
+      // processes instead (electron/ipc/cli-ipc.cjs, lib/cli-daemon-launcher.cjs).
+      [FuseV1Options.RunAsNode]: false,
+      [FuseV1Options.EnableCookieEncryption]: true,
+      // Nobody can inject code through NODE_OPTIONS or attach a debugger with --inspect.
+      [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
+      [FuseV1Options.EnableNodeCliInspectArguments]: false,
+      // The app code must come from the packaged, integrity-checked app.asar.
+      [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
+      [FuseV1Options.OnlyLoadAppFromAsar]: true,
+    }),
+  ],
   outDir: "dist",
   hooks: {
     preMake: async () => {
@@ -89,6 +120,7 @@ export default {
         setupExe: "LayangSetup.exe",
         setupIcon: path.join(rootDir, "electron", "assets", "icon.ico"),
         shortcutName: "Layang",
+        ...(windowsSign ? { windowsSign } : {}),
       },
     },
     {

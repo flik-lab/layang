@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.2.2
+
+### Security
+
+* Desktop app: the main process only works in folders you granted: one picked in a folder dialog, the default or saved workspace, a folder passed on the command line, or one you confirm in a new "Allow folder access" dialog. Workspace, docs, Git, CLI and gRPC scenario requests for any other folder are refused, so a compromised renderer can no longer write to, open or run Git or the CLI in an arbitrary folder. The first time you reopen an older workspace that is not your saved workspace, Layang asks once.
+* Desktop app: "Open" for workspace paths refuses executables and scripts, and "Reveal" no longer creates a missing file.
+* Desktop app: the packaged renderer has a Content-Security-Policy; only Layang's own scripts run. Camera, microphone, location, notification and device permission requests are denied.
+* Desktop app: packaged builds set Electron fuses: `NODE_OPTIONS` and `--inspect` are ignored, and app code only loads from an integrity-checked `app.asar`.
+* Git: status, log, diff and the other Git commands ignore `core.fsmonitor` and `core.pager` from the repository's `.git/config`, so opening a downloaded workspace cannot run a program. Branch names and start points that start with `-` are rejected.
+* Certificate settings: an imported CA trusts a server only when it actually signed the server's certificate chain and the certificate names the requested host. Before, a server could send a copy of the CA next to an unrelated certificate.
+* Desktop app: the renderer Content-Security-Policy no longer allows `eval`. gRPC-Web request encoding runs in a worker, and request checks after a proto update use a validator that does not generate code.
+* Desktop app: the `RunAsNode` Electron fuse is off, so `ELECTRON_RUN_AS_NODE` can no longer turn the app into a Node runtime. The in-app CLI terminal runs in an Electron utility process. Background mocks and gateways started there (`--daemon`) now stop when the app quits; the standalone CLI is unchanged.
+* Git: the first time a commit, push, pull, merge, branch switch or discard would run a repository's Git hooks, the desktop app asks whether to run them. The answer is remembered per repository and asked again when the hooks change.
+* Local HTTPS (Linux, OpenSSL): the generated local CA can only issue certificates for the host names you set up, and cannot create other CAs. An older CA is replaced and its key deleted.
+* REST mock: when bound to loopback, browser requests whose `Host` is not loopback are refused with `403` (DNS rebinding). WebSocket mock: upgrades from other websites (`Origin`) or with a non-loopback `Host` are refused. Request bodies over 10 MB get `413`, and WebSocket frames over 16 MB close the connection with code 1009.
+
+### Fixed
+
+* WebSocket mock: paths added or changed while the server runs are accepted without a restart.
+* REST mock: a malformed `%` escape in the URL returns `400` instead of leaving the request hanging; any unexpected error returns `500`.
+* REST mock: a request whose scenario is disabled during its delay gets `503` instead of no response.
+* REST mock: `requestCount` counts every request, each `{{uuid}}` gets its own value, and template values inside JSON strings are escaped. The `504` standby response has CORS headers.
+* Native gRPC mock: a method whose scenarios are all inactive returns `NOT_FOUND` instead of serving the first inactive scenario.
+* CLI `mock:reload`: the new configuration is loaded before the running servers are stopped. If it fails, the old servers keep running.
+* CLI `mock:start --daemon` (Windows): the background mock no longer exits with `EPERM` when `.layang/runtime/mock-runtime.json` is briefly open in another process (for example `mock:status` or an antivirus scan). The state write is retried, a write that still fails is logged instead of stopping the servers, and no `.tmp` file is left behind.
+* Published docs: plain relative links (`tactical-navigation/index.html`) no longer turn into `#`, so every link in the generated gRPC reference works. The gRPC reference and scenario pages get their own centred layout instead of being squeezed into the sidebar column.
+
+### Changed
+
+* Published docs (`docs:build` static site): redesigned for reading. Body text uses the full text color at 15px, tables and code are larger, light and dark follow the system, the sidebar has a labelled search (`/` to focus), a protocol switch, method badges (`POST`, `gRPC`, `WS`) and a "Specifications" list for the gRPC reference and OpenAPI files, the outline highlights the current section, and phones get a menu button. Rebuild published docs with `docs:build` to pick it up.
+
+* WebSocket mock: `maxLoops` means the same as for gRPC streams: the number of restarts after the first full pass (`maxLoops: 1` plays the sequence twice, `0` loops until the client disconnects). This now also applies to incoming replies and scheduled sends, which used to count single messages. The editor field is labelled "Max loops".
+* Releases are created as drafts and are only published (and offered to auto-update) after a maintainer publishes them. Release notes come from this changelog, every release has a `SHA256SUMS` file and a build-provenance attestation, and the release runs the same checks as pull requests. Windows builds are signed when a signing certificate is configured.
+* gRPC gateway: the editor and `gateway:start` warn when the gateway listens on an address other devices can reach.
+* CI: GitHub Actions are pinned to commit SHAs, Node.js is pinned in `.nvmrc`, and Dependabot keeps actions and npm packages up to date.
+* Docs: the gRPC mock guide describes native one-active-scenario selection versus gateway priority fall-through, the v3 scenario folder layout and what the Activity tab shows.
+
 ## 1.2.1
 
 ### Fixed

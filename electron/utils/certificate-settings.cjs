@@ -146,11 +146,85 @@ function shouldAllowCertificateError(certificate, context = {}) {
   const hasLeafMatch = certificateBodies.some((body) => trustedPemBodies.includes(body));
   if (hasLeafMatch) return { allow: true, reason: "imported-certificate-match" };
 
-  const chainBodies = certificateChainToPemBodies(certificate);
-  const hasChainMatch = chainBodies.some((body) => trustedPemBodies.includes(body));
-  return hasChainMatch
+  // An imported CA only counts when it really signed this chain: a server can send
+  // any extra certificate (including a copy of the trusted CA) along with its own.
+  const chainResult = verifyChainToTrustedCa(certificate, trustedPemBodies, hostnameFromUrl(targetUrl));
+  return chainResult.ok
     ? { allow: true, reason: "imported-certificate-chain-match" }
-    : { allow: false, reason: "default-deny" };
+    : { allow: false, reason: chainResult.reason || "default-deny" };
+}
+
+function hostnameFromUrl(targetUrl) {
+  if (!targetUrl) return "";
+  try {
+    return new URL(targetUrl).hostname.replace(/^\[|\]$/g, "");
+  } catch {
+    return "";
+  }
+}
+
+function toX509(certificate) {
+  for (const pem of certificateToPemBodies(certificate)) {
+    try {
+      return new crypto.X509Certificate(`-----BEGIN CERTIFICATE-----\n${pem}\n-----END CERTIFICATE-----\n`);
+    } catch {
+      // Try the next representation Electron provided.
+    }
+  }
+  return null;
+}
+
+function certificateChainList(certificate) {
+  const chain = [];
+  const visited = new Set();
+  let current = certificate;
+  for (let depth = 0; depth < 16 && current && typeof current === "object"; depth += 1) {
+    if (visited.has(current)) break;
+    visited.add(current);
+    chain.push(current);
+    const issuer = current.issuerCert;
+    if (!issuer || issuer === current) break;
+    current = issuer;
+  }
+  return chain;
+}
+
+/**
+ * Walks leaf -> issuer and accepts only when every link is signed by the next
+ * certificate, the chain reaches an imported CA, and the leaf names the host.
+ */
+function verifyChainToTrustedCa(certificate, trustedPemBodies, hostname) {
+  const chain = certificateChainList(certificate);
+  if (chain.length < 2) return { ok: false, reason: "default-deny" };
+  const parsed = chain.map(toX509);
+  if (parsed.some((item) => !item)) return { ok: false, reason: "unparseable-certificate" };
+
+  const now = Date.now();
+  for (let index = 0; index < parsed.length; index += 1) {
+    const current = parsed[index];
+    if (index > 0) {
+      const child = parsed[index - 1];
+      if (!child.checkIssued(current) || !child.verify(current.publicKey)) {
+        return { ok: false, reason: "chain-signature-mismatch" };
+      }
+      if (!current.ca) return { ok: false, reason: "issuer-not-ca" };
+    }
+    const validFrom = Date.parse(current.validFrom);
+    const validTo = Date.parse(current.validTo);
+    if ((Number.isFinite(validFrom) && now < validFrom) || (Number.isFinite(validTo) && now > validTo)) {
+      return { ok: false, reason: "certificate-expired-or-not-yet-valid" };
+    }
+    if (index > 0 && certificateToPemBodies(chain[index]).some((body) => trustedPemBodies.includes(body))) {
+      if (hostname) {
+        const leaf = parsed[0];
+        const isIp = /^[0-9.]+$/.test(hostname) || hostname.includes(":");
+        const matches = isIp ? leaf.checkIP(hostname) : leaf.checkHost(hostname);
+        if (!matches) return { ok: false, reason: "hostname-mismatch" };
+      }
+      return { ok: true };
+    }
+  }
+  return { ok: false, reason: "default-deny" };
 }
 
 function getNodeTlsRuntimeEnvironment() {
@@ -311,21 +385,6 @@ function certificateToPemBodies(certificate) {
     if (Buffer.isBuffer(value)) candidates.push(derBufferToPem(value));
   }
   return candidates.flatMap(extractPemBodies);
-}
-
-function certificateChainToPemBodies(certificate) {
-  const bodies = [];
-  const visited = new Set();
-  let current = certificate;
-  for (let depth = 0; depth < 16 && current && typeof current === "object"; depth += 1) {
-    if (visited.has(current)) break;
-    visited.add(current);
-    bodies.push(...certificateToPemBodies(current));
-    const issuer = current.issuerCert;
-    if (!issuer || issuer === current) break;
-    current = issuer;
-  }
-  return [...new Set(bodies)];
 }
 
 function derBufferToPem(buffer) {
