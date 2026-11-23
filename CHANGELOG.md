@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.2
 
 ### Security
 
@@ -24,6 +24,7 @@
 * REST mock: `requestCount` counts every request, each `{{uuid}}` gets its own value, and template values inside JSON strings are escaped. The `504` standby response has CORS headers.
 * Native gRPC mock: a method whose scenarios are all inactive returns `NOT_FOUND` instead of serving the first inactive scenario.
 * CLI `mock:reload`: the new configuration is loaded before the running servers are stopped. If it fails, the old servers keep running.
+* CLI `mock:start --daemon` (Windows): the background mock no longer exits with `EPERM` when `.layang/runtime/mock-runtime.json` is briefly open in another process (for example `mock:status` or an antivirus scan). The state write is retried, a write that still fails is logged instead of stopping the servers, and no `.tmp` file is left behind.
 
 ### Changed
 

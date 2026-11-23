@@ -5,7 +5,7 @@
 # Layang
 
 [![Website](https://img.shields.io/badge/website-layang.mff.web.id-blue)](https://layang.mff.web.id/)
-[![Source version](https://img.shields.io/badge/source%20version-1.2.1-blue)](./package.json)
+[![Source version](https://img.shields.io/badge/source%20version-1.2.2-blue)](./package.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Layang is a desktop API workbench for REST, WebSocket, gRPC, and gRPC-Web. It uses workspace folders as the source of truth, so the same requests, schemas, mocks, environments, and documentation can be used from both the desktop app and CLI.
@@ -45,6 +45,13 @@ The gRPC service workspace groups:
 * Activity
 
 Request-specific examples and documentation stay with the request instead of being managed from a separate global screen.
+
+## What's new in 1.2.2
+
+* The desktop app only works in workspace folders you granted, asks before running a repository's Git hooks, and ships with a Content-Security-Policy and locked-down Electron fuses.
+* Opening a downloaded workspace can no longer run programs through its Git config, and an imported CA is trusted only for the hosts it actually signed.
+* Mock servers: no more hanging requests, WebSocket `maxLoops` behaves like gRPC streams, and loopback mocks refuse DNS-rebinding requests.
+* The gateway warns when it listens beyond loopback, and the CLI background mock no longer exits on a Windows file lock.
 
 ## What's new in 1.2.1
 
