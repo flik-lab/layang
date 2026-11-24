@@ -38,6 +38,11 @@ jobs:
           LAYANG_REQUIRE_RUNTIME_DEPS: '1'
       - name: Build renderer
         run: pnpm build
+      - name: Load the Windows packaging makers
+        # PR CI does not package the app. Loading the makers catches a broken install
+        # layout (for example a missing transitive module) before a release does.
+        if: runner.os == 'Windows'
+        run: node -e "require('electron-winstaller'); require('@electron-forge/maker-squirrel'); require('@electron-forge/maker-zip'); console.log('Windows makers load')"
       - name: Verify published documentation and REST OpenAPI
         if: runner.os == 'Linux'
         run: |
