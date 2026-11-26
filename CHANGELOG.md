@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+* New scenario templates: **Example from proto** (response fields generated from the schema), **Stream, 3 responses**, **Manual push**, **Match a request field**, **Error status**, and **Blank**, with a YAML preview. New scenarios used to start as an empty `data: {}`.
+* Mocking help: a **Help** drawer beside the workspace (quick start, templates, file format, matching, streaming, Web Access, troubleshooting) and a [quick start guide](docs/guides/mock-quickstart.md).
+* Scenario editor: **Request matcher** writes an `input` block (`contains`, `equals`, `matches`, `glob`, `headers`, `or`, `any`) filled with values from a request example built from the proto, and **Copy request example** copies that JSON. **Help → Matching requests** lists every matcher with a copyable snippet.
+* gRPC mocking home: a getting-started checklist for new workspaces, and runtime cards with copy-address buttons.
+
+### Changed
+
+* Web Access settings live in one place, **Mock settings → Web Access**. The separate Settings tab in the Web Access panel is gone, and both Settings buttons on the gRPC home open the same dialog. Switching between HTTP and HTTPS no longer changes the port; the dialog suggests 8443 instead.
+* **Apply Native** is now **Activate**, with a **Live** / **Not live** status and a tooltip. The scenario menu says **Activate for Web Access**, **Send now via Web Access**, and **Activate and send via Web Access** instead of "Apply Gateway", "Gateway Manual Send", and "Gateway Apply + Send". Status messages no longer mention runtime config or gateway validation.
+* Mocking dropdowns follow the app theme. Their option lists were white with pale text on Windows.
+* Manual Send: one control picks the response. Above 100 responses it becomes **Single response** plus a number field, and a hint says why **Send now** is unavailable.
+
 ## 1.2.1
 
 ### Fixed

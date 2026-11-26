@@ -3,7 +3,10 @@
 import { useState, type ReactNode } from "react";
 import { Box, Button, Chip, Stack, Switch, TextField, Typography } from "@/components/shadcn/compat";
 import { PlayArrow } from "@/components/shadcn/icons";
+import { Select } from "@/components/ui/select";
 import type { MockExecutionConfig } from "../../../shared/workbench-types";
+
+const MAX_LISTED_RESPONSES = 100;
 
 type Store = NonNullable<Window["electronMockScenarioStore"]>;
 export type ScenarioDeliverySettings = Parameters<Store["saveExecution"]>[2];
@@ -37,20 +40,24 @@ export function ScenarioDeliveryControls({ execution, scenarioToolbar, runtimeAc
   const valid = mode !== "scheduled" && Number.isSafeInteger(intervalMs) && intervalMs > 0 &&
     intervalMs <= 86_400_000 && count.trim() !== "" && Number.isSafeInteger(maxExecutions) && maxExecutions >= 0;
   const canSend = responseCount > 0 && applied && !changed && !disabled;
+  const manyResponses = responseCount > MAX_LISTED_RESPONSES;
+  const sendHint = !applied ? "Apply the scenario to enable sending."
+    : changed ? "Save delivery settings first."
+    : streamCount === 0 ? "No open streams yet. Call this method from a client first." : "";
   const row = { px: 1.25, overflowX: "auto", overflowY: "hidden", borderBottom: "1px solid var(--border-strong)", "& > *": { flexShrink: 0 } };
   return (
     <Stack>
         <Stack direction="row" spacing={0.65} alignItems="center" sx={{ ...row, minHeight: 48 }}>
           {scenarioToolbar}
           <Box sx={{ width: 1, height: 20, borderLeft: "1px solid var(--border-strong)" }} />
-            <select className="shadcn-input" aria-label="Mock execution mode" value={mode} disabled={disabled}
+            <Select containerClassName="w-[130px]" aria-label="Mock execution mode" value={mode} disabled={disabled}
               onChange={event => setMode(event.target.value as MockExecutionConfig["mode"])}>
               <option value="incoming">On request</option>
               <option value="standby">Standby</option>
               <option value="periodic">Periodic</option>
               <option value="hybrid">Hybrid</option>
               {initialMode === "scheduled" && <option value="scheduled">Scheduled</option>}
-            </select>
+            </Select>
           {periodic && <>
             <Typography variant="caption" color="text.secondary">Interval</Typography>
             <TextField size="small" type="number" value={interval} disabled={disabled} sx={{ width: 90 }}
@@ -71,19 +78,23 @@ export function ScenarioDeliveryControls({ execution, scenarioToolbar, runtimeAc
         </Stack>
         {execution?.manual && responseCount > 0 && <Stack direction="row" spacing={0.65} alignItems="center" sx={{ ...row, minHeight: 44 }} aria-label="Manual Send">
           <Typography variant="caption">Send</Typography>
-          <select className="shadcn-input" style={{ width: 150 }} aria-label="Manual response" value={responseSelection}
-            disabled={disabled || responseCount === 0} onChange={event => onResponseSelection(event.target.value)}>
+          <Select containerClassName="w-[170px]" aria-label="Manual response" value={manyResponses && responseSelection !== "all" ? "single" : responseSelection}
+            disabled={disabled} onChange={event => onResponseSelection(event.target.value === "single" ? "0" : event.target.value)}>
             {responseCount > 1 && <option value="all">All responses</option>}
-            {Array.from({ length: Math.min(responseCount, 100) }, (_, index) => String(index)).map(value =>
-              <option key={value} value={value}>Response #{Number(value) + 1}</option>)}
-            {Number(responseSelection) >= 100 && <option value={responseSelection}>Response #{Number(responseSelection) + 1}</option>}
-          </select>
-          {responseCount > 100 && responseSelection !== "all" && <TextField size="small" type="number" label="Response number"
-            value={Number(responseSelection) + 1} inputProps={{ min: 1, max: responseCount }} disabled={disabled}
-            onChange={(event: { target: { value: string } }) => onResponseSelection(String(Math.max(0, Math.min(responseCount - 1, Number(event.target.value) - 1))))} />}
-          <Button size="small" variant="contained" startIcon={<PlayArrow sx={{ fontSize: 15 }} />} disabled={!canSend} onClick={onSend}>Send Now</Button>
+            {manyResponses
+              ? <option value="single">Single response</option>
+              : Array.from({ length: responseCount }, (_, index) => String(index)).map(value => <option key={value} value={value}>Response {Number(value) + 1}</option>)}
+          </Select>
+          {manyResponses && responseSelection !== "all" && <>
+            <TextField size="small" type="number" sx={{ width: 90 }} value={String(Number(responseSelection) + 1)} disabled={disabled}
+              inputProps={{ min: 1, max: responseCount, "aria-label": "Response number" }}
+              onChange={(event: { target: { value: string } }) => onResponseSelection(String(Math.max(0, Math.min(responseCount - 1, (Number(event.target.value) || 1) - 1))))} />
+            <Typography variant="caption" color="text.secondary">of {responseCount}</Typography>
+          </>}
+          <Button size="small" variant="contained" startIcon={<PlayArrow sx={{ fontSize: 15 }} />} disabled={!canSend} onClick={onSend}>Send now</Button>
           <Chip size="small" variant="outlined" color={streamCount > 0 ? "success" : "default"}
-            label={`${streamCount} ${streamCount === 1 ? "stream" : "streams"}`} />
+            label={`${streamCount} ${streamCount === 1 ? "stream" : "streams"} open`} />
+          {sendHint && <Typography variant="caption" color="text.secondary">{sendHint}</Typography>}
         </Stack>}
     </Stack>
   );

@@ -31,7 +31,7 @@ const __suiteBaseDir = __dirname;
       assert.match(mockingSidebar, /serviceProtocol === "grpc-mock" \|\| props\.serviceProtocol === "web-access"|props\.serviceProtocol === "grpc-mock" \|\| props\.serviceProtocol === "web-access"/);
     
       assert.match(services, /\{ value: "web-access", label: "Web Access" \}/);
-      assert.match(services, /<WebAccessPanel ctx=\{ctx\} requestedSection=\{webAccessSectionRequest\} \/>/);
+      assert.match(services, /<WebAccessPanel ctx=\{ctx\} onOpenSettings=\{\(\) => openSettings\("web-server"\)\} \/>/);
       assert.doesNotMatch(services, /function WebAccessWorkspace/);
     });
     
@@ -67,11 +67,6 @@ const __suiteBaseDir = __dirname;
     
       assert.match(services, /const webAccessPageSx = \{[\s\S]*?maxWidth: 960[\s\S]*?mx: "auto"/);
       assert.match(services, /px: \{ xs: 0\.75, sm: 1\.25, lg: 1\.75 \}/);
-      assert.match(services, /function WebAccessSettingsSection/);
-      assert.match(services, /title="Browser listener"/);
-      assert.match(services, /title="gRPC server"/);
-      assert.match(services, /title="Browser support"/);
-      assert.match(services, /Separate multiple origins with commas\./);
     
       assert.match(security, /p: \{ xs: 1\.15, sm: 1\.5 \}/);
       assert.match(security, /bgcolor: "action\.hover"/);
@@ -80,9 +75,9 @@ const __suiteBaseDir = __dirname;
     
     
     test("Web Access protocol changes do not silently rewrite the user port", () => {
-      const services = read("app/playground/features/services/web-access-panel.tsx");
-      const protocolBlock = services.slice(services.indexOf('inputProps={{ "aria-label": "Browser protocol" }}'), services.indexOf('title="HTTPS certificate"'));
-      assert.doesNotMatch(protocolBlock, /port:\s*Number\(draftWeb\.port\)/);
+      const services = read("app/playground/features/services/services-workspace.tsx");
+      const protocolBlock = services.slice(services.indexOf('inputProps={{ "aria-label": "Web server protocol" }}'), services.indexOf("HTTPS certificate", services.indexOf('"aria-label": "Web server protocol"')));
+      assert.doesNotMatch(protocolBlock, /port:\s*Number\(web\.port\)/);
       assert.match(services, /Recommended HTTPS port: 8443/);
     });
     
@@ -94,11 +89,13 @@ const __suiteBaseDir = __dirname;
       assert.match(proxy, /maxConcurrentStreams: config\.maxConcurrentStreams/);
     });
     
-    test("Native gRPC settings no longer duplicate Web Access settings", () => {
+    test("Web Access is configured only in the shared Mock settings dialog", () => {
       const services = read("app/playground/features/services/services-workspace.tsx");
-      const settingsNav = services.slice(services.indexOf('aria-label="gRPC Mock settings sections"'), services.indexOf('role="tabpanel"', services.indexOf('aria-label="gRPC Mock settings sections"')));
-      assert.doesNotMatch(settingsNav, /web-server/);
-      assert.doesNotMatch(settingsNav, /Web server/);
+      const panel = read("app/playground/features/services/web-access-panel.tsx");
+      assert.match(services, /\{ value: "web-server", label: "Web Access" \}/);
+      assert.match(services, /onClick=\{\(\) => openSettings\("web-server"\)\}|onSettings=\{\(\) => openSettings\("web-server"\)\}/);
+      assert.doesNotMatch(panel, /value: "settings"/);
+      assert.doesNotMatch(panel, /function WebAccessSettingsSection/);
     });
     
   });

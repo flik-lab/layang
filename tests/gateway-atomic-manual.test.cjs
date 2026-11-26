@@ -169,7 +169,7 @@ test("Gateway native and file-backed routes are connected through typed IPC, not
   assert.match(sources[1], /mock-scenario:apply-send-gateway/);
   assert.match(sources[2], /repo\.buildRuntimeSnapshot/);
   assert.match(sources[3], /applySendGateway:/);
-  assert.match(sources[4], /Atomic Gateway Apply \+ Send/);
+  assert.match(sources[4], /Activate and send via Web Access/);
 });
 
 test("file-backed Gateway IPC applies only current saved revisions from its own workspace", async () => {
