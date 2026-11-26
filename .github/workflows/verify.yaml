@@ -1,0 +1,103 @@
+name: Verify
+
+# Reusable verification gate. Called by verify-pr.yaml (pull requests and main) and by
+# release.yaml, so a release passes exactly the same checks as a pull request.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Quality / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-2025]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Lint
+        run: pnpm lint
+      - name: Unit and real gRPC integration tests
+        run: pnpm test
+        env:
+          LAYANG_REQUIRE_RUNTIME_DEPS: '1'
+      - name: Build renderer
+        run: pnpm build
+      - name: Load the Windows packaging makers
+        # PR CI does not package the app. Loading the makers catches a broken install
+        # layout (for example a missing transitive module) before a release does.
+        if: runner.os == 'Windows'
+        run: node -e "require('electron-winstaller'); require('@electron-forge/maker-squirrel'); require('@electron-forge/maker-zip'); console.log('Windows makers load')"
+      - name: Verify published documentation and REST OpenAPI
+        if: runner.os == 'Linux'
+        run: |
+          workspace="$RUNNER_TEMP/layang-docs-example"
+          node tests/fixtures/docs-publication-workspace.cjs "$workspace"
+          node bin/layang.cjs docs:build "$workspace"
+          node bin/layang.cjs docs:build "$workspace" --check
+          pnpm --package=@redocly/cli@1.34.6 dlx redocly lint --extends spec "$workspace/docs/published/rest/openapi.yaml"
+
+  dependency-audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Audit high and critical vulnerabilities
+        run: pnpm audit --audit-level high
+
+  electron-window-smoke:
+    name: Real Electron renderer security smoke / Linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Install Electron desktop dependencies
+        run: sudo apt-get update && sudo apt-get install -y xvfb libnss3 libatk-bridge2.0-0 libgtk-3-0 libasound2t64
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Prepare installed Electron runtime
+        run: pnpm electron:prepare
+      - name: Build static renderer for packaged-path smoke
+        run: pnpm build
+      - name: Enable Chromium SUID sandbox
+        # Ubuntu runners block unprivileged user namespaces, so Chromium falls back to the
+        # SUID helper, which must be owned by root with mode 4755.
+        run: |
+          sandbox="$(node -p "require('path').join(require('path').dirname(require('electron')), 'chrome-sandbox')")"
+          sudo chown root:root "$sandbox"
+          sudo chmod 4755 "$sandbox"
+      - name: Run actual sandboxed renderer and Chromium CORS smoke test
+        run: xvfb-run -a pnpm test:electron:smoke

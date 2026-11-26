@@ -50,6 +50,8 @@ Routine saves cannot recreate the legacy per-method format. The old in-memory fo
 - **Activate for Web Access**: compiles the selected method from v3 and activates it in the requested Gateway profile.
 - **Atomic Gateway Apply + Send**: validates before replacing the active snapshot; the apply/send operation is serialized per profile.
 
+Native serves one scenario per method: the selected scenario while it is active, otherwise the highest-priority active scenario. A method with no active scenario answers `NOT_FOUND`; inactive scenarios are never used as a fallback.
+
 Native startup and the CLI compile scenario bodies outside the renderer. Native Apply reads the selected scenario, and Gateway Apply reads scenarios for the selected method. The scenario picker receives metadata only.
 
 ## Limitations and verification

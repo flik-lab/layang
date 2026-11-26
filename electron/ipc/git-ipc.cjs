@@ -4,14 +4,22 @@ const path = require("node:path");
 const { ipcMain } = require("../utils/trusted-ipc-main.cjs");
 const git = require("../../lib/git-client.cjs");
 const gitUx = require("../../lib/git-ux-v2.cjs");
+const { getWorkspaceAccess } = require("../utils/workspace-access.cjs");
+const { HOOK_RUNNING_GIT_CHANNELS } = require("../utils/git-hooks-policy.cjs");
 
-function registerGitIpc() {
+const hookRunningChannels = new Set(HOOK_RUNNING_GIT_CHANNELS);
+
+/**
+ * @param {{ getHooksPolicy?: () => { decide(directoryPath: string): Promise<"run" | "skip" | "cancel"> } }} [options]
+ */
+function registerGitIpc(options = {}) {
+  hooksPolicyGetter = typeof options.getHooksPolicy === "function" ? options.getHooksPolicy : null;
   handle("git:info", async (payload) => git.detectRepository(requireDirectory(payload)));
   handle("git:init", async (payload) => git.initRepository(requireDirectory(payload), payload || {}));
   handle("git:clone", async (payload) =>
     git.cloneRepository({
       url: payload?.url,
-      directoryPath: requireDirectory(payload),
+      directoryPath: await requestDirectory(payload?.directoryPath, "Layang will clone a Git repository into this folder."),
       branch: payload?.branch,
       depth: payload?.depth,
     }),
@@ -74,16 +82,33 @@ function registerGitIpc() {
   handle("git:conflict-details", async (payload) => gitUx.getConflictDetails(requireDirectory(payload), payload?.file));
   handle("git:conflict-resolve", async (payload) => gitUx.resolveConflict(requireDirectory(payload), payload || {}));
   handle("git:worktrees", async (payload) => gitUx.listWorktrees(requireDirectory(payload)));
-  handle("git:worktree-add", async (payload) => gitUx.addWorktree(requireDirectory(payload), payload || {}));
+  handle("git:worktree-add", async (payload) => {
+    const directoryPath = requireDirectory(payload);
+    const target = await requestDirectory(
+      path.resolve(directoryPath, String(payload?.path || "")),
+      "Layang will create a Git workspace copy in this folder.",
+    );
+    return gitUx.addWorktree(directoryPath, { ...(payload || {}), path: target });
+  });
   handle("git:worktree-remove", async (payload) => gitUx.removeWorktree(requireDirectory(payload), payload || {}));
   handle("git:worktree-prune", async (payload) => gitUx.pruneWorktrees(requireDirectory(payload)));
   handle("git:commit-suggest", async (payload) => gitUx.suggestCommit(requireDirectory(payload), payload || {}));
 }
 
+let hooksPolicyGetter = null;
+
+/** Runs a hook-capable Git action with hooks on or off, as the user decided for this repository. */
+async function runWithHookDecision(channel, payload, action) {
+  if (!hookRunningChannels.has(channel) || !hooksPolicyGetter) return action(payload);
+  const decision = await hooksPolicyGetter().decide(requireDirectory(payload));
+  if (decision === "cancel") throw new Error("Cancelled: the repository's Git hooks were not approved.");
+  return decision === "skip" ? git.runWithGitHooksDisabled(() => action(payload)) : action(payload);
+}
+
 function handle(channel, action) {
   ipcMain.handle(channel, async (_event, payload) => {
     try {
-      const result = await action(payload || {});
+      const result = await runWithHookDecision(channel, payload || {}, action);
       return { ok: true, result };
     } catch (error) {
       return {
@@ -95,11 +120,21 @@ function handle(channel, action) {
   });
 }
 
+/** Git only runs inside folders the user granted access to (see workspace-access.cjs). */
 function requireDirectory(payload) {
   const value = String(payload?.directoryPath || "").trim();
   if (!value) throw new Error("Workspace directory is required.");
   if (value.includes("\u0000")) throw new Error("Invalid workspace directory.");
-  return path.resolve(value);
+  return getWorkspaceAccess().assertAllowed(value);
+}
+
+async function requestDirectory(value, reason) {
+  const text = String(value || "").trim();
+  if (!text) throw new Error("Workspace directory is required.");
+  if (text.includes("\u0000")) throw new Error("Invalid workspace directory.");
+  const allowed = await getWorkspaceAccess().requestAccess(text, { reason });
+  if (!allowed) throw new Error("Folder access was not granted.");
+  return allowed;
 }
 
 module.exports = { registerGitIpc };

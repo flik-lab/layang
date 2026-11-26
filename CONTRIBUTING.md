@@ -6,7 +6,7 @@ Thanks for considering a contribution to Layang.
 
 Requirements:
 
-- Node.js 20 or newer
+- Node.js 22.12 or newer (CI uses the exact version in `.nvmrc`)
 - pnpm 10 or newer
 
 Install dependencies:
@@ -60,6 +60,18 @@ pnpm test
 pnpm run build
 ```
 
+## Releases
+
+CI and releases use the exact Node.js version in `.nvmrc` (it is also the runtime bundled into the standalone CLI). Every workflow action is pinned to a commit SHA; Dependabot (`.github/dependabot.yml`) proposes weekly updates for actions and npm packages. Actions updates arrive as one grouped PR, `@electron-forge/*` packages move together in one PR, and Biome gets its own PR because its minors add lint rules. Electron majors are not proposed: upgrade them by hand, then run `pnpm desktop:linux` (or `desktop:win`) and launch the packaged app before merging, because PR CI does not package the app.
+
+The release workflow (`.github/workflows/release.yaml`) runs the same reusable verification as pull requests (`.github/workflows/verify.yaml`), packages Windows and Linux, and then creates a **draft** GitHub Release. Release notes come from the `## <version>` section of `CHANGELOG.md`; the release fails without it. The draft includes a `SHA256SUMS` file over every asset and GitHub build provenance attestations (`gh attestation verify <file> --repo flik-lab/layang`). A maintainer publishes the draft by hand; only then does auto-update offer it. Manual runs (**Run workflow**) are accepted only from `main`.
+
+Repository admins must configure once:
+
+- **Settings → Environments → `release`**: add required reviewers and limit deployments to the `main` branch and `v*` tags. The publish job waits for this approval before it creates the tag (manual runs) or the draft release.
+- Optional Windows code signing: add the secrets `WINDOWS_CERTIFICATE_PFX_BASE64` (the `.pfx` file, base64-encoded) and `WINDOWS_CERTIFICATE_PASSWORD`. Without them, Windows artifacts are built unsigned.
+- Branch protection: required status checks are now named `Verify / Quality / ubuntu-latest`, `Verify / Quality / windows-2025`, `Verify / Dependency audit` and `Verify / Real Electron renderer security smoke / Linux`.
+
 ## Project conventions
 
 - Use TypeScript for new code.
@@ -71,7 +83,7 @@ pnpm run build
 
 ## Technology stack
 
-- Runtime and package manager: Node.js 20 or newer with pnpm 10 or newer.
+- Runtime and package manager: Node.js 22.12 or newer (the exact CI version is in `.nvmrc`) with pnpm 10 or newer.
 - App framework: TypeScript, React 19, Next.js 16, and Tailwind CSS.
 - Desktop shell: Electron 42 with preload bridges for native-only features.
 - API transports: browser gRPC-Web, Electron native gRPC through `@grpc/grpc-js`, protobuf loading through `@grpc/proto-loader` and `protobufjs`, plus WebSocket workflows.

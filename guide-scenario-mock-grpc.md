@@ -7,7 +7,7 @@ Open **Services → gRPC**. The workspace is split into four tabs:
 - **Methods** — browse Proto-grouped methods and choose one active scenario per method.
 - **Proto** — attach schema revisions from the global Schemas registry and create scenarios directly from their methods.
 - **Web access** — configure the browser endpoint, native gRPC target, TLS, CORS, and bridge logs.
-- **Activity** — inspect received requests and runtime logs.
+- **Activity** — shows runtime log entries reported by the active runner. Native gRPC does not record per-request logs (request logging is disabled for performance), so for Native the tab shows the server status message only; use the response panel of the calling client, or the NOT_FOUND status details, to see why a request did not match. Web access bridge logs are under **Web access**.
 
 A persistent **Run mode** selector appears above every tab. Choose **Native gRPC** for the local mock server or **Web access** for the browser bridge. The status and Start/Stop button remain in the same toolbar position when changing tabs or runtime state.
 
@@ -29,18 +29,22 @@ It does not currently support:
 
 ## Where Mock Scenarios Live
 
-Mock scenarios are typically stored under:
+gRPC scenarios use the file-based v3 layout (see [docs/FILE_BASED_GRPC_SCENARIOS.md](docs/FILE_BASED_GRPC_SCENARIOS.md)):
 
 ```text
+layang.yml
 mocks/
-  mock-server.json
-  scenarios/
-    demo.v1.GreeterService.SayHello.yaml
-    demo.v1.GreeterService.WatchHello.yaml
-    manifest.json
+  grpc/
+    server.yml                          # listener, security, route/config metadata
+    scenarios/
+      <method-hash>/
+        <scenario-hash>.scenario.yml    # one independently versioned scenario
+    .cache/scenario-index-v3.json       # disposable metadata-only index
 ```
 
-Each scenario is stored in its own source file. YAML and JSON remain supported, with validation and formatting based on the active file format.
+Each scenario is stored in its own `*.scenario.yml` file with its method identity and revision. Filenames are hashes assigned by Layang; create scenarios with **New scenario** rather than by hand. Legacy `mocks/grpc/methods/*.mock.yml` and `mocks/grpc/scenarios.yml` files are migrated once to this layout, with backups under `.layang/grpc-v3-backup-<timestamp>/`.
+
+The JSON examples below show the scenario fields; the same fields are written as YAML in the scenario file.
 
 ## Basic Scenario Shape
 
@@ -229,7 +233,15 @@ Use `or` when one scenario should match multiple request shapes.
 }
 ```
 
-When multiple active scenarios are available, Layang sorts by `priority` descending and picks the first matching scenario. When a selected scenario id exists for a method, only that scenario is considered.
+Native gRPC uses exactly **one** scenario per method:
+
+- If a scenario is selected for the method in **Methods**, only that scenario is used, and only while it is `active`.
+- Otherwise the `active` scenario with the highest `priority` is used.
+- If no scenario for the method is `active` (or mocking is disabled for the method), the call fails with `NOT_FOUND`. Inactive scenarios are never served as a fallback.
+
+If the chosen scenario's `input` does not match the request, Native does not try other scenarios; the call fails with `NOT_FOUND` and a message naming the checked scenario.
+
+The **Web access** (gRPC-Web gateway) runner behaves differently when no scenario is selected: it sorts all incoming-capable scenarios for the method by `priority` descending and falls through to the first one whose `input` matches. With a selected scenario id, it only considers that scenario.
 
 ## Unary Output
 

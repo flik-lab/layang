@@ -7,6 +7,7 @@ const state = {
   configured: false,
   filePath: "",
   sessionSecrets: new Map(),
+  asyncAvailable: undefined,
 };
 
 function configureSecureSecrets(options = {}) {
@@ -19,12 +20,30 @@ function configureSecureSecrets(options = {}) {
         : path.join(process.cwd(), ".layang", "userData");
   state.filePath = path.join(userDataPath, "secure-secrets.json");
   state.configured = true;
+  // Availability is reported after refreshSafeStorageAvailability() has asked Electron asynchronously.
+  return { configured: true, filePath: state.filePath };
+}
+
+/**
+ * Electron 45 deprecates the synchronous safeStorage.isEncryptionAvailable(). The async check
+ * runs once after app ready (see main.cjs) and its answer is cached; the sync call remains only
+ * as a fallback for runtimes without the async API or before the check has finished.
+ */
+async function refreshSafeStorageAvailability() {
+  const safeStorage = getSafeStorage();
+  if (typeof safeStorage?.isAsyncEncryptionAvailable !== "function") return getSafeStorageInfo();
+  try {
+    state.asyncAvailable = Boolean(await safeStorage.isAsyncEncryptionAvailable());
+  } catch {
+    state.asyncAvailable = false;
+  }
   return getSafeStorageInfo();
 }
 
 function getSafeStorageInfo() {
   const safeStorage = getSafeStorage();
-  const available = Boolean(safeStorage?.isEncryptionAvailable?.());
+  const available =
+    typeof state.asyncAvailable === "boolean" ? state.asyncAvailable : Boolean(safeStorage?.isEncryptionAvailable?.());
   let backend = "unavailable";
   try {
     backend =
@@ -132,6 +151,7 @@ function getSafeStorage() {
 
 module.exports = {
   configureSecureSecrets,
+  refreshSafeStorageAvailability,
   deleteSecret,
   getSafeStorageInfo,
   readSecret,

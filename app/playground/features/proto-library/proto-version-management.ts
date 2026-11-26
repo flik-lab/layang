@@ -1,5 +1,6 @@
 import type { LoadedProto, ProtoSourceFile, RpcMethodInfo } from "@/lib/types";
 import { loadProtoFiles } from "@/lib/proto-loader";
+import { verifyProtobufMessage } from "@/lib/protobuf-verify";
 import type { ApiCollection, ApiCollectionRequest } from "../../shared/workbench-types";
 import {
   computeProtoVersionChecksum,
@@ -785,7 +786,8 @@ function verifyRequestBody(loaded: LoadedProto, method: RpcMethodInfo, bodyText:
   try {
     const value = bodyText.trim() ? JSON.parse(bodyText) : {};
     const requestType = loaded.root.lookupType(method.requestType);
-    return requestType.verify(value) || null;
+    // protobufjs Type.verify compiles code with new Function, which the renderer CSP blocks.
+    return verifyProtobufMessage(requestType, value) || null;
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
   }

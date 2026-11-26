@@ -831,7 +831,7 @@ export function ProtoExplorerPanel({
     }
   };
 
-  const useExistingSchema = () => {
+  const handleUseExistingSchema = () => {
     if (!createAssessment) return;
     onSelectLibraryVersion(createAssessment.library.id, createAssessment.version.id);
     const firstFile = [...createAssessment.version.files].sort((left, right) => left.name.localeCompare(right.name))[0];
@@ -1134,7 +1134,7 @@ export function ProtoExplorerPanel({
           <Button
             variant={createAssessment.kind === "revision-candidate" ? "outlined" : "contained"}
             disabled={readingProto}
-            onClick={useExistingSchema}
+            onClick={handleUseExistingSchema}
           >
             {createAssessment.kind === "revision-candidate" ? "Use existing" : "Use existing"}
           </Button>

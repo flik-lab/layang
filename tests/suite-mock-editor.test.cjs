@@ -50,7 +50,7 @@ const __suiteBaseDir = __dirname;
       assert.doesNotMatch(source, /helperText="0 = unlimited"/);
       assert.doesNotMatch(source, /Hybrid races the enabled triggers/);
       assert.match(source, /label=\{inline \? undefined : grpcStream \? "Interval" : "Interval \(ms\)"\}/);
-      assert.match(source, /label=\{inline \? undefined : grpcStream \? "Max" : "Max executions"\}/);
+      assert.match(source, /label=\{inline \? undefined : grpcStream \? "Max" : "Max loops"\}/);
       assert.match(source, /inline \? \([\s\S]*grpcStream \? "Interval" : "Interval \(ms\)"/);
     });
     

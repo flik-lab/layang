@@ -33,6 +33,7 @@ import { MethodMockSwitch, SmallEmpty } from "../sidebar/sidebar-panels";
 import { createDefaultMockStreamDefaults, safeMockFileBaseName } from "./mock-scenario-model";
 import { methodKey } from "../../shared/rpc-method-utils";
 import { uiCopy } from "../../shared/ui-copy";
+import { isNetworkReachableListenHost } from "../../shared/network-utils";
 import { buttonSx, compactCardSx } from "../../shared/workbench-constants";
 import { GrpcMockScenarioControls } from "./grpc-mock-scenario-controls";
 import type {
@@ -392,6 +393,14 @@ export function MockServerSettingsDialog({
                   </FormControl>
                 </Stack>
               </Stack>
+              {isNetworkReachableListenHost(activeGatewayProfile?.listenHost ?? mockServer.bindHost) && (
+                <Typography variant="caption" color="warning.main" role="status" data-testid="gateway-lan-warning">
+                  Listening on {activeGatewayProfile?.listenHost ?? mockServer.bindHost} lets other devices on your network
+                  reach this gateway
+                  {(activeGatewayProfile?.listenSecurity?.type ?? "insecure") === "insecure" ? " without TLS" : ""}. Use
+                  127.0.0.1 unless you need LAN access.
+                </Typography>
+              )}
               {activeGatewayProfile?.listenSecurity?.type === "tls" && (
                 <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
                   <TextField

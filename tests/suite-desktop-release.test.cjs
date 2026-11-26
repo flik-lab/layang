@@ -160,6 +160,8 @@ const __suiteBaseDir = __dirname;
     const root = path.resolve(__dirname, "..");
     const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
     const workflow = fs.readFileSync(path.join(root, ".github/workflows/release.yaml"), "utf8");
+    const verifyWorkflow = fs.readFileSync(path.join(root, ".github/workflows/verify.yaml"), "utf8");
+    const verifyPrWorkflow = fs.readFileSync(path.join(root, ".github/workflows/verify-pr.yaml"), "utf8");
     
     const expectedScripts = [
       "prepare:proto-worker",
@@ -191,16 +193,45 @@ const __suiteBaseDir = __dirname;
     });
     
     test("release verify uses the normal test command and packaging keeps CLI", () => {
-      assert.match(workflow, /- name: Test\n {8}run: pnpm test/);
+      // The release gate is the reusable PR gate.
+      assert.match(workflow, /uses: \.\/\.github\/workflows\/verify\.yaml/);
+      assert.match(verifyPrWorkflow, /uses: \.\/\.github\/workflows\/verify\.yaml/);
+      assert.match(verifyWorkflow, /workflow_call:/);
+      assert.match(verifyWorkflow, /run: pnpm test\n {8}env:\n {10}LAYANG_REQUIRE_RUNTIME_DEPS: '1'/);
       assert.doesNotMatch(workflow, /test:ci|runtime-ci|test:runtime:deps/);
+      assert.doesNotMatch(verifyWorkflow, /test:ci|runtime-ci|test:runtime:deps/);
       assert.match(workflow, /pnpm run desktop:win/);
       assert.match(workflow, /pnpm run desktop:linux/);
       assert.match(workflow, /pnpm run cli:dist/);
     });
     
+    test("release workflow publishes a reviewed draft with checksums and provenance", () => {
+      assert.match(workflow, /environment: release/);
+      assert.match(workflow, /draft: true/);
+      assert.match(workflow, /body_path: /);
+      assert.doesNotMatch(workflow, /generate_release_notes/);
+      assert.match(workflow, /> SHA256SUMS/);
+      assert.match(workflow, /actions\/attest-build-provenance@[0-9a-f]{40} # v/);
+      assert.match(workflow, /refs\/heads\/main/);
+      assert.doesNotMatch(workflow, /run: [|>]?[^\n]*\$\{\{/);
+    });
+
+    test("workflow actions are pinned to full commit SHAs", () => {
+      const dir = path.join(root, ".github/workflows");
+      for (const name of fs.readdirSync(dir).filter((file) => /\.ya?ml$/.test(file))) {
+        const text = fs.readFileSync(path.join(dir, name), "utf8");
+        for (const [, ref] of text.matchAll(/^\s*(?:-\s*)?uses:\s*(\S+)/gm)) {
+          if (ref.startsWith("./")) continue;
+          assert.match(ref, /@[0-9a-f]{40}$/, `${name}: ${ref} is not pinned to a commit SHA`);
+        }
+        assert.doesNotMatch(text, /node-version: /, `${name} must use node-version-file: .nvmrc`);
+      }
+      assert.match(fs.readFileSync(path.join(root, ".nvmrc"), "utf8"), /^22\.\d+\.\d+\n?$/);
+    });
+
     test("only essential release helper scripts remain", () => {
       const scripts = fs.readdirSync(path.join(root, "scripts")).filter((name) => name.endsWith(".cjs")).sort();
-      assert.deepEqual(scripts, ["build-cli-portable.cjs", "build-proto-catalog-worker.cjs", "electron-runtime.cjs", "electron-window-smoke.cjs", "package-cli-release.cjs"]);
+      assert.deepEqual(scripts, ["apply-csp.cjs", "build-cli-portable.cjs", "build-proto-catalog-worker.cjs", "electron-runtime.cjs", "electron-window-smoke.cjs", "package-cli-release.cjs"]);
     });
     
   });

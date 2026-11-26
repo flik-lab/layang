@@ -66,6 +66,8 @@ layang ui .
 
 `layang ui <workspace>` launches the optional desktop app with that workspace. Set `LAYANG_GUI_EXECUTABLE` when the GUI is installed in a custom location.
 
+The desktop app's integrated terminal runs the same CLI inside the app (in an Electron utility process; the app executable cannot run as Node). Background mocks and gateways started there with `--daemon` are owned by the app and stop when the app quits. Daemons started by the standalone CLI are ordinary detached processes and keep running until `mock:stop` / `gateway:stop`. `mock:status` and `mock:stop` work the same way for both.
+
 ## Building release artifacts
 
 Run on the target operating system after installing project dependencies:
@@ -74,7 +76,7 @@ Run on the target operating system after installing project dependencies:
 pnpm run cli:dist
 ```
 
-The build intentionally runs on each target OS rather than cross-compiling. GitHub Releases build Windows on `windows-latest` and Linux on `ubuntu-latest`, keeping the bundled Node runtime native to each target.
+The build intentionally runs on each target OS rather than cross-compiling. GitHub Releases build Windows on `windows-2025` and Linux on `ubuntu-24.04` with the Node version pinned in `.nvmrc`, keeping the bundled Node runtime native to each target and identical between releases.
 
 The release workflow packages desktop and CLI in separate jobs. A release is not published unless both standalone CLI archives are present and pass their portable smoke checks:
 
@@ -82,6 +84,19 @@ The release workflow packages desktop and CLI in separate jobs. A release is not
 - `layang-cli-linux-<arch>.tar.gz` plus its `.sha256` checksum
 
 This keeps the CLI as a first-class GitHub Release asset instead of making it an incidental output of the desktop packaging job.
+
+Check the archive before you extract it. Every release also has a `SHA256SUMS` file covering all assets and a GitHub build-provenance attestation:
+
+```bash
+sha256sum -c layang-cli-linux-x64.tar.gz.sha256        # Linux
+gh attestation verify layang-cli-linux-x64.tar.gz --repo flik-lab/layang
+```
+
+```powershell
+(Get-FileHash layang-cli-windows-x64.zip -Algorithm SHA256).Hash   # compare with the .sha256 file
+```
+
+The install scripts inside the archive copy from the extracted folder, so they cannot check the archive themselves.
 
 The portable smoke check runs, with the packaged executable:
 

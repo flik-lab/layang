@@ -97,14 +97,29 @@ Max loops: 0
 
 ### Finite Stream
 
-Set:
+`Max loops` uses the same semantics as gRPC mock streams: it is the number of **restarts after the first full pass** of the response sequence.
+
+- `Loop: disabled` -> plays the sequence once, then stops (`Max loops` is ignored)
+- `Loop: enabled, Max loops: 0` -> loops forever
+- `Loop: enabled, Max loops: 1` -> plays the full sequence 2 times total
+- `Loop: enabled, Max loops: 3` -> plays the full sequence 4 times total
+
+Example:
 
 ```text
 Loop: enabled
 Max loops: 3
 ```
 
-This sends the response sequence three times and then stops.
+With a two-message sequence `["a", "b"]` this sends `a, b, a, b, a, b, a, b` (four passes) and then stops.
+
+The same budget applies to every automatic source: stream on connect, replies to incoming messages, and scheduled sends. It is counted per connected client. Manual **Send once** is never limited by `Max loops`.
+
+### Connection security
+
+The WebSocket mock listens on `127.0.0.1` only. Upgrades are rejected with `403` when the `Host` header is not a loopback name (`localhost`, `127.0.0.1`, `[::1]`) or when the `Origin` header belongs to another website. Allowed origins are: no `Origin` header, `null`, `file://`, and `http(s)://localhost`, `127.0.0.1` or `[::1]` on any port.
+
+Single inbound frames larger than 16 MiB close the connection with code `1009` (message too big).
 
 ## Tips
 

@@ -1,0 +1,45 @@
+version: 2
+updates:
+  # One weekly PR for every GitHub Actions update, majors included: the
+  # verify workflow exercises checkout/setup-node/pnpm, and release-only
+  # actions are checked against their action.yml inputs before merging.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # The npm ecosystem reads pnpm-lock.yaml as well.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      # Electron majors change Chromium, Node and Electron APIs together; they are
+      # upgraded by hand with a packaged-build check (see CONTRIBUTING.md).
+      - dependency-name: electron
+        update-types:
+          - version-update:semver-major
+    groups:
+      # Every @electron-forge package must stay on the same version as the
+      # others, so they move together in one PR (majors included).
+      electron-forge:
+        patterns:
+          - "@electron-forge/*"
+          - "@electron/fuses"
+      npm-minor-patch:
+        update-types:
+          - minor
+          - patch
+        exclude-patterns:
+          - "@electron-forge/*"
+          - "@electron/fuses"
+          # Biome minors add lint rules; they get their own PR so lint fixes
+          # land with the upgrade instead of failing a large group.
+          - "@biomejs/biome"
+          - electron

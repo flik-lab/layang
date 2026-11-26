@@ -235,23 +235,60 @@ const __suiteBaseDir = __dirname;
       assert.match(source, /testHttpsEndpoint/);
     });
     
+    const readCertFixture = (name) => fs.readFileSync(path.join(__dirname, "fixtures", "certs", name), "utf8");
+
     test("imported CA can trust a presented certificate chain, not only the leaf certificate", () => {
       const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), "layang-cert-chain-"));
       configureCertificateSettings({ userDataPath });
-      importCertificatePems([{ name: "internal-root.pem", pemText: samplePem }]);
-    
+      const trustedCa = readCertFixture("trusted-ca.pem");
+      importCertificatePems([{ name: "internal-root.pem", pemText: trustedCa }]);
+
       const decision = shouldAllowCertificateError(
-        {
-          data: secondSamplePem,
-          issuerCert: { data: samplePem },
-        },
+        { data: readCertFixture("leaf-signed-by-trusted-ca.pem"), issuerCert: { data: trustedCa } },
         { url: "https://apisix.internal.example" },
       );
-    
+
       assert.equal(decision.allow, true);
       assert.equal(decision.reason, "imported-certificate-chain-match");
     });
-    
+
+    test("a server cannot borrow the imported CA by sending a copy of it next to its own certificate", () => {
+      const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), "layang-cert-chain-spoof-"));
+      configureCertificateSettings({ userDataPath });
+      const trustedCa = readCertFixture("trusted-ca.pem");
+      importCertificatePems([{ name: "internal-root.pem", pemText: trustedCa }]);
+
+      // Leaf signed by a different CA that uses the same subject name, followed by the trusted CA.
+      const spoofed = shouldAllowCertificateError(
+        { data: readCertFixture("leaf-signed-by-rogue-ca.pem"), issuerCert: { data: trustedCa } },
+        { url: "https://apisix.internal.example" },
+      );
+      assert.equal(spoofed.allow, false);
+
+      const rogueChain = shouldAllowCertificateError(
+        {
+          data: readCertFixture("leaf-signed-by-rogue-ca.pem"),
+          issuerCert: { data: readCertFixture("rogue-ca-same-name.pem"), issuerCert: { data: trustedCa } },
+        },
+        { url: "https://apisix.internal.example" },
+      );
+      assert.equal(rogueChain.allow, false);
+    });
+
+    test("a certificate chained to the imported CA must still name the requested host", () => {
+      const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), "layang-cert-chain-host-"));
+      configureCertificateSettings({ userDataPath });
+      const trustedCa = readCertFixture("trusted-ca.pem");
+      importCertificatePems([{ name: "internal-root.pem", pemText: trustedCa }]);
+
+      const decision = shouldAllowCertificateError(
+        { data: readCertFixture("leaf-signed-by-trusted-ca.pem"), issuerCert: { data: trustedCa } },
+        { url: "https://other-host.example" },
+      );
+      assert.equal(decision.allow, false);
+      assert.equal(decision.reason, "hostname-mismatch");
+    });
+
   });
 }
 

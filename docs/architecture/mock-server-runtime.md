@@ -53,11 +53,11 @@ This key is used by:
 
 Selection is determined in this order:
 
-1. Explicit `selectedScenarioIds[methodKey]` if valid.
-2. First scenario matching the method.
-3. No scenario response if no scenario exists.
+1. Explicit `selectedScenarioIds[methodKey]`, used only while that scenario is `active`.
+2. Otherwise the `active` scenario with the highest `priority` for the method.
+3. No scenario response (`NOT_FOUND` for native gRPC) if the method has no `active` scenario, if the selected scenario is inactive or missing, or if mocking is disabled for the method. Inactive scenarios are never used as a fallback.
 
-If selected scenario id is invalid, the runtime should warn and fallback safely instead of crashing.
+If selected scenario id is invalid, the runtime returns the no-scenario response with a diagnostic message instead of crashing.
 
 ## Matching
 
@@ -121,6 +121,10 @@ WebSocket mock server responsibilities:
 - Send configured messages.
 - Support manual send from UI.
 - Support scenario-based responses.
+- Read the live config on every upgrade, so paths added by a live update are reachable without a restart.
+- Apply one loop budget to every automatic source (stream on connect, incoming replies, scheduled sends), with gRPC semantics: `loop: false` plays the sequence once; `loop: true, maxLoops: 0` loops forever; `loop: true, maxLoops: N` restarts N times after the first full pass. Manual sends are unlimited.
+- Reject upgrades whose `Host` is not loopback or whose `Origin` is a foreign website (allowed: absent, `null`, `file://`, loopback `http(s)` origins on any port).
+- Close with `1009` when a single inbound frame or the pending inbound buffer exceeds 16 MiB.
 
 WebSocket client sessions should go through request/session actions so their tabs are consistent with REST and gRPC requests.
 
@@ -132,6 +136,12 @@ REST mock server responsibilities:
 - Optionally match query params, headers, and body.
 - Return configured status, headers, body, and delay.
 - Allow update while running.
+- Never leave a request hanging: malformed percent-encoding returns `400`, bodies over 10 MiB return `413`, a scenario disabled during its delay returns `503`, and any unexpected handler error returns a logged `500`.
+- When bound to loopback, reject requests whose `Host` is not loopback or the bind host (`403`, DNS-rebinding guard). `0.0.0.0` and `::` binds are narrowed to `127.0.0.1`.
+
+## CLI reload
+
+`layang mock` reload (SIGHUP or the command channel) reads the workspace and builds the full start plan (proto methods, canonical gRPC scenarios, REST/WebSocket config) **before** stopping anything. If that fails, the running servers stay up and the error is logged. If the new servers fail to start (for example, a port in use), the previous configuration is started again.
 
 ## Live runtime updates
 

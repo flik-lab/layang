@@ -5,6 +5,7 @@ node_modules/
 .next/
 out/
 public/workers/proto-catalog.worker.js
+public/workers/grpc-web-request-encoder.worker.js
 
 # Electron/Electron Forge
 dist/

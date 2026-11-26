@@ -6,6 +6,13 @@ const { executionAllows, getNextScheduleAt, normalizeMockExecution } = require("
 
 let activeWsMockServer = null;
 
+/** Largest single frame payload accepted from a client (bytes). Larger frames close with 1009. */
+const MAX_WS_FRAME_PAYLOAD_BYTES = 16 * 1024 * 1024;
+/** Largest amount of unparsed inbound data buffered per client (bytes). */
+const MAX_WS_PENDING_BUFFER_BYTES = MAX_WS_FRAME_PAYLOAD_BYTES + 14;
+const WS_CLOSE_MESSAGE_TOO_BIG = 1009;
+const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
 /**
  * Starts a lightweight WebSocket mock server with global scenarios.
  * One path can host many scenarios; incoming messages can select a scenario by matcher.
@@ -34,7 +41,17 @@ async function startWebSocketMockServer(payload) {
 
   server.on("upgrade", (request, socket) => {
     const requestPath = normalizeWebSocketMockPath(request.url || "/");
-    const scenario = findWebSocketMockScenario(config, requestPath, { preferPeriodic: true });
+    const crossSiteReason = getWebSocketCrossSiteRejection(request.headers);
+    if (crossSiteReason) {
+      appendWebSocketMockLog(state, "error", `Rejected connection for ${requestPath}: ${crossSiteReason}.`, {
+        path: requestPath,
+      });
+      socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    // Always read the live config so updateWebSocketMockServer() can add/remove paths without a restart.
+    const scenario = findWebSocketMockScenario(state.config, requestPath, { preferPeriodic: true });
     if (!scenario) {
       appendWebSocketMockLog(state, "error", `Rejected connection for unknown path ${requestPath}.`, {
         path: requestPath,
@@ -69,7 +86,9 @@ async function startWebSocketMockServer(payload) {
     const client = {
       id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
       socket,
-      buffer: Buffer.alloc(0),
+      chunks: [],
+      bufferedLength: 0,
+      neededLength: 0,
       timer: null,
       sentCount: 0,
       streamSentCount: 0,
@@ -273,6 +292,50 @@ function scheduleWebSocketScenario(state, scenario, now = Date.now()) {
   }, Math.max(0, nextAt - Date.now()));
   timer.unref?.();
   state.scheduledTimers.set(scenario.id, timer);
+}
+
+function parseHostHeaderHostname(value) {
+  const host = String(value || "").trim().toLowerCase();
+  if (!host) return "";
+  if (host.startsWith("[")) {
+    const end = host.indexOf("]");
+    return end === -1 ? host : host.slice(0, end + 1);
+  }
+  const colon = host.indexOf(":");
+  return colon === -1 ? host : host.slice(0, colon);
+}
+
+function isLoopbackHostname(hostname) {
+  return LOOPBACK_HOSTNAMES.has(String(hostname || "").toLowerCase());
+}
+
+/**
+ * Allowed WebSocket origins: absent, "null" (file:// renderer), file://, and
+ * http(s) loopback origins on any port. Anything else is a cross-site page.
+ */
+function isAllowedWebSocketOrigin(origin) {
+  if (origin === undefined || origin === null) return true;
+  const value = String(origin).trim();
+  if (!value || value === "null") return true;
+  if (value.toLowerCase().startsWith("file://")) return true;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    return isLoopbackHostname(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Blocks DNS-rebinding (non-loopback Host) and cross-site WebSocket hijacking (foreign Origin).
+ * The server always binds to 127.0.0.1, so only loopback Host names are legitimate.
+ */
+function getWebSocketCrossSiteRejection(headers = {}) {
+  const hostname = parseHostHeaderHostname(headers.host);
+  if (hostname && !isLoopbackHostname(hostname)) return `Host ${hostname} is not a loopback address`;
+  if (!isAllowedWebSocketOrigin(headers.origin)) return `Origin ${headers.origin} is not allowed`;
+  return "";
 }
 
 function normalizeWebSocketMockConfig(payload, fallback) {
@@ -494,12 +557,62 @@ function cleanupWebSocketMockClient(state, client) {
   });
 }
 
+function closeWebSocketMockClientWithCode(state, client, code, reason) {
+  appendWebSocketMockLog(state, "error", `Closing client on ${client.path}: ${reason}.`, {
+    path: client.path,
+    scenarioId: client.scenarioId,
+  });
+  cleanupWebSocketMockClient(state, client);
+  client.chunks = [];
+  client.bufferedLength = 0;
+  try {
+    const payload = Buffer.alloc(2);
+    payload.writeUInt16BE(code, 0);
+    sendWebSocketFrame(client.socket, payload, 0x8);
+    client.socket.end();
+  } catch {
+    try {
+      client.socket.destroy();
+    } catch {
+      // Ignore close errors.
+    }
+  }
+}
+
+function takeWebSocketClientBuffer(client) {
+  if (!client.chunks?.length) return Buffer.alloc(0);
+  const buffer = client.chunks.length === 1 ? client.chunks[0] : Buffer.concat(client.chunks, client.bufferedLength);
+  client.chunks = [buffer];
+  return buffer;
+}
+
 function handleWebSocketMockData(state, client, chunk) {
-  client.buffer = Buffer.concat([client.buffer, chunk]);
-  while (client.buffer.length >= 2) {
-    const frame = readWebSocketFrame(client.buffer);
-    if (!frame) break;
-    client.buffer = client.buffer.subarray(frame.frameLength);
+  if (client.closed) return;
+  if (!client.chunks) client.chunks = [];
+  client.chunks.push(chunk);
+  client.bufferedLength = (client.bufferedLength || 0) + chunk.length;
+  if (client.bufferedLength > MAX_WS_PENDING_BUFFER_BYTES) {
+    closeWebSocketMockClientWithCode(state, client, WS_CLOSE_MESSAGE_TOO_BIG, "inbound buffer limit exceeded");
+    return;
+  }
+  // Wait for a known-size frame to arrive completely before concatenating (avoids quadratic copies).
+  if (client.neededLength && client.bufferedLength < client.neededLength) return;
+  client.neededLength = 0;
+  let buffer = takeWebSocketClientBuffer(client);
+  while (buffer.length >= 2) {
+    const header = readWebSocketFrameHeader(buffer);
+    if (header && header.payloadLength > MAX_WS_FRAME_PAYLOAD_BYTES) {
+      closeWebSocketMockClientWithCode(state, client, WS_CLOSE_MESSAGE_TOO_BIG, "frame payload limit exceeded");
+      return;
+    }
+    const frame = header ? readWebSocketFrame(buffer) : null;
+    if (!frame) {
+      if (header) client.neededLength = header.frameLength;
+      break;
+    }
+    buffer = buffer.subarray(frame.frameLength);
+    client.chunks = buffer.length ? [buffer] : [];
+    client.bufferedLength = buffer.length;
     if (frame.opcode === 0x8) {
       cleanupWebSocketMockClient(state, client);
       try {
@@ -538,7 +651,7 @@ function handleWebSocketMockData(state, client, chunk) {
   }
 }
 
-function readWebSocketFrame(buffer) {
+function readWebSocketFrameHeader(buffer) {
   if (buffer.length < 2) return null;
   const first = buffer[0];
   const second = buffer[1];
@@ -559,13 +672,19 @@ function readWebSocketFrame(buffer) {
   }
   const maskOffset = offset;
   if (masked) offset += 4;
-  if (buffer.length < offset + length) return null;
-  let payload = Buffer.from(buffer.subarray(offset, offset + length));
+  return { opcode, masked, maskOffset, payloadOffset: offset, payloadLength: length, frameLength: offset + length };
+}
+
+function readWebSocketFrame(buffer) {
+  const header = readWebSocketFrameHeader(buffer);
+  if (!header || buffer.length < header.frameLength) return null;
+  const { opcode, masked, maskOffset, payloadOffset, payloadLength, frameLength } = header;
+  const payload = Buffer.from(buffer.subarray(payloadOffset, payloadOffset + payloadLength));
   if (masked) {
     const mask = buffer.subarray(maskOffset, maskOffset + 4);
-    payload = Buffer.from(payload.map((byte, index) => byte ^ mask[index % 4]));
+    for (let index = 0; index < payload.length; index += 1) payload[index] ^= mask[index % 4];
   }
-  return { opcode, payload, frameLength: offset + length };
+  return { opcode, payload, frameLength };
 }
 
 function startWebSocketMockPeriodicStream(state, client, scenarioOverride) {
@@ -602,6 +721,11 @@ function startWebSocketMockPeriodicStream(state, client, scenarioOverride) {
   client.timer = setTimeout(tick, Math.max(1, scenario?.intervalMs || 1000));
 }
 
+/**
+ * Shared loop budget for every automatic WebSocket source (stream, incoming replies, scheduled).
+ * Matches gRPC: loop=false plays the sequence once; loop=true & maxLoops=0 loops forever;
+ * loop=true & maxLoops=N restarts N times after the first full pass (N+1 passes total).
+ */
 function canSendWebSocketStreamMessage(scenario, sentCount, sequenceLength) {
   if (!sequenceLength) return false;
   if (!scenario.loop) return sentCount < sequenceLength;
@@ -656,9 +780,8 @@ function resolveWebSocketMockPayload(state, client, source, scenarioOverride) {
     : isStreamSend
       ? getStreamSentCount(client)
       : getScenarioSentCount(client, scenario.id);
-  if (isStreamSend && !canSendWebSocketStreamMessage(scenario, sentCount, messages.length)) return null;
-  if (!isManualSend && !isStreamSend && scenario.maxLoops > 0 && sentCount >= scenario.maxLoops) return null;
-  if (!isManualSend && !isStreamSend && !scenario.loop && sentCount >= messages.length) return null;
+  // Manual sends are unlimited; every automatic source shares the gRPC loop semantics.
+  if (!isManualSend && !canSendWebSocketStreamMessage(scenario, sentCount, messages.length)) return null;
   const index = scenario.loop || isManualSend ? sentCount % messages.length : sentCount;
   return renderWebSocketMockTemplate(messages[index] ?? messages[messages.length - 1], {
     count: sentCount + 1,
@@ -869,4 +992,11 @@ module.exports = {
   getWebSocketMockMessageSequence,
   renderWebSocketMockTemplate,
   matchesWebSocketIncomingMessage,
+  _internals: {
+    canSendWebSocketStreamMessage,
+    getWebSocketCrossSiteRejection,
+    isAllowedWebSocketOrigin,
+    readWebSocketFrame,
+    MAX_WS_FRAME_PAYLOAD_BYTES,
+  },
 };

@@ -503,7 +503,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchSidebarModel }) {
     );
   }
 
-  function useExistingGlobalProtoImport() {
+  function handleUseExistingGlobalProtoImport() {
     if (!globalProtoImportReview) return;
     const { assessment, destination, targetCollectionId } = globalProtoImportReview;
     selectProtoLibraryVersion(assessment.library.id, assessment.version.id);
@@ -1219,7 +1219,7 @@ export function WorkbenchSidebar({ ctx }: { ctx: WorkbenchSidebarModel }) {
               Create separate schema
             </Button>
           )}
-          <Button size="small" variant="outlined" onClick={useExistingGlobalProtoImport}>
+          <Button size="small" variant="outlined" onClick={handleUseExistingGlobalProtoImport}>
             Use existing
           </Button>
           <Button size="small" variant="contained" onClick={createGlobalProtoRevision}>

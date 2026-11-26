@@ -1,4 +1,4 @@
-const { app, autoUpdater, BrowserWindow, dialog, shell } = require("electron");
+const { app, autoUpdater, BrowserWindow, dialog, session, shell } = require("electron");
 const { ipcMain } = require("./utils/trusted-ipc-main.cjs");
 const { spawn } = require("node:child_process");
 const crypto = require("node:crypto");
@@ -42,7 +42,7 @@ const { stopRestMockServer } = require("./services/rest-mock-server.cjs");
 const { configureLogger, getLogger, registerProcessErrorHandlers } = require("./utils/logger.cjs");
 const { configureCertificateSettings, shouldAllowCertificateError } = require("./utils/certificate-settings.cjs");
 const { configureAppZoomSettings } = require("./utils/app-zoom-settings.cjs");
-const { configureSecureSecrets } = require("./utils/secure-secrets.cjs");
+const { configureSecureSecrets, refreshSafeStorageAvailability } = require("./utils/secure-secrets.cjs");
 const { configureWebHttpsCertificates } = require("./utils/web-https-certificates.cjs");
 const { createWindow } = require("./window/create-window.cjs");
 const {
@@ -56,6 +56,10 @@ const { readJsonIfExists, walkDirectory, writeTextInside } = require("./utils/fi
 const { windowFromEvent } = require("./utils/ipc-utils.cjs");
 const { safePathSegment } = require("./utils/path-utils.cjs");
 const { findWorkspaceArgument } = require("./utils/launch-args.cjs");
+const { configureWorkspaceAccess, getWorkspaceAccess } = require("./utils/workspace-access.cjs");
+const { applyPermissionPolicy } = require("./utils/permission-policy.cjs");
+const { configureGitHooksPolicy, getGitHooksPolicy } = require("./utils/git-hooks-policy.cjs");
+const { listRepositoryHooks } = require("../lib/git-client.cjs");
 const { ROOT_FILE: gitWorkspaceRootFile, readGitWorkspace, writeGitWorkspace } = require("../lib/git-workspace.cjs");
 const { exportBundleVersion: WORKSPACE_EXPORT_VERSION } = require("../lib/workspace-versions.json");
 const {
@@ -67,6 +71,14 @@ const WINDOWS_APP_USER_MODEL_ID = "com.squirrel.Layang.layang";
 const UPDATE_FEED_BASE_URL = "https://update.electronjs.org/flik-lab/layang";
 const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1000;
 const workspaceSettingsFileName = "layang-settings.json";
+const WORKSPACE_ACCESS_REASON = "Layang will read and write workspace files in this folder.";
+const WORKSPACE_ACCESS_DENIED = "Layang has not been given access to this folder. Open it with Open workspace folder first.";
+// shell.openPath launches files with their OS handler, so executables and scripts are never opened.
+const BLOCKED_OPEN_EXTENSIONS = new Set([
+  ".app", ".appimage", ".bat", ".cmd", ".com", ".cpl", ".deb", ".desktop", ".dll", ".exe", ".hta", ".jar",
+  ".js", ".jse", ".lnk", ".msc", ".msi", ".msp", ".pif", ".pkg", ".ps1", ".psm1", ".py", ".reg", ".rpm",
+  ".scf", ".scr", ".sh", ".url", ".vb", ".vbe", ".vbs", ".ws", ".wsf", ".wsh", ".command", ".run", ".bin",
+]);
 const mockWorkspaceWriteLockFileName = ".layang-mock-write-lock.json";
 const mainLogger = getLogger("main");
 let pendingDeepLink = findDeepLink(process.argv);
@@ -118,7 +130,7 @@ function startApplication() {
   registerLoggerIpc();
   registerCertificateSettingsIpc();
   registerAppZoomIpc();
-  registerGitIpc();
+  registerGitIpc({ getHooksPolicy: getGitHooksPolicy });
   registerCliIpc();
   let readingProtoZip = false;
   ipcMain.handle("proto:read-zip", async (_event, bytes) => {
@@ -180,9 +192,27 @@ function startApplication() {
     configureLogger({ app, appName: "Layang" });
     configureCertificateSettings({ app });
     configureSecureSecrets({ app });
+    await refreshSafeStorageAvailability().catch(() => undefined);
     configureWebHttpsCertificates({ app });
     configureAppZoomSettings({ app });
     registerProcessErrorHandlers(getLogger("process"));
+    applyPermissionPolicy(session.defaultSession, { logger: mainLogger });
+    const workspaceAccess = configureWorkspaceAccess({
+      app,
+      dialog,
+      getWindow: () => getMainWindow() || BrowserWindow.getFocusedWindow() || undefined,
+      logger: mainLogger,
+    });
+    configureGitHooksPolicy({
+      app,
+      dialog,
+      getWindow: () => getMainWindow() || BrowserWindow.getFocusedWindow() || undefined,
+      listHooks: listRepositoryHooks,
+      logger: mainLogger,
+    });
+    workspaceAccess.addRoot(getDefaultWorkspaceDirectory());
+    workspaceAccess.addRoot(getConfiguredWorkspaceDirectory());
+    if (pendingWorkspaceOpen) workspaceAccess.addRoot(pendingWorkspaceOpen);
     mainLogger.info("app ready", { version: app.getVersion(), isPackaged: app.isPackaged });
     utilityRuntimeHost = createUtilityRuntimeHost();
     transportRuntimeManager = createDisposableTransportRuntimeManager();
@@ -268,6 +298,8 @@ function dispatchDeepLink(url) {
 function dispatchWorkspaceOpen(directoryPath) {
   if (!directoryPath) return;
   const resolvedPath = path.resolve(directoryPath);
+  // A folder passed on the OS command line (CLI `layang open <dir>`) comes from the user.
+  getWorkspaceAccess().addRoot(resolvedPath);
   const win = getMainWindow() || BrowserWindow.getAllWindows()[0];
   if (!win || win.webContents.isLoading()) {
     pendingWorkspaceOpen = resolvedPath;
@@ -441,8 +473,10 @@ ipcMain.handle("workspace:ensure-folder", async (_event, payload) => {
       ? payload.directoryPath.trim()
       : "";
   if (!directoryPath) return { ok: false, error: "Missing workspace folder path." };
+  const allowedPath = await getWorkspaceAccess().requestAccess(directoryPath, { reason: WORKSPACE_ACCESS_REASON });
+  if (!allowedPath) return { ok: false, cancelled: true, error: WORKSPACE_ACCESS_DENIED };
 
-  return ensureWorkspaceFolder(directoryPath, payload?.bundle ? payload.bundle : {});
+  return ensureWorkspaceFolder(allowedPath, payload?.bundle ? payload.bundle : {});
 });
 
 ipcMain.handle("workspace:migrate-legacy-local-state", async (_event, payload) => {
@@ -450,6 +484,9 @@ ipcMain.handle("workspace:migrate-legacy-local-state", async (_event, payload) =
     payload && typeof payload.directoryPath === "string" && payload.directoryPath.trim()
       ? payload.directoryPath.trim()
       : getConfiguredWorkspaceDirectory();
+  if (!(await getWorkspaceAccess().requestAccess(directoryPath, { reason: WORKSPACE_ACCESS_REASON }))) {
+    return { ok: false, status: "skipped", directoryPath, error: WORKSPACE_ACCESS_DENIED };
+  }
   const bundle = payload?.bundle ? payload.bundle : {};
   const sourceFingerprint = crypto.createHash("sha256").update(JSON.stringify(bundle)).digest("hex");
 
@@ -538,6 +575,10 @@ ipcMain.handle("workspace:set-preference", async (_event, payload) => {
     payload && typeof payload.directoryPath === "string" && payload.directoryPath.trim()
       ? payload.directoryPath.trim()
       : "";
+  // The saved preference is trusted on the next launch, so only an allowed folder may become one.
+  if (directoryPath && !(await getWorkspaceAccess().requestAccess(directoryPath, { reason: WORKSPACE_ACCESS_REASON }))) {
+    return { ok: false, cancelled: true, error: WORKSPACE_ACCESS_DENIED };
+  }
   await writeWorkspacePreference({ workspaceDirectoryPath: directoryPath });
   return {
     ok: true,
@@ -562,8 +603,9 @@ ipcMain.handle("workspace:create-folder", async (event, payload) => {
     payload && typeof payload.directoryPath === "string" && payload.directoryPath.trim()
       ? payload.directoryPath.trim()
       : "";
-  const targetPath =
-    providedPath || (await chooseWorkspaceDirectory(win, "Create or choose a new Layang workspace folder"));
+  const targetPath = providedPath
+    ? await getWorkspaceAccess().requestAccess(providedPath, { reason: WORKSPACE_ACCESS_REASON })
+    : await chooseWorkspaceDirectory(win, "Create or choose a new Layang workspace folder");
   if (!targetPath) return { ok: false, cancelled: true };
 
   try {
@@ -590,10 +632,14 @@ ipcMain.handle("workspace:create-folder", async (event, payload) => {
 
 ipcMain.handle("workspace:save-folder", async (event, payload) => {
   const win = windowFromEvent(event);
-  const targetPath =
+  const providedPath =
     payload && typeof payload.directoryPath === "string" && payload.directoryPath.trim()
       ? payload.directoryPath.trim()
-      : await chooseWorkspaceDirectory(win, "Choose Layang workspace folder");
+      : "";
+  if (providedPath && !getWorkspaceAccess().isAllowed(providedPath)) {
+    return { ok: false, error: WORKSPACE_ACCESS_DENIED };
+  }
+  const targetPath = providedPath || (await chooseWorkspaceDirectory(win, "Choose Layang workspace folder"));
 
   if (!targetPath) return { ok: false, cancelled: true };
 
@@ -616,24 +662,26 @@ ipcMain.handle("workspace:open-path", async (_event, payload) => {
   const reveal = Boolean(payload?.reveal);
 
   if (!directoryPath) return { ok: false, error: "Missing workspace folder path." };
+  if (!getWorkspaceAccess().isAllowed(directoryPath)) return { ok: false, error: WORKSPACE_ACCESS_DENIED };
 
   const rootPath = path.resolve(directoryPath);
   const targetPath = relativePath ? path.resolve(rootPath, relativePath) : rootPath;
   if (targetPath !== rootPath && !targetPath.startsWith(`${rootPath}${path.sep}`)) {
     return { ok: false, error: "Refusing to open a path outside the workspace folder." };
   }
+  if (!getWorkspaceAccess().isAllowed(targetPath)) {
+    return { ok: false, error: "Refusing to open a path outside the workspace folder." };
+  }
 
   try {
     if (ensureDirectory) await fs.mkdir(targetPath, { recursive: true });
     if (reveal) {
-      if (!fsSync.existsSync(targetPath)) {
-        const parentPath = path.dirname(targetPath);
-        await fs.mkdir(parentPath, { recursive: true });
-        await fs.writeFile(targetPath, "", { flag: "a" });
-      }
+      if (!fsSync.existsSync(targetPath)) return { ok: false, error: "The path does not exist." };
       shell.showItemInFolder(targetPath);
       return { ok: true, path: targetPath };
     }
+    const openPolicy = await checkOpenPathPolicy(targetPath);
+    if (!openPolicy.ok) return openPolicy;
     const openError = await shell.openPath(targetPath);
     return openError ? { ok: false, error: openError } : { ok: true, path: targetPath };
   } catch (error) {
@@ -643,6 +691,7 @@ ipcMain.handle("workspace:open-path", async (_event, payload) => {
 ipcMain.handle("workspace:get-revision", async (_event, payload) => {
   const directoryPath = payload && typeof payload.directoryPath === "string" ? payload.directoryPath.trim() : "";
   if (!directoryPath) return { ok: false, error: "Missing workspace folder path." };
+  if (!getWorkspaceAccess().isAllowed(directoryPath)) return { ok: false, error: WORKSPACE_ACCESS_DENIED };
   try {
     const fingerprint = await computeWorkspaceRevision(directoryPath);
     return {
@@ -664,8 +713,10 @@ ipcMain.handle("workspace:open-folder", async (event, payload) => {
     payload && typeof payload.directoryPath === "string" && payload.directoryPath.trim()
       ? payload.directoryPath.trim()
       : "";
-  const directoryPath = providedPath || (await chooseWorkspaceDirectory(win, "Open Layang workspace folder"));
-  if (!directoryPath) return { ok: false, cancelled: true };
+  const directoryPath = providedPath
+    ? await getWorkspaceAccess().requestAccess(providedPath, { reason: WORKSPACE_ACCESS_REASON })
+    : await chooseWorkspaceDirectory(win, "Open Layang workspace folder");
+  if (!directoryPath) return { ok: false, cancelled: true, ...(providedPath ? { error: WORKSPACE_ACCESS_DENIED } : {}) };
 
   try {
     const opened = await openWorkspaceFolder(directoryPath);
@@ -687,6 +738,7 @@ ipcMain.handle("workspace:open-folder", async (event, payload) => {
 ipcMain.handle("docs:build", async (_event, payload) => {
   const directoryPath = payload && typeof payload.directoryPath === "string" ? payload.directoryPath.trim() : "";
   if (!directoryPath) return { ok: false, error: "Save or open a workspace folder before publishing documentation." };
+  if (!getWorkspaceAccess().isAllowed(directoryPath)) return { ok: false, error: WORKSPACE_ACCESS_DENIED };
   try {
     const report = await buildDocumentation(directoryPath, {
       pageId: typeof payload?.pageId === "string" ? payload.pageId : "",
@@ -703,6 +755,7 @@ ipcMain.handle("docs:build", async (_event, payload) => {
 ipcMain.handle("docs:check", async (_event, payload) => {
   const directoryPath = payload && typeof payload.directoryPath === "string" ? payload.directoryPath.trim() : "";
   if (!directoryPath) return { ok: false, error: "Missing workspace folder path." };
+  if (!getWorkspaceAccess().isAllowed(directoryPath)) return { ok: false, error: WORKSPACE_ACCESS_DENIED };
   try {
     const report = await checkDocumentation(directoryPath, {
       collection: typeof payload?.collection === "string" ? payload.collection : "",
@@ -713,6 +766,23 @@ ipcMain.handle("docs:check", async (_event, payload) => {
     return { ok: false, error: error?.message ? String(error.message) : String(error) };
   }
 });
+
+async function checkOpenPathPolicy(targetPath) {
+  let stat;
+  try {
+    stat = await fs.stat(targetPath);
+  } catch {
+    return { ok: false, error: "The path does not exist." };
+  }
+  if (stat.isDirectory()) return { ok: true };
+  if (BLOCKED_OPEN_EXTENSIONS.has(path.extname(targetPath).toLowerCase())) {
+    return { ok: false, error: "Refusing to open an executable or script file." };
+  }
+  if (process.platform !== "win32" && (stat.mode & 0o111) !== 0) {
+    return { ok: false, error: "Refusing to open an executable file." };
+  }
+  return { ok: true };
+}
 
 /**
  * Returns the default per-user workspace location.
@@ -813,6 +883,8 @@ async function chooseWorkspaceDirectory(win, title) {
     properties: ["openDirectory", "createDirectory"],
   });
   if (result.canceled || !result.filePaths.length) return "";
+  // A folder picked in the native dialog is an explicit user grant.
+  getWorkspaceAccess().addRoot(result.filePaths[0]);
   return result.filePaths[0];
 }
 
