@@ -1,23 +1,29 @@
 # Changelog
 
-## Unreleased
+## 1.2.3
 
 ### Added
 
+* gRPC mock push-on-request: a unary scenario's `output.push` sends data built from the request (`{{request.<path>}}`, `{{seq}}`, `{{now}}`, `| enumValue`) into the open mock streams of another method, as one extra message or appended to every later message of a snapshot stream. Runs in the gateway (`layang gateway:start`, Web access). See *Push to a Stream on Request* in the gRPC mock guide.
 * New scenario templates: **Example from proto** (response fields generated from the schema), **Stream, 3 responses**, **Manual push**, **Match a request field**, **Error status**, and **Blank**, with a YAML preview. New scenarios used to start as an empty `data: {}`.
-* Mocking help: a **Help** drawer beside the workspace (quick start, templates, file format, matching, streaming, Web Access, troubleshooting) and a [quick start guide](docs/guides/mock-quickstart.md).
-* Scenario editor: **Request matcher** writes an `input` block (`contains`, `equals`, `matches`, `glob`, `headers`, `or`, `any`) filled with values from a request example built from the proto, and **Copy request example** copies that JSON. **Help → Matching requests** lists every matcher with a copyable snippet.
+* Mocking help: a **Help** drawer beside the workspace (quick start, templates, file format, matching, streaming, Web Access, troubleshooting), and the full [quick start guide](docs/guides/mock-quickstart.md) inside the app.
+* Scenario editor: **Ctrl+Space** suggests what fits where the cursor is: top-level keys, matchers under `input`, request and response field names from the proto, `push` options, gRPC statuses after `code:`, and delivery modes.
+* Scenario editor: **Insert** writes an `input` block (`contains`, `equals`, `matches`, `glob`, `headers`, `or`, `any`) filled with values from a request example built from the proto, and **Copy request example** copies that JSON. **Help → Matching requests** lists every matcher with a copyable snippet.
 * gRPC mocking home: a getting-started checklist for new workspaces, and runtime cards with copy-address buttons.
 
 ### Changed
 
-* Web Access settings live in one place, **Mock settings → Web Access**. The separate Settings tab in the Web Access panel is gone, and both Settings buttons on the gRPC home open the same dialog. Switching between HTTP and HTTPS no longer changes the port; the dialog suggests 8443 instead.
-* **Apply Native** is now **Activate**, with a **Live** / **Not live** status and a tooltip. The scenario menu says **Activate for Web Access**, **Send now via Web Access**, and **Activate and send via Web Access** instead of "Apply Gateway", "Gateway Manual Send", and "Gateway Apply + Send". Status messages no longer mention runtime config or gateway validation.
+* Web Access settings live in one place, **Mock settings → Web Access**. The separate Settings tab in the Web Access panel is gone, and both Settings buttons on the gRPC home open the same dialog.
+* **Apply Native** is now **Activate**, with a **Live** / **Not live** status and a tooltip. The scenario menu says **Activate for Web Access**, **Send now via Web Access**, and **Activate and send via Web Access** instead of "Apply Gateway", "Gateway Manual Send", and "Gateway Apply + Send". Status messages no longer mention runtime config or gateway validation. Autosave no longer shows a "Saved revision N" banner after every pause in typing.
 * Mocking dropdowns follow the app theme. Their option lists were white with pale text on Windows.
 * Manual Send: one control picks the response. Above 100 responses it becomes **Single response** plus a number field, and a hint says why **Send now** is unavailable.
 * Desktop app: Electron 45 (was 42), with React 19.3 and updated CodeMirror. Packaged builds are made with Electron Forge 8; the security fuses (`RunAsNode`, `NODE_OPTIONS` and `--inspect` off, `app.asar` integrity on) are verified in the packaged binary.
 * Desktop app: the secure-storage check uses Electron's asynchronous API, and renderer console logging uses the new event format, so Electron 45 logs no deprecation warnings at startup.
 * Development: Biome 2.6 (lints HTML too), and Dependabot groups updates by how they must be tested: one PR for all GitHub Actions, one for all Electron Forge packages, a separate PR for Biome, and no automatic Electron majors.
+
+### Fixed
+
+* Scenario editor: the editor no longer reloads after each autosave, which moved the cursor to the start and dropped focus while you were typing.
 
 ## 1.2.2
 

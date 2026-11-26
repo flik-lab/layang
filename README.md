@@ -5,7 +5,7 @@
 # Layang
 
 [![Website](https://img.shields.io/badge/website-layang.mff.web.id-blue)](https://layang.mff.web.id/)
-[![Source version](https://img.shields.io/badge/source%20version-1.2.2-blue)](./package.json)
+[![Source version](https://img.shields.io/badge/source%20version-1.2.3-blue)](./package.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Layang is a desktop API workbench for REST, WebSocket, gRPC, and gRPC-Web. It uses workspace folders as the source of truth, so the same requests, schemas, mocks, environments, and documentation can be used from both the desktop app and CLI.
@@ -48,6 +48,14 @@ The gRPC service workspace groups:
 * Activity
 
 Request-specific examples and documentation stay with the request instead of being managed from a separate global screen.
+
+## What's new in 1.2.3
+
+* New gRPC scenarios start from a template with fields generated from the proto, and Ctrl+Space in the scenario editor suggests matchers, field names, and gRPC statuses.
+* Mocking has a Help drawer and an in-app quick start guide, a getting-started checklist, and one Mock settings dialog that now includes Web Access.
+* "Apply Native" is now "Activate", with a Live / Not live status.
+* A unary scenario can push request data into the open streams of another method (`output.push`).
+* Electron 45.
 
 ## What's new in 1.2.2
 
