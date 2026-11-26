@@ -15,6 +15,7 @@ const { isGatewayIncomingScenario, findBlockedSelectedGatewayStreamScenario } = 
 const { createBoundedGatewayLog } = require("../../lib/bounded-gateway-log.cjs");
 const { createGatewayMockStreamScheduler } = require("../../lib/gateway-mock-stream-scheduler.cjs");
 const { createGrpcMockLivePushRegistry, selectGrpcMockManualResponses } = require("../../lib/grpc-mock-live-push.cjs");
+const { createEnumValueLookup, createMockStreamPushRegistry, runMockPushes } = require("../../lib/grpc-mock-stream-push.cjs");
 const { executionAllows } = require("../../lib/mock-execution-engine.cjs");
 const { verifyGatewaySendRevision, fingerprintGatewayScenarios } = require("../../lib/gateway-version-contract.cjs");
 const { normalizeGrpcWebConfig, startGrpcWebProxy, stopGrpcWebProxy } = require("./grpc-web-proxy-server.cjs");
@@ -163,6 +164,10 @@ async function startGatewayProfileNow(payload, profile) {
     appliedRevision: 0,
     scenarioContentHash: initialScenarioHash,
     manualRegistry: createGrpcMockLivePushRegistry(),
+    // Push-on-request: open mock streams and items appended to their later messages.
+    mockStreamPush: createMockStreamPushRegistry(),
+    mockPushSequences: new Map(),
+    enumValue: createEnumValueLookup(packageDefinition),
     activeScenarioIds: isRecord(payload.activeScenarioIds) ? payload.activeScenarioIds : {},
     enabledMethods: isRecord(payload.enabledMethods) ? payload.enabledMethods : {},
     logs: [],
@@ -260,6 +265,7 @@ async function stopGatewayProfileNow(profileId) {
   if (!runtime) return { running: false, profileId: id };
   gatewayRuntimes.delete(id);
   runtime.manualRegistry.clear();
+  runtime.mockStreamPush.clear();
   for (const call of runtime.activeCalls) {
     try {
       call.cancel?.();
@@ -879,11 +885,45 @@ function respondMockUnary(runtime, method, scenario, call, callback, started) {
     runtime.metrics.callsCompleted += 1;
     appendCallLog(runtime, method, "mock", code, Date.now() - started, call.request, output.data, "mock");
     callback(null, output.data === undefined ? {} : output.data);
+    pushFromMockUnary(runtime, method, output, call.request);
   }, delayMs);
+}
+
+/**
+ * Push-on-request: after a mock unary call answered OK, sends its `output.push` data into the
+ * open mock streams of the target methods (see lib/grpc-mock-stream-push.cjs).
+ */
+function pushFromMockUnary(runtime, method, output, request) {
+  if (!output || output.push === undefined || output.push === null) return;
+  try {
+    const results = runMockPushes({
+      registry: runtime.mockStreamPush,
+      output,
+      request,
+      sourceKey: runtimeMethodKey(method),
+      sequences: runtime.mockPushSequences,
+      enumValue: runtime.enumValue,
+    });
+    for (const result of results) {
+      const [serviceName, methodName] = result.method.split("/");
+      appendCallLog(runtime, { serviceName, methodName }, "mock", "PUSH", 0, request, result.data, "mock",
+        result.mode === "append"
+          ? `Appended to ${result.method} (${result.appended} item(s), ${result.delivered} open stream(s)).`
+          : `Pushed to ${result.delivered} open ${result.method} stream(s).`);
+    }
+  } catch (error) {
+    appendCallLog(runtime, method, "mock", "PUSH_ERROR", 0, request, undefined, "mock",
+      error instanceof Error ? error.message : String(error));
+  }
 }
 
 function respondMockServerStream(runtime, method, scenario, call, started) {
   const responses = Array.isArray(scenario.stream?.responses) ? scenario.stream.responses : [];
+  const methodKey = runtimeMethodKey(method);
+  // Open for push-on-request until the stream ends or the caller goes away.
+  const unregisterPush = runtime.mockStreamPush.register(methodKey, call);
+  call.on?.("cancelled", unregisterPush);
+  call.on?.("close", unregisterPush);
   return createGatewayMockStreamScheduler({
     call,
     responses,
@@ -895,17 +935,20 @@ function respondMockServerStream(runtime, method, scenario, call, started) {
       const code = normalizeGrpcStatus(item.code);
       if (code !== grpc.status.OK)
         return { error: grpcStatusError(code, item.message || "Mock stream error") };
-      return { data: item.data === undefined ? {} : item.data };
+      // Items appended by push-on-request ride along in every later message.
+      return { data: runtime.mockStreamPush.apply(methodKey, item.data === undefined ? {} : item.data) };
     },
     onMessage(item) {
       runtime.metrics.streamMessages += 1;
       appendCallLog(runtime, method, "mock", "MESSAGE", Date.now() - started, call.request, item.data, "mock");
     },
     onComplete() {
+      unregisterPush();
       runtime.metrics.callsCompleted += 1;
       call.end();
     },
     onError(error) {
+      unregisterPush();
       runtime.metrics.callsFailed += 1;
       endServerCall(call, error.code ?? grpc.status.INTERNAL, error.message || "Mock stream failed");
     },

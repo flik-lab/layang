@@ -27,7 +27,7 @@ Use **New scenario** to pick a gRPC method and enter a display name. Layang assi
 
 Select an RPC in the Mocking sidebar to see its scenarios. The **+** beside a method opens the create dialog for that RPC. Choose **All scenarios** to return to the workspace-wide list.
 
-The method panel puts the scenario picker and delivery controls above the resizable YAML/JSON editor. **Periodic** and **Hybrid** expose interval and loop settings. **Save delivery** creates a disk revision, and **Apply Native** updates the selected scenario in the running snapshot. In **Standby** or **Hybrid**, choose a response or **All responses**, then select **Send now**. Delivery settings can be saved while the YAML is shown as metadata only.
+The method panel puts the scenario picker and delivery controls above the resizable YAML/JSON editor. **Periodic** and **Hybrid** expose interval and loop settings. **Save delivery** creates a disk revision, and **Activate** updates the selected scenario in the running snapshot. In **Standby** or **Hybrid**, choose a response or **All responses**, then select **Send now**. Delivery settings can be saved while the YAML is shown as metadata only.
 
 ## Automatic, one-way migration
 
@@ -45,9 +45,9 @@ Routine saves cannot recreate the legacy per-method format. The old in-memory fo
 ## Runtime consistency
 
 - **Save**: writes a new persisted CAS revision; it does not imply that a running mock changed.
-- **Apply Native**: privileged main/utility runtime reads a v3 disk snapshot and returns an acknowledged config version/hash.
+- **Activate**: privileged main/utility runtime reads a v3 disk snapshot and returns an acknowledged config version/hash.
 - **Manual Send**: requires the acknowledged revision/hash/config version, rejecting stale or unsaved changes.
-- **Apply Gateway**: compiles the selected method from v3 and activates it in the requested Gateway profile.
+- **Activate for Web Access**: compiles the selected method from v3 and activates it in the requested Gateway profile.
 - **Atomic Gateway Apply + Send**: validates before replacing the active snapshot; the apply/send operation is serialized per profile.
 
 Native serves one scenario per method: the selected scenario while it is active, otherwise the highest-priority active scenario. A method with no active scenario answers `NOT_FOUND`; inactive scenarios are never used as a fallback.

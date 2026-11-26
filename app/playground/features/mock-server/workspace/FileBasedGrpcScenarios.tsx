@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type RefObject } from "react";
-import { Alert, Box, Button, Chip, IconButton, Menu, MenuItem, Paper, Stack, Typography } from "@/components/shadcn/compat";
+import { Alert, Box, Button, Chip, IconButton, Menu, MenuItem, Paper, Stack, Tooltip, Typography } from "@/components/shadcn/compat";
 import { Add, Settings } from "@/components/shadcn/icons";
+import { Select } from "@/components/ui/select";
 import { CreateGrpcScenarioDialog, isScenarioMethodKey } from "./CreateGrpcScenarioDialog";
 import type { MockCatalogMethodInput } from "../catalog/mockCatalog.types";
 import { ScenarioDeliveryControls, type ScenarioDeliverySettings } from "./ScenarioDeliveryControls";
@@ -13,6 +14,11 @@ import { ScenarioMetadataList } from "./ScenarioMetadataList";
 import { CodeTextField } from "../../request-editor/request-editor-panels";
 import { useScenarioIndex } from "../catalog/useScenarioIndex";
 import { notifyScenarioCatalogChanged } from "../catalog/scenario-catalog-events";
+import type { ScenarioExamples } from "../scenario-templates";
+import { buildMatcher, MATCHER_OPTIONS, type MatcherKind } from "../matcher-snippets";
+import { createScenarioCompletionSource } from "../scenario-completions";
+import { openMockHelp } from "../../help/mock-help-store";
+import { copyTextWithAnnouncement } from "@/lib/accessibility";
 
 type Ref = { methodKey: string; scenarioId: string };
 const same = (a: Ref | null, b: Ref) => a?.methodKey === b.methodKey && a?.scenarioId === b.scenarioId;
@@ -41,13 +47,14 @@ function rememberDraft(identity: string, value: Pending | null) {
  * This is the canonical source of gRPC scenarios. It does NOT claim
  * that a saved v3 file is active in the native/gateway gRPC runtime.
  */
-export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", gatewayProfileId = "default-gateway", onIndexChange, draftHandle, methods, runtimeStatus, createRequested = false, onCreateRequestHandled, onShowAll }: {
+export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", gatewayProfileId = "default-gateway", onIndexChange, draftHandle, methods, runtimeStatus, createRequested = false, onCreateRequestHandled, onShowAll, getExamples }: {
   directoryPath: string; selectedMethodKey?: string; gatewayProfileId?: string; onIndexChange?: (count: number) => void;
   methods: MockCatalogMethodInput[];
   runtimeStatus?: MockServerStatus;
   createRequested?: boolean;
   onCreateRequestHandled?: () => void;
   onShowAll: () => void;
+  getExamples?: (method: MockCatalogMethodInput) => ScenarioExamples | null;
   draftHandle?: RefObject<(() => Promise<boolean>) | null>;
 }) {
   const store = typeof window !== "undefined" ? window.electronMockScenarioStore : undefined;
@@ -145,6 +152,38 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
     void choose(scopedItems[0]);
   }, [methodScope, scopedItems, selected, dirty, saving, choose]);
 
+  const [matcherAnchor, setMatcherAnchor] = useState<HTMLElement | null>(null);
+  const requestExample = () => {
+    const target = methods.find(item => `${item.serviceName}/${item.methodName}` === selected?.methodKey);
+    return target && getExamples ? (getExamples(target)?.request ?? null) : null;
+  };
+
+  const examplesForSelected = () => {
+    const target = methods.find(item => `${item.serviceName}/${item.methodName}` === selected?.methodKey);
+    return target && getExamples ? getExamples(target) : null;
+  };
+  const examplesRef = useRef(examplesForSelected);
+  examplesRef.current = examplesForSelected;
+  const completionSource = useMemo(() => createScenarioCompletionSource(() => examplesRef.current()), []);
+
+  /** Replaces the scenario's `input` block, keeping the editor's current format. */
+  const insertMatcher = (kind: MatcherKind) => {
+    try {
+      const value = parseYaml(draft);
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("The scenario must be an object to add a matcher.");
+      const next = { ...(value as Record<string, unknown>), input: buildMatcher(kind, requestExample()) };
+      setDraft(format === "json" ? `${JSON.stringify(next, null, 2)}\n` : stringifyYaml(next));
+      setError("");
+      setMessage(`Added an "${kind}" matcher with values from the request example. Edit the values; changes save automatically.`);
+    } catch (error) { setError(String(error)); }
+  };
+
+  const copyRequestExample = () => {
+    const example = requestExample();
+    if (!example) { setError("The request schema isn't loaded. Open the method's proto in Schemas first."); return; }
+    copyTextWithAnnouncement(JSON.stringify(example, null, 2), "Request example");
+  };
+
   const changeFormat = (next: "yaml" | "json") => {
     try {
       const value = parseYaml(draft);
@@ -178,7 +217,8 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
       setRevision(result.saved.revision);
       setContentHash(result.saved.contentHash);
       setExecution(result.saved.execution);
-      setMessage(`Saved revision ${result.saved.revision}. Runtime Apply is explicit.`);
+      // Autosave runs after every pause in typing, so a "saved" banner would only be noise.
+      setMessage("");
       notifyScenarioCatalogChanged(directoryPath);
       return true;
     } catch (e) { setError(String(e)); return false; }
@@ -234,7 +274,7 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
       setExecution(undefined);
       setApplied(null);
       setAppliedGateway(null);
-      setMessage(`Deleted ${current.scenarioId} from disk. Restart or Apply another scenario to change a running snapshot.`);
+      setMessage(`Deleted ${current.scenarioId}. A running mock keeps answering with it until you activate another scenario or restart.`);
     } catch (error) { setError(String(error)); }
     finally { setSaving(false); setDeleteArmed(false); inflight.current = false; }
   };
@@ -247,7 +287,7 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
     setCreateOpen(true);
   };
 
-  const createScenario = async (methodKey: string, name: string, responseStream: boolean) => {
+  const createScenario = async (methodKey: string, name: string, buildYaml: (id: string) => string) => {
     if (!store || !isScenarioMethodKey(methodKey) || !name.trim() || inflight.current) return;
     if (methodScope && methodKey !== methodScope) return;
     if (methods.some(item => `${item.serviceName}/${item.methodName}` === methodKey && item.requestStream)) {
@@ -256,8 +296,7 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
     }
     const slug = name.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 72);
     const ref = { methodKey, scenarioId: `${slug || "scenario"}-${crypto.randomUUID().slice(0, 8)}` };
-    const response = responseStream ? "stream:\n  execution:\n    mode: incoming\n  responses:\n    - data: {}\n" : "response:\n  data: {}\n";
-    const text = `id: ${JSON.stringify(ref.scenarioId)}\nname: ${JSON.stringify(name)}\nenabled: true\n${response}`;
+    const text = buildYaml(ref.scenarioId);
     inflight.current = true;
     setSaving(true);
     setCreateError("");
@@ -279,7 +318,7 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
       setAppliedGateway(null);
       setDeleteArmed(false);
       setCreateOpen(false);
-      setMessage(`Created "${name}". Apply when ready.`);
+      setMessage(`Created "${name}". Press Activate when it is ready.`);
       notifyScenarioCatalogChanged(directoryPath);
     } catch (error) {
       setCreateError(String(error));
@@ -312,7 +351,7 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
       }
       setApplied(null);
       setAppliedGateway(null);
-      setMessage("Delivery settings saved. Apply to update the running mock.");
+      setMessage("Delivery settings saved. Press Activate to use them on the running mock.");
       notifyScenarioCatalogChanged(directoryPath);
     } catch (error) {
       setError(String(error));
@@ -331,7 +370,7 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
     }
     setApplied({revision: result.applied.appliedRevision,hash:result.applied.scenarioContentHash,
       configVersion:result.applied.configVersion,scenarioKey:key(directoryPath,selected)});
-    setMessage(`Active in Native gRPC: runtime config v${result.applied.configVersion}. Gateway requires separate validation.`);
+    setMessage(`Live on the gRPC mock (config v${result.applied.configVersion}). For browsers, use "Activate for Web Access" in the scenario menu.`);
   };
   const sendNative = async () => {
     if (!selected || !applied || dirty || saving || applied.scenarioKey !== key(directoryPath,selected)) return;
@@ -352,7 +391,7 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
       }
       setAppliedGateway({revision:result.applied.appliedRevision,hash:result.applied.scenarioContentHash,
         configVersion:result.applied.configVersion,scenarioKey:key(directoryPath,selected),profileId:gatewayProfileId});
-      setMessage(`Active in Gateway ${gatewayProfileId}: config v${result.applied.configVersion}.`);
+      setMessage(`Live on Web Access (${gatewayProfileId}, config v${result.applied.configVersion}).`);
     } catch (err) {setAppliedGateway(null);setError(String(err));}
   };
   const sendGateway = async () => {
@@ -392,7 +431,7 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
   if (!store || !directoryPath) return <Alert severity="info">Save or open an Electron workspace to manage gRPC scenarios.</Alert>;
   return <Stack spacing={methodScope ? 0 : 1} sx={{ minHeight: 0, height: "100%" }}>
     {createOpen && <CreateGrpcScenarioDialog initialMethod={methodScope} methodLocked={Boolean(methodScope)} methods={methods} busy={saving}
-      error={createError} onClose={() => setCreateOpen(false)} onCreate={createScenario} />}
+      error={createError} onClose={() => setCreateOpen(false)} getExamples={getExamples} onCreate={createScenario} />}
     {indexError ? <Alert severity="error">{indexError}</Alert> : null}
     {error ? <Alert severity="error">{error}</Alert> : null}
     {message ? <Alert severity="info">{message}</Alert> : null}
@@ -441,12 +480,12 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
         {(() => {
           const scenarioToolbar = <>
           <Typography variant="caption" color="text.secondary">Scenario</Typography>
-          {scopedItems.length <= 100 ? <select className="shadcn-input" style={{ width: 260, maxWidth: "100%" }}
+          {scopedItems.length <= 100 ? <Select containerClassName="w-[260px] max-w-full"
             aria-label={`Scenario for ${methodScope.split("/")[1] || "selected method"}`}
             value={JSON.stringify([selected.methodKey, selected.scenarioId])} disabled={dirty || saving}
             onChange={event => { const item = scopedItems.find(item => JSON.stringify([item.methodKey, item.scenarioId]) === event.target.value); if (item) void choose(item); }}>
             {scopedItems.map(item => <option key={JSON.stringify([item.methodKey, item.scenarioId])} value={JSON.stringify([item.methodKey, item.scenarioId])}>{item.name}</option>)}
-          </select> : <details>
+          </Select> : <details>
             <summary className="cursor-pointer text-sm">{selectedItem?.name ?? selected.scenarioId} · {scopedItems.length} scenarios</summary>
             <Box sx={{ height: 240 }}><ScenarioMetadataList items={scopedItems} selected={selected} onChoose={choose} /></Box>
           </details>}
@@ -460,23 +499,27 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
             <MenuItem disabled={!loaded || dirty || saving || revision === 0}
               onClick={() => { setSettingsAnchor(null); setDeleteArmed(true); }}>Delete scenario</MenuItem>
             <MenuItem disabled={dirty || saving || revision === 0} onClick={() => { setSettingsAnchor(null); void applyGateway(); }}>
-              Apply Gateway {"\u00b7"} {gatewayProfileId}
+              Activate for Web Access
             </MenuItem>
             <MenuItem disabled={dirty || saving || !appliedGateway ||
               appliedGateway.scenarioKey !== key(directoryPath, selected) || appliedGateway.profileId !== gatewayProfileId}
-              onClick={() => { setSettingsAnchor(null); void sendGateway(); }}>Gateway Manual Send</MenuItem>
-            <MenuItem aria-label="Atomic Gateway Apply + Send" disabled={dirty || saving || revision === 0}
+              onClick={() => { setSettingsAnchor(null); void sendGateway(); }}>Send now via Web Access</MenuItem>
+            <MenuItem disabled={dirty || saving || revision === 0}
               onClick={() => { setSettingsAnchor(null); void applySendGateway(); }}>
-              Gateway Apply + Send
+              Activate and send via Web Access
             </MenuItem>
           </Menu>
           </>;
           const active = runtimeStatus?.running && runtimeStatus.activeScenarioIds?.[selected.methodKey] === selected.scenarioId;
           const runtimeActions = <>
-            <Button size="small" variant="outlined" disabled={dirty || saving || revision === 0}
-              onClick={() => void applyNative()}>Apply Native</Button>
+            <Tooltip title={dirty ? "Save the draft first" : "Make this saved scenario the one the running gRPC mock answers with"}>
+              <span>
+                <Button size="small" variant={active ? "outlined" : "contained"} disabled={dirty || saving || revision === 0}
+                  onClick={() => void applyNative()}>{active ? "Reactivate" : "Activate"}</Button>
+              </span>
+            </Tooltip>
             <Chip size="small" variant="outlined" color={active ? "success" : "default"}
-              label={active ? "Active" : "Inactive"} />
+              label={active ? "Live" : "Not live"} />
           </>;
           return selectedIsStream && revision > 0 ? (
             <ScenarioDeliveryControls key={contentHash} execution={execution}
@@ -507,6 +550,34 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
             <Stack direction="row" spacing={0.5} alignItems="center" sx={{ minHeight: 36, flexShrink: 0 }}>
               <Button size="small" variant={format === "yaml" ? "contained" : "text"} disabled={!loaded} onClick={() => changeFormat("yaml")}>YAML</Button>
               <Button size="small" variant={format === "json" ? "contained" : "text"} disabled={!loaded} onClick={() => changeFormat("json")}>JSON</Button>
+              <Box sx={{ width: 1, height: 18, mx: 0.5, borderLeft: "1px solid var(--border-strong)" }} />
+              <Button size="small" variant="text" startIcon={<Add sx={{ fontSize: 15 }} />} disabled={!loaded || saving}
+                aria-haspopup="menu" onClick={(event: React.MouseEvent<HTMLElement>) => setMatcherAnchor(event.currentTarget)}>Insert</Button>
+              <Menu anchorEl={matcherAnchor} open={Boolean(matcherAnchor)} onClose={() => setMatcherAnchor(null)}>
+                <MenuItem disabled>
+                  <Typography variant="caption" color="text.secondary">Answer only requests that match (input)</Typography>
+                </MenuItem>
+                {MATCHER_OPTIONS.map(option => (
+                  <MenuItem key={option.kind} onClick={() => { setMatcherAnchor(null); insertMatcher(option.kind); }}>
+                    <Stack spacing={0}>
+                      <Typography variant="body2" fontFamily="monospace">{option.label}</Typography>
+                      <Typography variant="caption" color="text.secondary">{option.description}</Typography>
+                    </Stack>
+                  </MenuItem>
+                ))}
+                <MenuItem onClick={() => { setMatcherAnchor(null); copyRequestExample(); }}>
+                  <Stack spacing={0}>
+                    <Typography variant="body2">Copy request example</Typography>
+                    <Typography variant="caption" color="text.secondary">JSON built from the proto, to paste into a matcher or client</Typography>
+                  </Stack>
+                </MenuItem>
+                <MenuItem onClick={() => { setMatcherAnchor(null); openMockHelp("matching"); }}>
+                  <Typography variant="body2">How matching works</Typography>
+                </MenuItem>
+              </Menu>
+              {format === "yaml" && <Typography variant="caption" color="text.secondary" sx={{ ml: 0.5 }}>
+                Ctrl+Space for suggestions
+              </Typography>}
               <Box sx={{ flex: 1 }} />
               <Button size="small" variant="text" disabled={!loaded || saving} onClick={() => changeFormat(format)}>Format</Button>
               <Button size="small" variant="text" disabled={!dirty || saving} onClick={() => { setDraft(baseline); setError(""); }}>Revert</Button>
@@ -515,7 +586,7 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
         <Box sx={{flex:1,minHeight:0}}>
 
           {loaded && selected ? <CodeTextField value={draft} onChange={setDraft} buffered={false} minRows={12} fullHeight
-            language={format} showFormatAction={false} fullscreenTitle={`${selected.methodKey.split("/")[1]} scenario`} resetKey={`${key(directoryPath,selected)}:${revision}`} />
+            language={format} showFormatAction={false} completionSource={format === "yaml" ? completionSource : undefined} fullscreenTitle={`${selected.methodKey.split("/")[1]} scenario`} resetKey={key(directoryPath,selected)} />
             : selected && revision > 0 ? (
               <Stack spacing={1} alignItems="flex-start">
                 <Typography variant="body2">Large scenario selected. You can apply it directly or edit the file externally.</Typography>

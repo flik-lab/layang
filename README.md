@@ -5,7 +5,7 @@
 # Layang
 
 [![Website](https://img.shields.io/badge/website-layang.mff.web.id-blue)](https://layang.mff.web.id/)
-[![Source version](https://img.shields.io/badge/source%20version-1.2.2-blue)](./package.json)
+[![Source version](https://img.shields.io/badge/source%20version-1.2.3-blue)](./package.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Layang is a desktop API workbench for REST, WebSocket, gRPC, and gRPC-Web. It uses workspace folders as the source of truth, so the same requests, schemas, mocks, environments, and documentation can be used from both the desktop app and CLI.
@@ -48,6 +48,14 @@ The gRPC service workspace groups:
 * Activity
 
 Request-specific examples and documentation stay with the request instead of being managed from a separate global screen.
+
+## What's new in 1.2.3
+
+* New gRPC scenarios start from a template with fields generated from the proto, and Ctrl+Space in the scenario editor suggests matchers, field names, and gRPC statuses.
+* Mocking has a Help drawer and an in-app quick start guide, a getting-started checklist, and one Mock settings dialog that now includes Web Access.
+* "Apply Native" is now "Activate", with a Live / Not live status.
+* A unary scenario can push request data into the open streams of another method (`output.push`).
+* Electron 45.
 
 ## What's new in 1.2.2
 
@@ -142,7 +150,7 @@ Server-streaming scenarios support:
 
 Manual Send can publish a saved scenario response to an active Live Push stream without closing the connection.
 
-For gRPC, select a scenario under **Services → gRPC → Scenarios**, save its revision, and explicitly **Apply Native** or **Apply Gateway** to activate it. Manual Send requires an acknowledged active revision. External file changes are detected through the revision/content-hash check. Historical `mocks/grpc/methods/*.mock.yml` files are converted once, with verified backups, into independent file-based v3 documents. See [Canonical gRPC Scenarios](./docs/FILE_BASED_GRPC_SCENARIOS.md).
+For gRPC, select a scenario under **Services → gRPC → Scenarios**, save its revision, and press **Activate** (or **Activate for Web Access** in the scenario menu) to make it live. Manual Send requires an acknowledged active revision. External file changes are detected through the revision/content-hash check. Historical `mocks/grpc/methods/*.mock.yml` files are converted once, with verified backups, into independent file-based v3 documents. See [Canonical gRPC Scenarios](./docs/FILE_BASED_GRPC_SCENARIOS.md).
 
 ## Web Access
 
@@ -316,6 +324,7 @@ pnpm build
 
 ## Mock Guides
 
+* [gRPC mock quick start](docs/guides/mock-quickstart.md): your first mock in five steps. The app has the same guide under **Help** in Mocking.
 * [gRPC mock scenarios](guide-scenario-mock-grpc.md)
 * [REST mock scenarios](guide-scenario-mock-rest.md)
 * [WebSocket mock scenarios](guide-scenario-mock-websocket.md)

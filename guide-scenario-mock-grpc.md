@@ -409,6 +409,39 @@ Behavior:
 - if `response.delayMs` is not present, Layang uses `stream.intervalMs`
 - if a response has `code != 0`, the stream ends with that gRPC error
 
+## Push to a Stream on Request
+
+A unary scenario can push data into the open mock streams of another method when it answers OK, built from the unary request. Use it when a command should show up in a stream, for example a "create" call whose new item must appear in a live feed.
+
+```yaml
+output:
+  code: 0
+  data: { message: OK }
+  push:
+    - method: track_state_publishing_track_data.TrackDataService/TrackDataStream
+      mode: append          # or "message" (default)
+      field: tracks         # required for append
+      sequenceStart: 9001   # first {{seq}} value (default 1)
+      data:
+        tacticalTrackNumber: "{{seq}}"
+        environmentData: "{{request.environmentData | enumValue}}"
+        kinematicData:
+          latitude: "{{request.latitude}}"
+          longitude: "{{request.longitude}}"
+```
+
+| Field | Meaning |
+|---|---|
+| `method` | Target server-streaming method, `package.Service/Method`. |
+| `mode` | `message`: one extra message with `data` to every open stream of the method. `append`: `data` is added to the array `field` of **every later message** of that stream, including streams opened later, until the gateway stops. Use `append` for streams whose messages are full snapshots, so the item does not vanish with the next message. |
+| `field` | Array field of the stream message that `append` adds to. |
+| `sequenceStart` | First value of `{{seq}}`; each push from the same scenario output increments it. |
+| `data` | Template for the pushed message (`message`) or item (`append`). |
+
+Templates: a string that is exactly one `{{expression}}` becomes that value with its type (numbers stay numbers); otherwise every `{{expression}}` is replaced by its text. Expressions are `request.<path>` (camelCase field names), `seq` and `now` (epoch milliseconds), optionally followed by a filter: `| number`, `| string`, or `| enumValue` (turns an enum name such as `ENVIRONMENT_AIR` into its number). A field whose expression has no value is left out.
+
+Push-on-request runs in the gateway (`layang gateway:start` and Web access). Each push is logged as `PUSH` with the number of open streams; a template error is logged as `PUSH_ERROR` and does not change the unary response. At most 500 appended items are kept per stream field (oldest dropped first).
+
 ## Loop Semantics
 
 `maxLoops` is the number of restarts after the first full pass.

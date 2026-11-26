@@ -9,6 +9,8 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Circle,
+  CircleHelp,
   CircleStop,
   CircleX,
   ClipboardList,
@@ -193,6 +195,8 @@ export const Search = createCompatIcon(SearchIcon);
 export const Settings = createCompatIcon(Settings2);
 export const Build = createCompatIcon(Hammer);
 export const CheckCircle = createCompatIcon(CircleCheckBig);
+export const HelpOutline = createCompatIcon(CircleHelp);
+export const RadioButtonUnchecked = createCompatIcon(Circle);
 export const ErrorIcon = createCompatIcon(CircleX);
 export const WarningIcon = createCompatIcon(TriangleAlert);
 export const Speed = createCompatIcon(Gauge);

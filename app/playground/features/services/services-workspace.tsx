@@ -34,11 +34,13 @@ import {
 import {
   Add,
   Folder,
+  HelpOutline,
+  Language,
   MoreHoriz,
   OpenInNew,
   PlayArrow,
   Settings,
-  StopCircle,
+  Storage,
 } from "@/components/shadcn/icons";
 import { readProtoCatalog } from "@/lib/proto-catalog-client";
 import { useMockCatalog } from "../mock-server/catalog/useMockCatalog";
@@ -65,6 +67,13 @@ import {
   useWebSocketMockRuntimeStatus,
 } from "../mock-server/runtime/useMockRuntimeSelector";
 import { FileBasedGrpcScenarios } from "../mock-server/workspace/FileBasedGrpcScenarios";
+import { MockHelpDrawer } from "../help/mock-help-drawer";
+import { GrpcGettingStarted, RuntimeCard } from "./grpc-mock-home";
+import { openMockHelp } from "../help/mock-help-store";
+import type { MockCatalogMethodInput } from "../mock-server/catalog/mockCatalog.types";
+import type { ScenarioExamples } from "../mock-server/scenario-templates";
+import { safeGenerateExample } from "../mock-server/mock-scenario-examples";
+import type { ProtoRuntimeRegistry } from "@/lib/proto-runtime-registry";
 import { isScenarioMethodKey } from "../mock-server/workspace/CreateGrpcScenarioDialog";
 import { mockingUiStore, useScenarioNavigation } from "../mock-server/workspace/mockingUi.store";
 import { grpcMockOverviewMethodKey } from "../../shared/workbench-constants";
@@ -98,6 +107,13 @@ function useImmediateMockMethodSelection(
 type ViewContext = Record<string, any>;
 type GrpcMockTab = "scenarios" | "proto" | "web-access" | "activity";
 type GrpcMockSettingsPage = "server" | "security" | "web-server" | "defaults" | "advanced";
+const GRPC_MOCK_SETTINGS_PAGES: ReadonlyArray<{ value: GrpcMockSettingsPage; label: string }> = [
+  { value: "server", label: "Native server" },
+  { value: "security", label: "Native security" },
+  { value: "web-server", label: "Web Access" },
+  { value: "defaults", label: "Stream defaults" },
+  { value: "advanced", label: "Advanced" },
+];
 type AttachedMethod = {
   source: MockProtoSource;
   method: RpcMethodInfo;
@@ -333,7 +349,10 @@ export function ServicesWorkspace({ ctx: shellCtx, draftHandle }: { ctx: ViewCon
           void managedWindow.openDetached("mocking", { title: "Mocking" });
         } : undefined}
       />
-      <Box sx={{ minHeight: 0, flex: 1, overflow: "hidden" }}>{workspaceContent}</Box>
+      <Box sx={{ minHeight: 0, flex: 1, overflow: "hidden", display: "flex" }}>
+        <Box sx={{ minWidth: 0, flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>{workspaceContent}</Box>
+        <MockHelpDrawer />
+      </Box>
       <GrpcMockSettingsDialog
         open={grpcSettingsOpen}
         page={grpcSettingsPage}
@@ -447,8 +466,11 @@ function MockRuntimeStrip({
           </Button>
         </Tooltip>
       ) : null}
+      <Button size="small" variant="text" startIcon={<HelpOutline sx={{ fontSize: 14 }} />} onClick={() => openMockHelp()} sx={{ flexShrink: 0 }}>
+        Help
+      </Button>
       <Button size="small" variant="outlined" startIcon={<Settings sx={{ fontSize: 14 }} />} onClick={onOpenSettings} sx={{ flexShrink: 0 }}>
-        Mock Settings
+        Mock settings
       </Button>
     </Stack>
   );
@@ -487,16 +509,26 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios", draftHandle }
   const [settingsPage, setSettingsPage] = useState<GrpcMockSettingsPage>("server");
   const [nativeRuntimeAction, setNativeRuntimeAction] = useState<"start" | "stop" | null>(null);
   const [webRuntimeAction, setWebRuntimeAction] = useState<"start" | "stop" | null>(null);
-  const [webAccessSectionRequest, setWebAccessSectionRequest] = useState<{
-    id: number;
-    tab: "overview" | "logs" | "settings";
-  }>({ id: 0, tab: "overview" });
+  const openSettings = (page: GrpcMockSettingsPage) => {
+    setSettingsPage(page);
+    setSettingsOpen(true);
+  };
 
   const sourceRefs = useMemo(
     () => resolveEffectiveMockProtoSources(mockServer.protoSources, protoLibraries),
     [mockServer.protoSources, protoLibraries],
   );
   const { summary, methods } = useMockCatalog();
+  const protoRuntimeRegistry: ProtoRuntimeRegistry | undefined = ctx.protoRuntimeRegistry;
+  const getScenarioExamples = useCallback((method: MockCatalogMethodInput): ScenarioExamples | null => {
+    try {
+      const root = protoRuntimeRegistry?.resolveVersion(method.libraryId, method.versionId)?.loaded.root;
+      if (!root) return null;
+      return { request: safeGenerateExample(root, method.requestType), response: safeGenerateExample(root, method.responseType) };
+    } catch {
+      return null;
+    }
+  }, [protoRuntimeRegistry]);
 
   const nativeRunning = Boolean(mockServerStatus.running);
   const webRunning = Boolean(webAccessStatus?.running);
@@ -577,95 +609,62 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios", draftHandle }
 
   const focusedMethod = tab === "scenarios" && isScenarioMethodKey(mockSelectedMethodKey);
   return (
-    <WorkspaceFrame title="gRPC" description="Worker-indexed gRPC mock catalog and runtime controls." focused={focusedMethod}>
+    <WorkspaceFrame title="gRPC" description="Mock gRPC methods from your proto files. Native gRPC serves apps and services; Web Access serves browsers." focused={focusedMethod}>
       <Stack spacing={focusedMethod ? 0 : 1} sx={{ minHeight: 0, flex: 1 }}>
         {!focusedMethod && <>
+        <GrpcGettingStarted steps={[
+          {
+            id: "schema",
+            title: "Import a proto schema",
+            hint: summary.totalMethods > 0 ? `${summary.totalMethods} methods loaded` : "Methods appear in the Mocking sidebar after import",
+            done: sourceRefs.length > 0 || summary.totalMethods > 0,
+            action: { label: "Open Schemas", onClick: () => ctx.setSideSection?.("proto-schemas") },
+          },
+          {
+            id: "scenario",
+            title: "Create your first scenario",
+            hint: "Start from a template generated from the proto",
+            done: scenarioTotal > 0,
+            action: { label: "New scenario", icon: <Add sx={{ fontSize: 15 }} />, onClick: () => { setTab("scenarios"); setScenarioCreateRequested(true); } },
+          },
+          {
+            id: "server",
+            title: "Start the native gRPC server",
+            hint: nativeIssues.length ? nativeIssues.join(" · ") : nativeEndpoint,
+            done: nativeRunning,
+            action: { label: "Start", icon: <PlayArrow sx={{ fontSize: 15 }} />, disabled: !canStartNative || nativeRuntimeAction !== null, onClick: () => void toggleGrpcRuntime() },
+          },
+        ]} />
         <Stack direction={{ xs: "column", lg: "row" }} spacing={0.8}>
-          <Paper variant="outlined" sx={{ px: 1, py: 0.8, flex: 1, minWidth: 0 }}>
-            <Stack direction="row" spacing={0.8} alignItems="center">
-              <Box sx={{ minWidth: 0, flex: 1 }}>
-                <Stack direction="row" spacing={0.65} alignItems="center">
-                  <Typography variant="body2" fontWeight={700}>Native gRPC</Typography>
-                  <Chip
-                    size="small"
-                    color={nativeRunning ? "success" : "default"}
-                    label={
-                      nativeRunning && mockServerStatus.runtimeSource === "cli"
-                        ? "Running · CLI"
-                        : nativeRunning
-                          ? "Running"
-                          : "Stopped"
-                    }
-                  />
-                </Stack>
-                <Typography variant="body2" fontFamily="monospace" noWrap title={nativeEndpoint}>
-                  {nativeEndpoint}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" noWrap>
-                  {summary.totalMethods} methods · {scenarioTotal} file-backed scenarios
-                </Typography>
-              </Box>
-              <Tooltip title="Native gRPC settings">
-                <IconButton aria-label="Open Native gRPC settings" onClick={() => setSettingsOpen(true)}>
-                  <Settings />
-                </IconButton>
-              </Tooltip>
-              <Button
-                size="small"
-                color={nativeRunning ? "error" : "primary"}
-                variant="contained"
-                disabled={nativeRuntimeAction !== null || (!nativeRunning && !canStartNative)}
-                startIcon={nativeRunning ? <StopCircle /> : <PlayArrow />}
-                onClick={() => void toggleGrpcRuntime()}
-              >
-                {nativeRuntimeAction ? (nativeRuntimeAction === "start" ? "Starting…" : "Stopping…") : nativeRunning ? "Stop" : "Start"}
-              </Button>
-            </Stack>
-            {!nativeRunning && nativeIssues.length > 0 ? (
-              <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.45 }}>
-                {nativeIssues.join(" · ")}
-              </Typography>
-            ) : null}
-          </Paper>
-
-          <Paper variant="outlined" sx={{ px: 1, py: 0.8, flex: 1, minWidth: 0 }}>
-            <Stack direction="row" spacing={0.8} alignItems="center">
-              <Box sx={{ minWidth: 0, flex: 1 }}>
-                <Stack direction="row" spacing={0.65} alignItems="center">
-                  <Typography variant="body2" fontWeight={700}>Web Access</Typography>
-                  <Chip size="small" color={webRunning ? "success" : "default"} label={webRunning ? "Running" : "Stopped"} />
-                  {webConfig?.security?.type === "tls" ? <Chip size="small" variant="outlined" label="HTTPS · HTTP/2" /> : null}
-                </Stack>
-                <Typography variant="body2" fontFamily="monospace" noWrap title={browserUrl}>
-                  {browserUrl}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" noWrap>
-                  → Native gRPC {nativeEndpoint}
-                </Typography>
-              </Box>
-              <Tooltip title="Web Access settings">
-                <IconButton
-                  aria-label="Open Web Access settings"
-                  onClick={() => {
-                    setWebAccessSectionRequest((current) => ({ id: current.id + 1, tab: "settings" }));
-                    setTab("web-access");
-                  }}
-                >
-                  <Settings />
-                </IconButton>
-              </Tooltip>
-              <Button
-                size="small"
-                color={webRunning ? "error" : "primary"}
-                variant="contained"
-                disabled={webRuntimeAction !== null || (!webRunning && !canStartWeb)}
-                startIcon={webRunning ? <StopCircle /> : <PlayArrow />}
-                onClick={() => void toggleWebRuntime()}
-              >
-                {webRuntimeAction ? (webRuntimeAction === "start" ? "Starting…" : "Stopping…") : webRunning ? "Stop" : "Start"}
-              </Button>
-            </Stack>
-          </Paper>
+          <RuntimeCard
+            title="Native gRPC"
+            icon={<Storage sx={{ fontSize: 16 }} />}
+            running={nativeRunning}
+            statusLabel={nativeRunning && mockServerStatus.runtimeSource === "cli" ? "Running · CLI" : nativeRunning ? "Running" : "Stopped"}
+            endpoint={nativeEndpoint}
+            detail={`${summary.totalMethods} methods · ${scenarioTotal} scenarios`}
+            issues={nativeIssues}
+            pending={nativeRuntimeAction}
+            canStart={canStartNative}
+            settingsLabel="Open Native gRPC settings"
+            onSettings={() => openSettings("server")}
+            onToggle={() => void toggleGrpcRuntime()}
+          />
+          <RuntimeCard
+            title="Web Access"
+            icon={<Language sx={{ fontSize: 16 }} />}
+            running={webRunning}
+            statusLabel={webRunning ? "Running" : "Stopped"}
+            badges={webConfig?.security?.type === "tls" ? <Chip size="small" variant="outlined" label="HTTPS · HTTP/2" /> : null}
+            endpoint={browserUrl}
+            detail={`gRPC-Web for browsers → ${nativeEndpoint}`}
+            issues={canStartWeb ? [] : ["Import a Proto schema"]}
+            pending={webRuntimeAction}
+            canStart={canStartWeb}
+            settingsLabel="Open Web Access settings"
+            onSettings={() => openSettings("web-server")}
+            onToggle={() => void toggleWebRuntime()}
+          />
         </Stack>
 
         <WorkbenchTabs
@@ -691,6 +690,7 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios", draftHandle }
               onShowAll={() => setMockSelectedMethodKey(grpcMockOverviewMethodKey)}
               methods={methods} runtimeStatus={mockServerStatus} createRequested={scenarioCreateRequested} onCreateRequestHandled={handleScenarioCreateRequest}
               gatewayProfileId={mockServer.activeGatewayProfileId || "default-gateway"}
+              getExamples={getScenarioExamples}
               onIndexChange={setScenarioTotal} draftHandle={draftHandle} />
           ) : tab === "proto" ? (
             <ProtoSourcesPanel
@@ -712,7 +712,7 @@ export function GrpcMockWorkspace({ ctx, initialTab = "scenarios", draftHandle }
               }}
             />
           ) : tab === "web-access" ? (
-            <WebAccessPanel ctx={ctx} requestedSection={webAccessSectionRequest} />
+            <WebAccessPanel ctx={ctx} onOpenSettings={() => openSettings("web-server")} />
           ) : (
             <Box sx={{ minHeight: 0, height: "100%", overflow: "auto" }}>
               <RuntimeLogs status={mockServerStatus} />
@@ -886,16 +886,16 @@ function GrpcMockSettingsDialog({
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
-      <DialogTitle>gRPC Mock settings</DialogTitle>
+      <DialogTitle>Mock settings</DialogTitle>
       <DialogContent sx={{ height: "min(72vh, 620px)", overflow: "hidden" }}>
         <Stack direction="row" spacing={1.2} sx={{ height: "100%", minHeight: 0, pt: 0.25 }}>
           <Stack
             spacing={0.35}
             sx={{ width: 160, flexShrink: 0, overflowY: "auto" }}
             role="tablist"
-            aria-label="gRPC Mock settings sections"
+            aria-label="Mock settings sections"
           >
-            {(["server", "security", "defaults", "advanced"] as const).map((value) => (
+            {GRPC_MOCK_SETTINGS_PAGES.map(({ value, label }) => (
               <Button
                 key={value}
                 size="small"
@@ -905,7 +905,7 @@ function GrpcMockSettingsDialog({
                 onClick={() => onPageChange(value)}
                 sx={{ justifyContent: "flex-start" }}
               >
-                {value[0].toUpperCase() + value.slice(1)}
+                {label}
               </Button>
             ))}
           </Stack>
@@ -1012,9 +1012,9 @@ function GrpcMockSettingsDialog({
             {page === "web-server" && (
               <Stack spacing={1.2} sx={{ width: "100%", maxWidth: 560 }}>
                 <Box>
-                  <Typography variant="h6">Web server</Typography>
+                  <Typography variant="h6">Web Access</Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Browser-facing gRPC-Web settings stay available here and in gRPC → Web access → Settings.
+                    Browser-facing gRPC-Web listener used by Web Access. It forwards calls to the native gRPC mock.
                   </Typography>
                 </Box>
 
@@ -1069,7 +1069,6 @@ function GrpcMockSettingsDialog({
                                 const nextType = String(event.target.value) === "tls" ? "tls" : "insecure";
                                 if (nextType === "tls") {
                                   patchWeb({
-                                    port: Number(web.port) === 8080 ? 8443 : web.port,
                                     security:
                                       web.security?.type === "tls"
                                         ? web.security
@@ -1087,10 +1086,7 @@ function GrpcMockSettingsDialog({
                                           },
                                   });
                                 } else {
-                                  patchWeb({
-                                    port: Number(web.port) === 8443 ? 8080 : web.port,
-                                    security: { type: "insecure" },
-                                  });
+                                  patchWeb({ security: { type: "insecure" } });
                                 }
                               }}
                             >
@@ -1098,6 +1094,12 @@ function GrpcMockSettingsDialog({
                               <MenuItem value="tls">HTTPS</MenuItem>
                             </Select>
                           </FormControl>
+                          {web.security?.type === "tls" && Number(web.port) !== 8443 ? (
+                            <Stack direction="row" spacing={0.75} alignItems="center">
+                              <Typography variant="caption" color="text.secondary">Recommended HTTPS port: 8443</Typography>
+                              <Button size="small" variant="text" onClick={() => patchWeb({ port: 8443 })}>Use 8443</Button>
+                            </Stack>
+                          ) : null}
                         </Stack>
                       </>
                     ) : null}

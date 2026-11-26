@@ -12,7 +12,7 @@ function registerGrpcScenarioStoreIpc(ipcMain, options = {}) {
   const indexJobs = new Map();
   const assertNativeWorkspace = (repo, status) => {
     if (!status?.running || !status.workspaceDirectory || path.resolve(status.workspaceDirectory) !== repo.root)
-      throw new Error("NATIVE_WORKSPACE_MISMATCH: Start Native gRPC in this workspace before Apply/Send.");
+      throw new Error("NATIVE_WORKSPACE_MISMATCH: Start the gRPC mock in this workspace before activating or sending.");
   };
   const action = (channel, fn) => ipcMain.handle(channel, async (_event, payload) => {
     try {
@@ -116,7 +116,7 @@ function registerGrpcScenarioStoreIpc(ipcMain, options = {}) {
     return selected;
   };
   const assertGatewayWorkspace = (repo, status) => {
-    if (!status?.running) throw new Error("Start the Gateway profile before Apply/Send.");
+    if (!status?.running) throw new Error("Start Web Access before activating or sending.");
     if (!status.workspaceDirectory || path.resolve(status.workspaceDirectory) !== repo.root)
       throw new Error("GATEWAY_WORKSPACE_MISMATCH: Gateway belongs to a different or unsaved workspace.");
   };
@@ -157,7 +157,7 @@ function registerGrpcScenarioStoreIpc(ipcMain, options = {}) {
   });
   action("mock-scenario:send-gateway", async (repo, p) => {
     if (typeof options.sendGateway !== "function")
-      return { ok: false, error: "Gateway Manual Send unavailable." };
+      return { ok: false, error: "Sending through Web Access is unavailable." };
     await verifyGatewayDisk(repo, { ...p, expectedRevision: p.expectedSavedRevision,
       expectedHash: p.expectedSavedHash });
     assertGatewayWorkspace(repo, await options.getGatewayStatus?.(p.profileId));

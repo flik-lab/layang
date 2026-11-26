@@ -1,5 +1,6 @@
 "use client";
 
+import type { CompletionContext, CompletionSource } from "@codemirror/autocomplete";
 import {
   forwardRef,
   useEffect,
@@ -71,6 +72,8 @@ type LayangCodeEditorProps = {
   onExitFullscreen?: () => void;
   className?: string;
   style?: CSSProperties;
+  /** Extra suggestions for Ctrl+Space and while typing. */
+  completionSource?: CompletionSource;
 };
 
 type SavedEditorViewState = {
@@ -464,10 +467,13 @@ export const LayangCodeEditor = forwardRef<LayangCodeEditorHandle, LayangCodeEdi
     onExitFullscreen,
     className,
     style,
+    completionSource,
   },
   forwardedRef,
 ) {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const completionSourceRef = useRef(completionSource);
+  completionSourceRef.current = completionSource;
   const viewRef = useRef<EditorView | null>(null);
   const commitTimerRef = useRef<number | null>(null);
   const pendingCommitRef = useRef<string | null>(null);
@@ -601,6 +607,8 @@ export const LayangCodeEditor = forwardRef<LayangCodeEditorHandle, LayangCodeEdi
     };
     if (ariaDescribedBy) contentAttributes["aria-describedby"] = ariaDescribedBy;
 
+    const delegatingCompletionSource = (context: CompletionContext) => completionSourceRef.current?.(context) ?? null;
+
     const shortcutKeymap = keymap.of([
       indentWithTab,
       {
@@ -638,6 +646,9 @@ export const LayangCodeEditor = forwardRef<LayangCodeEditorHandle, LayangCodeEdi
       EditorState.readOnly.of(readOnly),
       EditorView.editable.of(!readOnly),
       EditorView.contentAttributes.of(contentAttributes),
+      // basicSetup's autocompletion reads sources from language data and matches them by identity,
+      // so the same function object must be returned every time; the ref supplies the latest source.
+      EditorState.languageData.of(() => [{ autocomplete: delegatingCompletionSource }]),
       EditorView.updateListener.of((update) => {
         if (!update.docChanged || applyingExternalRef.current) return;
         const nextValue = update.state.doc.toString();
