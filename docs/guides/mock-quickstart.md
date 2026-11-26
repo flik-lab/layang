@@ -83,7 +83,7 @@ grpcurl -plaintext -d '{}' 127.0.0.1:50055 package.Service/Method
 
 ## Answering only some requests
 
-Add an `input` block to a scenario. In the editor, press **Request matcher** and pick a type: Layang writes the block with values taken from a request example built from the proto, and you change only the values. **Copy request example** in the same menu copies the JSON a client would send.
+Add an `input` block to a scenario. Press **Ctrl+Space** in the YAML editor for suggestions: matchers under `input:`, request fields from the proto inside a matcher, and gRPC statuses after `code:`. Or press **Insert** in the editor toolbar and pick a matcher: Layang writes the block with values taken from a request example built from the proto, and you change only the values. **Copy request example** in the same menu copies the JSON a client would send.
 
 | Matcher | Matches when |
 | --- | --- |

@@ -1,5 +1,6 @@
 "use client";
 
+import type { CompletionSource } from "@codemirror/autocomplete";
 import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -49,6 +50,7 @@ type CodeTextFieldProps = {
   fullscreenTitle?: string;
   fullHeight?: boolean;
   resetKey?: string;
+  completionSource?: CompletionSource;
 };
 
 const formatShortcutLabel = "Shift+Alt+F";
@@ -73,6 +75,7 @@ export function CodeTextField({
   fullscreenTitle,
   fullHeight = false,
   resetKey,
+  completionSource,
 }: CodeTextFieldProps) {
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
   const editorRef = useRef<LayangCodeEditorHandle | null>(null);
@@ -220,6 +223,7 @@ export function CodeTextField({
           onExitFullscreen={fullscreen ? () => changeFullscreen(false) : undefined}
           className="response-selectable"
           style={{ flex: shouldFillHeight ? "1 1 auto" : undefined }}
+          completionSource={completionSource}
         />
       </Box>
     );

@@ -1658,11 +1658,19 @@ button:disabled {
   font-size: var(--font-size-caption);
 }
 
-.mock-help-footer a {
+.mock-help-guide-link {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--ring);
+  font-size: var(--font-size-caption);
+}
+
+.mock-help-guide-link:hover {
+  text-decoration: underline;
 }
 
 .mock-help-body h4 {

@@ -3,8 +3,6 @@ import { ContentCopy } from "@/components/shadcn/icons";
 import { copyTextWithAnnouncement } from "@/lib/accessibility";
 import type { MockHelpTopic } from "./mock-help-store";
 
-export const FULL_GUIDE_URL = "https://github.com/flik-lab/layang/blob/main/docs/guides/mock-quickstart.md";
-
 type HelpSection = { id: MockHelpTopic; title: string; body: ReactNode };
 
 const Code = ({ children }: { children: string }) => (
@@ -89,7 +87,8 @@ stream:
     body: (
       <>
         <p>Add an <code>input</code> block to answer only some requests. A scenario without <code>input</code> matches everything and works as the fallback.</p>
-        <p><b>Fastest way:</b> in the scenario editor, press <b>Request matcher</b> and pick a type. Layang writes the <code>input</code> block with values from a request example built from the proto, so you only change the values.</p>
+        <p><b>While typing:</b> press <b>Ctrl+Space</b> in the YAML editor. Under <code>input:</code> it lists the matchers; inside a matcher it lists the request fields from the proto; after <code>code:</code> it lists the gRPC statuses.</p>
+        <p><b>From the menu:</b> in the scenario editor, press <b>Insert</b> and pick a matcher. Layang writes the <code>input</code> block with values from a request example built from the proto, so you only change the values.</p>
         <p><b>Where the values come from:</b> the same menu has <b>Copy request example</b>, the JSON a client would send. Paste parts of it into a matcher. Field names can be camelCase or as written in the proto.</p>
 
         <h4>contains: only these fields must match</h4>

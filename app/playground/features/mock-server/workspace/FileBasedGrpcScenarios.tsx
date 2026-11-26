@@ -16,6 +16,7 @@ import { useScenarioIndex } from "../catalog/useScenarioIndex";
 import { notifyScenarioCatalogChanged } from "../catalog/scenario-catalog-events";
 import type { ScenarioExamples } from "../scenario-templates";
 import { buildMatcher, MATCHER_OPTIONS, type MatcherKind } from "../matcher-snippets";
+import { createScenarioCompletionSource } from "../scenario-completions";
 import { openMockHelp } from "../../help/mock-help-store";
 import { copyTextWithAnnouncement } from "@/lib/accessibility";
 
@@ -157,6 +158,14 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
     return target && getExamples ? (getExamples(target)?.request ?? null) : null;
   };
 
+  const examplesForSelected = () => {
+    const target = methods.find(item => `${item.serviceName}/${item.methodName}` === selected?.methodKey);
+    return target && getExamples ? getExamples(target) : null;
+  };
+  const examplesRef = useRef(examplesForSelected);
+  examplesRef.current = examplesForSelected;
+  const completionSource = useMemo(() => createScenarioCompletionSource(() => examplesRef.current()), []);
+
   /** Replaces the scenario's `input` block, keeping the editor's current format. */
   const insertMatcher = (kind: MatcherKind) => {
     try {
@@ -165,7 +174,7 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
       const next = { ...(value as Record<string, unknown>), input: buildMatcher(kind, requestExample()) };
       setDraft(format === "json" ? `${JSON.stringify(next, null, 2)}\n` : stringifyYaml(next));
       setError("");
-      setMessage(`Added an "${kind}" matcher with values from the request example. Edit them, then save.`);
+      setMessage(`Added an "${kind}" matcher with values from the request example. Edit the values; changes save automatically.`);
     } catch (error) { setError(String(error)); }
   };
 
@@ -208,7 +217,8 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
       setRevision(result.saved.revision);
       setContentHash(result.saved.contentHash);
       setExecution(result.saved.execution);
-      setMessage(`Saved revision ${result.saved.revision}. Press Activate to use it on the running mock.`);
+      // Autosave runs after every pause in typing, so a "saved" banner would only be noise.
+      setMessage("");
       notifyScenarioCatalogChanged(directoryPath);
       return true;
     } catch (e) { setError(String(e)); return false; }
@@ -264,7 +274,7 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
       setExecution(undefined);
       setApplied(null);
       setAppliedGateway(null);
-      setMessage(`Deleted ${current.scenarioId} from disk. Restart or Apply another scenario to change a running snapshot.`);
+      setMessage(`Deleted ${current.scenarioId}. A running mock keeps answering with it until you activate another scenario or restart.`);
     } catch (error) { setError(String(error)); }
     finally { setSaving(false); setDeleteArmed(false); inflight.current = false; }
   };
@@ -308,7 +318,7 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
       setAppliedGateway(null);
       setDeleteArmed(false);
       setCreateOpen(false);
-      setMessage(`Created "${name}". Apply when ready.`);
+      setMessage(`Created "${name}". Press Activate when it is ready.`);
       notifyScenarioCatalogChanged(directoryPath);
     } catch (error) {
       setCreateError(String(error));
@@ -341,7 +351,7 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
       }
       setApplied(null);
       setAppliedGateway(null);
-      setMessage("Delivery settings saved. Apply to update the running mock.");
+      setMessage("Delivery settings saved. Press Activate to use them on the running mock.");
       notifyScenarioCatalogChanged(directoryPath);
     } catch (error) {
       setError(String(error));
@@ -542,8 +552,11 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
               <Button size="small" variant={format === "json" ? "contained" : "text"} disabled={!loaded} onClick={() => changeFormat("json")}>JSON</Button>
               <Box sx={{ width: 1, height: 18, mx: 0.5, borderLeft: "1px solid var(--border-strong)" }} />
               <Button size="small" variant="text" startIcon={<Add sx={{ fontSize: 15 }} />} disabled={!loaded || saving}
-                aria-haspopup="menu" onClick={(event: React.MouseEvent<HTMLElement>) => setMatcherAnchor(event.currentTarget)}>Request matcher</Button>
+                aria-haspopup="menu" onClick={(event: React.MouseEvent<HTMLElement>) => setMatcherAnchor(event.currentTarget)}>Insert</Button>
               <Menu anchorEl={matcherAnchor} open={Boolean(matcherAnchor)} onClose={() => setMatcherAnchor(null)}>
+                <MenuItem disabled>
+                  <Typography variant="caption" color="text.secondary">Answer only requests that match (input)</Typography>
+                </MenuItem>
                 {MATCHER_OPTIONS.map(option => (
                   <MenuItem key={option.kind} onClick={() => { setMatcherAnchor(null); insertMatcher(option.kind); }}>
                     <Stack spacing={0}>
@@ -562,6 +575,9 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
                   <Typography variant="body2">How matching works</Typography>
                 </MenuItem>
               </Menu>
+              {format === "yaml" && <Typography variant="caption" color="text.secondary" sx={{ ml: 0.5 }}>
+                Ctrl+Space for suggestions
+              </Typography>}
               <Box sx={{ flex: 1 }} />
               <Button size="small" variant="text" disabled={!loaded || saving} onClick={() => changeFormat(format)}>Format</Button>
               <Button size="small" variant="text" disabled={!dirty || saving} onClick={() => { setDraft(baseline); setError(""); }}>Revert</Button>
@@ -570,7 +586,7 @@ export function FileBasedGrpcScenarios({ directoryPath, selectedMethodKey = "", 
         <Box sx={{flex:1,minHeight:0}}>
 
           {loaded && selected ? <CodeTextField value={draft} onChange={setDraft} buffered={false} minRows={12} fullHeight
-            language={format} showFormatAction={false} fullscreenTitle={`${selected.methodKey.split("/")[1]} scenario`} resetKey={`${key(directoryPath,selected)}:${revision}`} />
+            language={format} showFormatAction={false} completionSource={format === "yaml" ? completionSource : undefined} fullscreenTitle={`${selected.methodKey.split("/")[1]} scenario`} resetKey={key(directoryPath,selected)} />
             : selected && revision > 0 ? (
               <Stack spacing={1} alignItems="flex-start">
                 <Typography variant="body2">Large scenario selected. You can apply it directly or edit the file externally.</Typography>

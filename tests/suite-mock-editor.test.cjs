@@ -130,9 +130,10 @@ const __suiteBaseDir = __dirname;
     test("canonical editor saves against the loaded revision and requires explicit runtime Apply", () => {
       assert.match(source, /store\.save\(directoryPath,current,sourceText,expectedRevision,expectedHash\)/);
       assert.match(source, /File changed externally/);
-      assert.match(source, /Press Activate to use it on the running mock/);
       const save = source.slice(source.indexOf("const save ="), source.indexOf("const latestDraft"));
       assert.doesNotMatch(save, /setMockServer\(/);
+      assert.doesNotMatch(save, /applyNative|applyGateway/);
+      assert.doesNotMatch(save, /Saved revision/);
     });
 
   });
